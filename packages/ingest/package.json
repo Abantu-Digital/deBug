@@ -1,0 +1,20 @@
+{
+  "name": "@debug/ingest",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./firebase": "./src/firebase.ts",
+    "./lambda": "./src/lambda.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@debug/adapters": "workspace:*",
+    "@debug/schema": "workspace:*"
+  },
+  "devDependencies": {
+    "@debug/sdk": "workspace:*"
+  }
+}

@@ -1,0 +1,8 @@
+.output
+.tanstack
+.vinxi
+src/routeTree.gen.ts
+.env
+*.json.key
+service-account*.json
+dist
