@@ -13,9 +13,9 @@ interface HttpEvent {
  *
  *   import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
  *   import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
- *   import { DynamoStore } from "@debug/adapters/dynamodb";
- *   import { lambdaHandler } from "@debug/ingest/lambda";
- *   import { parseIngestKeys } from "@debug/ingest";
+ *   import { DynamoStore } from "@debugkit/adapters/dynamodb";
+ *   import { lambdaHandler } from "@debugkit/ingest/lambda";
+ *   import { parseIngestKeys } from "@debugkit/ingest";
  *
  *   const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
  *   export const handler = lambdaHandler({

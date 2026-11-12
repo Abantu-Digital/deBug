@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { Envelope } from "@debug/schema";
+import { Envelope } from "@debugkit/schema";
 import { DebugClient } from "./client";
-import { parseStack } from "@debug/schema";
+import { parseStack } from "@debugkit/schema";
 
 function setup(status = 200) {
   const sent: unknown[] = [];
@@ -45,6 +45,15 @@ describe("sdk", () => {
     await c.flush();
     const events = sent.flatMap((s) => Envelope.parse(s).events);
     expect(events.map((e) => (e.type === "event" ? e.outcome : "error"))).toEqual(["success", "failure", "error"]);
+    await c.close();
+  });
+
+  it("track() can skip the error when it is reported elsewhere", async () => {
+    const { c, sent } = setup();
+    await expect(c.track("checkout.payment", "charge", async () => { throw new Error("502"); }, { captureError: false })).rejects.toThrow();
+    await c.flush();
+    const events = sent.flatMap((s) => Envelope.parse(s).events);
+    expect(events.map((e) => e.type)).toEqual(["event"]);
     await c.close();
   });
 

@@ -4,8 +4,34 @@
     {
       "name": "dashboard",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--filter", "@debug/dashboard", "dev"],
+      "runtimeArgs": [
+        "--filter",
+        "@debugkit/dashboard",
+        "dev"
+      ],
       "port": 4400
+    },
+    {
+      "name": "vite-react-example",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "examples/vite-react",
+        "run",
+        "dev"
+      ],
+      "port": 5173
+    },
+    {
+      "name": "tanstack-start-example",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "examples/tanstack-start",
+        "run",
+        "dev"
+      ],
+      "port": 5174
     }
   ]
 }

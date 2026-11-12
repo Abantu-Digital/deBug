@@ -1,6 +1,6 @@
-import { MemoryStore } from "@debug/adapters/memory";
-import { ingest } from "@debug/ingest";
-import type { EnvelopeInput, EventInput } from "@debug/schema";
+import { MemoryStore } from "@debugkit/adapters/memory";
+import { ingest } from "@debugkit/ingest";
+import type { EnvelopeInput, EventInput } from "@debugkit/schema";
 
 /**
  * Builds a realistic 14-day dataset for a fictional app by pushing synthetic SDK
@@ -114,7 +114,7 @@ export async function seedDemo(): Promise<MemoryStore> {
       if (!events.length) continue;
 
       const env: EnvelopeInput = {
-        sdk: { name: "@debug/sdk", version: "0.1.0" },
+        sdk: { name: "@debugkit/sdk", version: "0.1.0" },
         context: {
           app: { id: "megaton-native", version: appVersion, build: appVersion.replace(/\./g, "") + "0", environment: "production" },
           ...dev,

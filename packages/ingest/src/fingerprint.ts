@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ErrorEvent, StackFrame } from "@debug/schema";
+import type { ErrorEvent, StackFrame } from "@debugkit/schema";
 
 /** Strip volatile parts so "User 123 not found" and "User 456 not found" group together. */
 export function normaliseMessage(msg: string): string {
@@ -17,7 +17,10 @@ export function normaliseMessage(msg: string): string {
 /** Remove build hashes / absolute prefixes so the same code location matches across builds and devices. */
 export function normaliseFile(file: string | undefined): string {
   if (!file) return "";
-  let f = file.replace(/[?#].*$/, "").replace(/^[a-z]+:\/\/[^/]+/i, "");
+  // Metro dev bundles put options after "//&" instead of "?"; drop both.
+  let f = file.replace(/\/\/&.*$/, "").replace(/[?#].*$/, "").replace(/^[a-z]+:\/\/[^/]+/i, "");
+  // React Native bundles: the path is noise, the bundle name is enough.
+  if (/\.(?:js)?bundle$/.test(f)) return f.replace(/^.*\//, "");
   // Keep the path from the deepest conventional source root, preferring src/.
   for (const root of ["/src/", "/lib/", "/app/"]) {
     const i = f.lastIndexOf(root);

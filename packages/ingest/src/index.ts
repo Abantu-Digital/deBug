@@ -1,5 +1,5 @@
-import { Envelope, parseStack, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debug/schema";
-import type { IssueUpsert, WriteStore } from "@debug/adapters";
+import { Envelope, parseStack, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debugkit/schema";
+import type { IssueUpsert, WriteStore } from "@debugkit/adapters";
 import { culpritOf, fingerprint, titleOf } from "./fingerprint";
 
 export * from "./fingerprint";
@@ -8,6 +8,7 @@ export interface IngestOptions {
   store: WriteStore;
   /**
    * Map of public ingest key → app id it may write to. A key can't write to another app.
+   * The app id "*" lets a key write to any app (local development only).
    * Parse from env with `parseIngestKeys(process.env.DEBUG_INGEST_KEYS)`.
    */
   keys: Record<string, string>;
@@ -66,7 +67,7 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
 
   const env = parsed.data;
   const app = env.context.app.id;
-  if (opts.keys[ingestKey] !== app) return { status: 403, body: { ok: false, error: `key not allowed for app ${app}` } };
+  if (opts.keys[ingestKey] !== app && opts.keys[ingestKey] !== "*") return { status: 403, body: { ok: false, error: `key not allowed for app ${app}` } };
 
   const context = enrich(env.context);
   const receivedAt = now.toISOString();

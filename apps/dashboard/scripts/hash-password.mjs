@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Usage: pnpm --filter @debug/dashboard hash-password [email]
+// Usage: pnpm --filter @debugkit/dashboard hash-password [email]
 import { randomBytes, scryptSync } from "node:crypto";
 import { createInterface } from "node:readline";
 

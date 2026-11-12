@@ -1,8 +1,133 @@
 {
-  "name": "@debug/sdk",
+  "name": "@debugkit/sdk",
   "version": "0.1.0",
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc -p ." },
-  "dependencies": { "@debug/schema": "workspace:*" }
+  "exports": {
+    ".": "./src/index.ts",
+    "./react": "./src/react.tsx",
+    "./react-native": "./src/react-native.ts",
+    "./expo": "./src/expo.ts",
+    "./expo-router": "./src/expo-router.ts",
+    "./node": "./src/node.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "build": "tsup",
+    "prepack": "tsup"
+  },
+  "dependencies": {
+    "@debugkit/schema": "workspace:^"
+  },
+  "description": "deBug SDK: log errors and events from React, React Native, Expo and Node into your own cloud.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Abantu-Digital/deBug.git",
+    "directory": "packages/sdk"
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "react",
+    "react-native",
+    "expo",
+    "expo-router",
+    "node",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": {
+          "import": "./dist/index.d.ts",
+          "require": "./dist/index.d.cts"
+        },
+        "react-native": "./dist/index.js",
+        "import": "./dist/index.js",
+        "require": "./dist/index.cjs"
+      },
+      "./react": {
+        "types": {
+          "import": "./dist/react.d.ts",
+          "require": "./dist/react.d.cts"
+        },
+        "react-native": "./dist/react.js",
+        "import": "./dist/react.js",
+        "require": "./dist/react.cjs"
+      },
+      "./react-native": {
+        "types": {
+          "import": "./dist/react-native.d.ts",
+          "require": "./dist/react-native.d.cts"
+        },
+        "react-native": "./dist/react-native.js",
+        "import": "./dist/react-native.js",
+        "require": "./dist/react-native.cjs"
+      },
+      "./expo": {
+        "types": {
+          "import": "./dist/expo.d.ts",
+          "require": "./dist/expo.d.cts"
+        },
+        "react-native": "./dist/expo.js",
+        "import": "./dist/expo.js",
+        "require": "./dist/expo.cjs"
+      },
+      "./expo-router": {
+        "types": {
+          "import": "./dist/expo-router.d.ts",
+          "require": "./dist/expo-router.d.cts"
+        },
+        "react-native": "./dist/expo-router.js",
+        "import": "./dist/expo-router.js",
+        "require": "./dist/expo-router.cjs"
+      },
+      "./node": {
+        "types": {
+          "import": "./dist/node.d.ts",
+          "require": "./dist/node.d.cts"
+        },
+        "react-native": "./dist/node.js",
+        "import": "./dist/node.js",
+        "require": "./dist/node.cjs"
+      },
+      "./package.json": "./package.json"
+    }
+  },
+  "peerDependencies": {
+    "expo-application": "*",
+    "expo-device": "*",
+    "expo-router": "*",
+    "react": ">=17",
+    "react-native": ">=0.70"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-native": {
+      "optional": true
+    },
+    "expo-device": {
+      "optional": true
+    },
+    "expo-application": {
+      "optional": true
+    },
+    "expo-router": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "expo-application": "~7.0.8",
+    "expo-device": "~8.0.10",
+    "react": "19.2.0",
+    "react-native": "0.83.1",
+    "tsup": "^8.5.1"
+  }
 }

@@ -9,38 +9,38 @@ See [SPEC.md](SPEC.md) for the design.
 
 ```bash
 pnpm install
-pnpm --filter @debug/dashboard dev     # http://localhost:4400
+pnpm --filter @debugkit/dashboard dev     # http://localhost:4400
 ```
 
 Sign in with `demo@debug.local` / `demo-debug`.
 
 ## 1. Instrument the app
 
-```ts
-import { deBug, expoContext } from "@debug/sdk";
-import * as Device from "expo-device";
-import * as Application from "expo-application";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Platform } from "react-native";
-
-deBug.init({
-  endpoint: "https://<region>-<project>.cloudfunctions.net/debugIngest", // or your Lambda URL
-  ingestKey: "pk_live_megaton",            // public, write-only
-  app: { id: "megaton-native", version: Application.nativeApplicationVersion ?? undefined },
-  context: expoContext({ Device, Application, Platform }),
-  storage: AsyncStorage,                   // keeps events across restarts/offline
-  beforeSend: (e) => e,                    // scrub PII here
-});
-
-// Where you want it:
-deBug.breadcrumb("navigation", "Login → OtpScreen");
-await deBug.track("auth.login", "submit_otp", () => api.verifyOtp(code)); // logs success/failure + error
-deBug.error(err, { flow: "checkout.payment", step: "create_intent" });
-deBug.event("signup_abandoned", { flow: "onboarding.signup", outcome: "abandoned" });
+```bash
+npm install @debugkit/sdk
 ```
 
-`flow` is the part of the app (dotted lowercase). It's the main axis of the dashboard,
+```ts
+// Expo
+import { initExpo } from "@debugkit/sdk/expo";
+initExpo({ endpoint: "https://<your-ingest-url>", ingestKey: "pk_live_megaton", app: { id: "megaton-native" } });
+
+// Where it matters:
+await deBug.track("auth.login", "submit_otp", () => api.verifyOtp(code)); // success or failure, plus the error
+deBug.error(err, { flow: "checkout.payment", step: "create_intent" });
+```
+
+There are separate entry points for Expo, Expo Router, bare React Native, React, TanStack
+Start/Router and Node. See **[packages/sdk/README.md](packages/sdk/README.md)** for each one.
+
+`flow` names the part of the app, in dotted lowercase. It's the main axis of the dashboard,
 so use it consistently.
+
+### Try it locally, with no cloud
+
+In demo mode the dashboard also accepts events at `POST /api/ingest` with key `pk_local`.
+Point any app at `http://localhost:4400/api/ingest` (or `http://10.0.2.2:4400/...` from an
+Android emulator) and watch its errors appear.
 
 ## 2. Deploy ingest in your cloud
 
@@ -50,9 +50,9 @@ so use it consistently.
 import { onRequest } from "firebase-functions/v2/https";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
-import { FirestoreStore } from "@debug/adapters/firestore";
-import { firebaseHandler } from "@debug/ingest/firebase";
-import { parseIngestKeys } from "@debug/ingest";
+import { FirestoreStore } from "@debugkit/adapters/firestore";
+import { firebaseHandler } from "@debugkit/ingest/firebase";
+import { parseIngestKeys } from "@debugkit/ingest";
 
 initializeApp();
 export const debugIngest = onRequest(
@@ -67,9 +67,9 @@ Then deploy `packages/adapters/firestore.indexes.json` (it includes the TTL poli
 ```ts
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { DynamoStore } from "@debug/adapters/dynamodb";
-import { lambdaHandler } from "@debug/ingest/lambda";
-import { parseIngestKeys } from "@debug/ingest";
+import { DynamoStore } from "@debugkit/adapters/dynamodb";
+import { lambdaHandler } from "@debugkit/ingest/lambda";
+import { parseIngestKeys } from "@debugkit/ingest";
 
 const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 export const handler = lambdaHandler({ store: new DynamoStore(doc, { table: process.env.DEBUG_TABLE! }), keys: parseIngestKeys(process.env.DEBUG_INGEST_KEYS) });
@@ -81,9 +81,9 @@ export const handler = lambdaHandler({ store: new DynamoStore(doc, { table: proc
 
 ```bash
 cp apps/dashboard/.env.example apps/dashboard/.env   # set DEBUG_STORE, credentials, secret
-pnpm --filter @debug/dashboard hash-password you@company.com
-pnpm --filter @debug/dashboard build
-pnpm --filter @debug/dashboard start                 # http://127.0.0.1:4400
+pnpm --filter @debugkit/dashboard hash-password you@company.com
+pnpm --filter @debugkit/dashboard build
+pnpm --filter @debugkit/dashboard start                 # http://127.0.0.1:4400
 ```
 
 Give the dashboard **read-only** database credentials. It binds to `127.0.0.1` by default.
@@ -92,9 +92,40 @@ non-localhost address, set `DEBUG_INSECURE_COOKIES=1`.
 
 Agents and scripts: `curl -H "Authorization: Bearer $DEBUG_API_TOKEN" localhost:4400/api/summary`.
 
+## Example apps
+
+`examples/` holds one app per platform. Each one installs the SDK from **packed tarballs**,
+exactly what npm would serve, not from the workspace:
+
+```bash
+pnpm pack:local                 # build + pack every package into .packs/
+cd examples/<app> && npm install
+```
+
+| Example | What it shows | Verified |
+|---|---|---|
+| `vite-react` | React web: error boundary, window errors, rejections, `track()` | Run in the browser; all events reached the dashboard |
+| `tanstack-start` | Browser plus server functions (`withDebug`), router breadcrumbs | Run in the browser; client and server events reached the dashboard |
+| `expo-app` | Expo SDK 58: `initExpo`, error boundary, Expo Router breadcrumbs, Hermes rejections | Run in Expo Go on the iOS simulator; crash, rejection, breadcrumbs and device context arrived. The `track()` login button wasn't confirmed on the device |
+| `bare-react-native` | React Native 0.88 with `react-native-device-info` | Metro release bundles build for iOS and Android. **Not yet run on a device** |
+
+## Publishing
+
+The four packages (`@debugkit/schema`, `@debugkit/sdk`, `@debugkit/ingest`, `@debugkit/adapters`) are
+versioned together with [changesets](.changeset/README.md):
+
+1. Create the `@debugkit` organisation on npmjs.com (or confirm you own it).
+2. Add an npm automation token as the `NPM_TOKEN` secret in the GitHub repo.
+3. Add a changeset to each change (`pnpm changeset`). On merge to `main`, the Release workflow
+   opens a "Version packages" PR. Merging that PR publishes to npm, with provenance.
+
+In the repo, each package resolves to its TypeScript source. On publish, `publishConfig`
+switches the entry points to the built `dist/` files (ESM, CommonJS and `.d.ts`).
+
 ## Develop
 
 ```bash
 pnpm test        # vitest across packages
 pnpm typecheck
+pnpm build       # build every package with tsup
 ```

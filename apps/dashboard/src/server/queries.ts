@@ -1,4 +1,4 @@
-import type { ReadStore } from "@debug/adapters";
+import type { ReadStore } from "@debugkit/adapters";
 import {
   SEVERITY_ORDER,
   severityFromCount,
@@ -6,7 +6,7 @@ import {
   type Severity,
   type SeverityThresholds,
   type StoredEvent,
-} from "@debug/schema";
+} from "@debugkit/schema";
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;

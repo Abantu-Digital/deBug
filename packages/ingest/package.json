@@ -1,5 +1,5 @@
 {
-  "name": "@debug/ingest",
+  "name": "@debugkit/ingest",
   "version": "0.1.0",
   "type": "module",
   "exports": {
@@ -8,13 +8,59 @@
     "./lambda": "./src/lambda.ts"
   },
   "scripts": {
-    "typecheck": "tsc -p ."
+    "typecheck": "tsc -p .",
+    "build": "tsup",
+    "prepack": "tsup"
   },
   "dependencies": {
-    "@debug/adapters": "workspace:*",
-    "@debug/schema": "workspace:*"
+    "@debugkit/adapters": "workspace:^",
+    "@debugkit/schema": "workspace:^"
   },
   "devDependencies": {
-    "@debug/sdk": "workspace:*"
+    "@debugkit/sdk": "workspace:^"
+  },
+  "description": "deBug ingest: validate, group and store events. Deploy as a Firebase Cloud Function or AWS Lambda.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Abantu-Digital/deBug.git",
+    "directory": "packages/ingest"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": {
+          "import": "./dist/index.d.ts",
+          "require": "./dist/index.d.cts"
+        },
+        "import": "./dist/index.js",
+        "require": "./dist/index.cjs"
+      },
+      "./firebase": {
+        "types": {
+          "import": "./dist/firebase.d.ts",
+          "require": "./dist/firebase.d.cts"
+        },
+        "import": "./dist/firebase.js",
+        "require": "./dist/firebase.cjs"
+      },
+      "./lambda": {
+        "types": {
+          "import": "./dist/lambda.d.ts",
+          "require": "./dist/lambda.d.cts"
+        },
+        "import": "./dist/lambda.js",
+        "require": "./dist/lambda.cjs"
+      },
+      "./package.json": "./package.json"
+    }
   }
 }

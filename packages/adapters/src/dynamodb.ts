@@ -1,6 +1,6 @@
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { BatchWriteCommand, type BatchWriteCommandOutput, GetCommand, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import type { Issue, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debug/schema";
+import type { Issue, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debugkit/schema";
 import { coalesceRollups } from "./rollups";
 import type { IssueUpsert, Store } from "./index";
 

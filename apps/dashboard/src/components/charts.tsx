@@ -11,7 +11,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { Severity } from "@debug/schema";
+import type { Severity } from "@debugkit/schema";
 
 const SEV_COLOR: Record<Severity, string> = {
   critical: "var(--sev-critical)",

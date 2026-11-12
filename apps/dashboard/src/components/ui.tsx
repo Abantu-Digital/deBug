@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Severity } from "@debug/schema";
+import type { Severity } from "@debugkit/schema";
 
 export function Logo() {
   return (

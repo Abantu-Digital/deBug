@@ -1,4 +1,4 @@
-import type { Issue, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debug/schema";
+import type { Issue, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debugkit/schema";
 
 export interface IssueUpsert {
   app: string;

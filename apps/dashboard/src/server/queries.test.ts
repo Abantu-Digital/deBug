@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { MemoryStore } from "@debug/adapters/memory";
-import { ingest } from "@debug/ingest";
-import { DEFAULT_SEVERITY_THRESHOLDS } from "@debug/schema";
+import { MemoryStore } from "@debugkit/adapters/memory";
+import { ingest } from "@debugkit/ingest";
+import { DEFAULT_SEVERITY_THRESHOLDS } from "@debugkit/schema";
 import { seedDemo } from "./demo";
 import { buildIssueDetail, buildSummary } from "./queries";
 

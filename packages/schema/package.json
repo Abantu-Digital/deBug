@@ -1,8 +1,53 @@
 {
-  "name": "@debug/schema",
+  "name": "@debugkit/schema",
   "version": "0.1.0",
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "typecheck": "tsc -p ." },
-  "dependencies": { "zod": "^3.24.1" }
+  "exports": {
+    ".": "./src/index.ts",
+    "./core": "./src/core.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "build": "tsup",
+    "prepack": "tsup"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  },
+  "description": "deBug event schema (zod) and shared helpers. Import /core for the zod-free half.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Abantu-Digital/deBug.git",
+    "directory": "packages/schema"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": {
+          "import": "./dist/index.d.ts",
+          "require": "./dist/index.d.cts"
+        },
+        "import": "./dist/index.js",
+        "require": "./dist/index.cjs"
+      },
+      "./core": {
+        "types": {
+          "import": "./dist/core.d.ts",
+          "require": "./dist/core.d.cts"
+        },
+        "import": "./dist/core.js",
+        "require": "./dist/core.cjs"
+      },
+      "./package.json": "./package.json"
+    }
+  }
 }
