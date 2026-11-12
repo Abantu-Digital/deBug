@@ -1,5 +1,5 @@
 {
-  "name": "@debug/adapters",
+  "name": "@debugkit/adapters",
   "version": "0.1.0",
   "type": "module",
   "exports": {
@@ -14,7 +14,7 @@
     "prepack": "tsup"
   },
   "dependencies": {
-    "@debug/schema": "workspace:^"
+    "@debugkit/schema": "workspace:^"
   },
   "description": "deBug storage adapters for Firestore, DynamoDB and in-memory.",
   "license": "MIT",

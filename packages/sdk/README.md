@@ -1,4 +1,4 @@
-# @debug/sdk
+# @debugkit/sdk
 
 Log errors and events from your app into **your own** cloud. This is the client half of
 [deBug](https://github.com/Abantu-Digital/deBug): events go to an ingest function you deploy
@@ -13,7 +13,7 @@ in Firebase or AWS, and a dashboard you run yourself tells you what is failing a
 ## Install
 
 ```bash
-npm install @debug/sdk
+npm install @debugkit/sdk
 ```
 
 Pick the entry point for your platform. Each one adds the right device context and error
@@ -21,13 +21,13 @@ hooks, and they all share the same `deBug` client.
 
 | You have | Import from | Also install |
 |---|---|---|
-| Expo | `@debug/sdk/expo` | `npx expo install expo-device expo-application` |
-| Expo Router | `@debug/sdk/expo-router`, plus the above | |
-| Bare React Native | `@debug/sdk/react-native` | `react-native-device-info` (optional, for model and app version) |
-| React on the web (Vite and others) | `@debug/sdk/react` | |
-| TanStack Start / Router | `@debug/sdk/react` for the browser, `@debug/sdk/node` for the server | |
-| Next.js, Remix, Express, any Node server | `@debug/sdk/node` | |
-| Anything else (workers, edge, vanilla JS) | `@debug/sdk` | |
+| Expo | `@debugkit/sdk/expo` | `npx expo install expo-device expo-application` |
+| Expo Router | `@debugkit/sdk/expo-router`, plus the above | |
+| Bare React Native | `@debugkit/sdk/react-native` | `react-native-device-info` (optional, for model and app version) |
+| React on the web (Vite and others) | `@debugkit/sdk/react` | |
+| TanStack Start / Router | `@debugkit/sdk/react` for the browser, `@debugkit/sdk/node` for the server | |
+| Next.js, Remix, Express, any Node server | `@debugkit/sdk/node` | |
+| Anything else (workers, edge, vanilla JS) | `@debugkit/sdk` | |
 
 Your ingest endpoint and key come from your deBug deployment. During development, point at a
 dashboard running in demo mode: `http://localhost:4400/api/ingest` with key `pk_local`.
@@ -36,7 +36,7 @@ dashboard running in demo mode: `http://localhost:4400/api/ingest` with key `pk_
 
 ```tsx
 // src/debug.ts
-import { initExpo } from "@debug/sdk/expo";
+import { initExpo } from "@debugkit/sdk/expo";
 
 initExpo({
   endpoint: "https://<your-ingest-url>",
@@ -48,8 +48,8 @@ initExpo({
 ```tsx
 // src/app/_layout.tsx
 import "@/debug";
-import { DebugErrorBoundary } from "@debug/sdk/expo";
-import { useDebugExpoRouter } from "@debug/sdk/expo-router";
+import { DebugErrorBoundary } from "@debugkit/sdk/expo";
+import { useDebugExpoRouter } from "@debugkit/sdk/expo-router";
 
 export default function RootLayout() {
   useDebugExpoRouter(); // a breadcrumb for every screen change
@@ -68,7 +68,7 @@ report yours.
 
 ```tsx
 import DeviceInfo from "react-native-device-info";
-import { initReactNative, DebugErrorBoundary, trackReactNavigation } from "@debug/sdk/react-native";
+import { initReactNative, DebugErrorBoundary, trackReactNavigation } from "@debugkit/sdk/react-native";
 
 initReactNative({ endpoint, ingestKey, app: { id: "your-app" }, deviceInfo: DeviceInfo });
 
@@ -91,7 +91,7 @@ React Native also gets:
 ## React (web)
 
 ```tsx
-import { deBug, DebugErrorBoundary } from "@debug/sdk/react";
+import { deBug, DebugErrorBoundary } from "@debugkit/sdk/react";
 
 deBug.init({ endpoint, ingestKey, app: { id: "your-web-app", version: "1.4.0" } });
 
@@ -109,7 +109,7 @@ and network type are detected automatically.
 
 ```tsx
 // src/router.tsx: the browser side
-import { deBug, trackTanStackRouter } from "@debug/sdk/react";
+import { deBug, trackTanStackRouter } from "@debugkit/sdk/react";
 
 if (typeof window !== "undefined") deBug.init({ endpoint, ingestKey, app: { id: "web" } });
 
@@ -122,7 +122,7 @@ export function getRouter() {
 
 ```ts
 // src/server/debug.ts: server only
-import { deBug, initNode } from "@debug/sdk/node";
+import { deBug, initNode } from "@debugkit/sdk/node";
 
 export const serverDebug = () =>
   deBug.initialized ? deBug : initNode({ endpoint, ingestKey, app: { id: "web", environment: "server" } });
@@ -131,7 +131,7 @@ export const serverDebug = () =>
 ```ts
 // src/server/fns.ts
 import { createServerFn } from "@tanstack/react-start";
-import { withDebug } from "@debug/sdk/node";
+import { withDebug } from "@debugkit/sdk/node";
 import { serverDebug } from "./debug";
 
 export const charge = createServerFn({ method: "POST" }).handler(

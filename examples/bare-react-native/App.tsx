@@ -1,5 +1,5 @@
 import './src-debug';
-import { deBug, DebugErrorBoundary } from '@debug/sdk/react-native';
+import { deBug, DebugErrorBoundary } from '@debugkit/sdk/react-native';
 import { useState } from 'react';
 import { Pressable, SafeAreaView, Text, View } from 'react-native';
 

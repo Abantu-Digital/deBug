@@ -1,5 +1,5 @@
-import { Envelope, parseStack, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debug/schema";
-import type { IssueUpsert, WriteStore } from "@debug/adapters";
+import { Envelope, parseStack, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debugkit/schema";
+import type { IssueUpsert, WriteStore } from "@debugkit/adapters";
 import { culpritOf, fingerprint, titleOf } from "./fingerprint";
 
 export * from "./fingerprint";

@@ -1,7 +1,7 @@
 import '@/debug'; // first: start capturing before anything else runs
 
-import { DebugErrorBoundary } from '@debug/sdk/expo';
-import { useDebugExpoRouter } from '@debug/sdk/expo-router';
+import { DebugErrorBoundary } from '@debugkit/sdk/expo';
+import { useDebugExpoRouter } from '@debugkit/sdk/expo-router';
 import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { Pressable, Text, useColorScheme, View } from 'react-native';

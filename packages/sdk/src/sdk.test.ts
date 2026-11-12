@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { Envelope } from "@debug/schema";
+import { Envelope } from "@debugkit/schema";
 import { DebugClient } from "./client";
-import { parseStack } from "@debug/schema";
+import { parseStack } from "@debugkit/schema";
 
 function setup(status = 200) {
   const sent: unknown[] = [];

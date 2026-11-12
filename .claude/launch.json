@@ -6,7 +6,7 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": [
         "--filter",
-        "@debug/dashboard",
+        "@debugkit/dashboard",
         "dev"
       ],
       "port": 4400

@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { withDebug } from "@debug/sdk/node";
+import { withDebug } from "@debugkit/sdk/node";
 import { ensureServerDebug } from "./debug";
 
 /** A server function that fails the way a real payment call might. */

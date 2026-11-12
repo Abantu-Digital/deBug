@@ -1,4 +1,4 @@
-import { deBug, DebugErrorBoundary } from "@debug/sdk/react";
+import { deBug, DebugErrorBoundary } from "@debugkit/sdk/react";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";

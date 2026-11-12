@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ErrorEvent, StackFrame } from "@debug/schema";
+import type { ErrorEvent, StackFrame } from "@debugkit/schema";
 
 /** Strip volatile parts so "User 123 not found" and "User 456 not found" group together. */
 export function normaliseMessage(msg: string): string {

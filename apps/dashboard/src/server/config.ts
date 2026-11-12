@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { DEFAULT_SEVERITY_THRESHOLDS, type SeverityThresholds } from "@debug/schema";
+import { DEFAULT_SEVERITY_THRESHOLDS, type SeverityThresholds } from "@debugkit/schema";
 
 let loaded = false;
 function loadEnv() {

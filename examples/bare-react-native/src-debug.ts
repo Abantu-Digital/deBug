@@ -1,6 +1,6 @@
 import DeviceInfo from 'react-native-device-info';
 import { Platform } from 'react-native';
-import { initReactNative } from '@debug/sdk/react-native';
+import { initReactNative } from '@debugkit/sdk/react-native';
 
 // Bare React Native: pass react-native-device-info for model, app version and memory.
 // Without it you still get OS, OS version, engine and (on Android) model/brand from react-native.

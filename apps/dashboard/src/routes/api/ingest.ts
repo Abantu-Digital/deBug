@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { CORS_HEADERS, ingest, parseIngestKeys } from "@debug/ingest";
+import { CORS_HEADERS, ingest, parseIngestKeys } from "@debugkit/ingest";
 import { config } from "~/server/config";
 import { getLocalWriteStore } from "~/server/store";
 

@@ -1,4 +1,4 @@
-import { deBug } from "@debug/sdk/react";
+import { deBug } from "@debugkit/sdk/react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { chargeCard } from "../server/fns";

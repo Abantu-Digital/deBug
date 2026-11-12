@@ -6,9 +6,9 @@ import { CORS_HEADERS, ingest, type IngestOptions } from "./index";
  *   import { onRequest } from "firebase-functions/v2/https";
  *   import { getFirestore } from "firebase-admin/firestore";
  *   import { initializeApp } from "firebase-admin/app";
- *   import { FirestoreStore } from "@debug/adapters/firestore";
- *   import { firebaseHandler } from "@debug/ingest/firebase";
- *   import { parseIngestKeys } from "@debug/ingest";
+ *   import { FirestoreStore } from "@debugkit/adapters/firestore";
+ *   import { firebaseHandler } from "@debugkit/ingest/firebase";
+ *   import { parseIngestKeys } from "@debugkit/ingest";
  *
  *   initializeApp();
  *   export const debugIngest = onRequest(

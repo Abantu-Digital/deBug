@@ -1,4 +1,4 @@
-import { DebugErrorBoundary } from "@debug/sdk/react";
+import { DebugErrorBoundary } from "@debugkit/sdk/react";
 import { createRootRoute, HeadContent, Link, Outlet, Scripts } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 

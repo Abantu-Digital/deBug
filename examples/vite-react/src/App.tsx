@@ -1,4 +1,4 @@
-import { deBug, useDebugNavigation } from "@debug/sdk/react";
+import { deBug, useDebugNavigation } from "@debugkit/sdk/react";
 import { useState } from "react";
 
 function Bomb(): never {

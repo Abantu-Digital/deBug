@@ -1,4 +1,4 @@
-import { deBug } from '@debug/sdk/expo';
+import { deBug } from '@debugkit/sdk/expo';
 import { useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';

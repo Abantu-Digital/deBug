@@ -1,6 +1,6 @@
 import "./debug-browser"; // guarded by typeof window, so it is safe to import from shared code
 import { createRouter } from "@tanstack/react-router";
-import { trackTanStackRouter } from "@debug/sdk/react";
+import { trackTanStackRouter } from "@debugkit/sdk/react";
 import { routeTree } from "./routeTree.gen";
 
 export function getRouter() {

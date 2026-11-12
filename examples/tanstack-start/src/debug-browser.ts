@@ -1,4 +1,4 @@
-import { deBug } from "@debug/sdk/react";
+import { deBug } from "@debugkit/sdk/react";
 
 // Browser side. Runs once when the client bundle loads.
 if (typeof window !== "undefined" && !deBug.initialized) {

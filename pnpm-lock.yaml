@@ -32,13 +32,13 @@ importers:
       '@aws-sdk/lib-dynamodb':
         specifier: ^3.700.0
         version: 3.1164.0(@aws-sdk/client-dynamodb@3.1164.0)
-      '@debug/adapters':
+      '@debugkit/adapters':
         specifier: workspace:*
         version: link:../../packages/adapters
-      '@debug/ingest':
+      '@debugkit/ingest':
         specifier: workspace:*
         version: link:../../packages/ingest
-      '@debug/schema':
+      '@debugkit/schema':
         specifier: workspace:*
         version: link:../../packages/schema
       '@tanstack/react-router':
@@ -81,7 +81,7 @@ importers:
 
   packages/adapters:
     dependencies:
-      '@debug/schema':
+      '@debugkit/schema':
         specifier: workspace:^
         version: link:../schema
     devDependencies:
@@ -97,14 +97,14 @@ importers:
 
   packages/ingest:
     dependencies:
-      '@debug/adapters':
+      '@debugkit/adapters':
         specifier: workspace:^
         version: link:../adapters
-      '@debug/schema':
+      '@debugkit/schema':
         specifier: workspace:^
         version: link:../schema
     devDependencies:
-      '@debug/sdk':
+      '@debugkit/sdk':
         specifier: workspace:^
         version: link:../sdk
 
@@ -116,7 +116,7 @@ importers:
 
   packages/sdk:
     dependencies:
-      '@debug/schema':
+      '@debugkit/schema':
         specifier: workspace:^
         version: link:../schema
       expo-router:
@@ -7433,7 +7433,9 @@ snapshots:
       metro-runtime: 0.87.1
     transitivePeerDependencies:
       - '@babel/core'
+      - bufferutil
       - supports-color
+      - utf-8-validate
 
   '@react-native/normalize-colors@0.83.1': {}
 

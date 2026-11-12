@@ -1,5 +1,5 @@
 {
-  "name": "@debug/sdk",
+  "name": "@debugkit/sdk",
   "version": "0.1.0",
   "type": "module",
   "exports": {
@@ -16,7 +16,7 @@
     "prepack": "tsup"
   },
   "dependencies": {
-    "@debug/schema": "workspace:^"
+    "@debugkit/schema": "workspace:^"
   },
   "description": "deBug SDK: log errors and events from React, React Native, Expo and Node into your own cloud.",
   "license": "MIT",

@@ -1,4 +1,4 @@
-import type { Issue, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debug/schema";
+import type { Issue, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debugkit/schema";
 import { coalesceRollups, rollupId } from "./rollups";
 import type { IssueUpsert, Store } from "./index";
 

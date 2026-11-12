@@ -1,4 +1,4 @@
-import type { ContextInput } from "@debug/schema/core";
+import type { ContextInput } from "@debugkit/schema/core";
 
 type Shallow<T> = { [K in keyof T]?: T[K] extends object ? Partial<T[K]> : T[K] };
 export type ContextPatch = Shallow<ContextInput>;

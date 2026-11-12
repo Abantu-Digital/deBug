@@ -1,4 +1,4 @@
-import type { RollupIncrement, RollupRow } from "@debug/schema";
+import type { RollupIncrement, RollupRow } from "@debugkit/schema";
 
 /** Merge increments with the same target so each batch does one write per row. */
 export function coalesceRollups(incs: RollupIncrement[]): RollupRow[] {

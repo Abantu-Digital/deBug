@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { MemoryStore } from "@debug/adapters/memory";
-import { DebugClient } from "@debug/sdk";
+import { MemoryStore } from "@debugkit/adapters/memory";
+import { DebugClient } from "@debugkit/sdk";
 import { ingest, normaliseMessage, parseIngestKeys } from "./index";
 import { lambdaHandler } from "./lambda";
 
@@ -89,7 +89,7 @@ describe("ingest", () => {
 
 describe("react native stacks", () => {
   it("treats Hermes bundle frames as in-app and shortens the bundle path", async () => {
-    const { parseStack } = await import("@debug/schema/core");
+    const { parseStack } = await import("@debugkit/schema/core");
     const { culpritOf } = await import("./fingerprint");
     const dev = parseStack(
       "Error: boom\n    at Bomb (http://127.0.0.1:8081/node_modules/expo-router/entry.bundle//&platform=ios&dev=true:191207:20)\n    at anonymous (http://127.0.0.1:8081/node_modules/expo-router/entry.bundle//&platform=ios&dev=true:1:1)",

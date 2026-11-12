@@ -1,7 +1,7 @@
 # Changesets
 
-Every change to a published package (`@debug/schema`, `@debug/sdk`, `@debug/ingest`,
-`@debug/adapters`) needs a changeset:
+Every change to a published package (`@debugkit/schema`, `@debugkit/sdk`, `@debugkit/ingest`,
+`@debugkit/adapters`) needs a changeset:
 
 ```bash
 pnpm changeset

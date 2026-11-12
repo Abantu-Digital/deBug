@@ -1,5 +1,5 @@
 {
-  "name": "@debug/ingest",
+  "name": "@debugkit/ingest",
   "version": "0.1.0",
   "type": "module",
   "exports": {
@@ -13,11 +13,11 @@
     "prepack": "tsup"
   },
   "dependencies": {
-    "@debug/adapters": "workspace:^",
-    "@debug/schema": "workspace:^"
+    "@debugkit/adapters": "workspace:^",
+    "@debugkit/schema": "workspace:^"
   },
   "devDependencies": {
-    "@debug/sdk": "workspace:^"
+    "@debugkit/sdk": "workspace:^"
   },
   "description": "deBug ingest: validate, group and store events. Deploy as a Firebase Cloud Function or AWS Lambda.",
   "license": "MIT",

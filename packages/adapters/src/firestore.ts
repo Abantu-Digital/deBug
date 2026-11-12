@@ -1,6 +1,6 @@
 import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
-import type { Issue, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debug/schema";
+import type { Issue, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debugkit/schema";
 import { coalesceRollups, rollupId } from "./rollups";
 import type { IssueUpsert, Store } from "./index";
 

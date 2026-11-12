@@ -9,7 +9,7 @@ See [SPEC.md](SPEC.md) for the design.
 
 ```bash
 pnpm install
-pnpm --filter @debug/dashboard dev     # http://localhost:4400
+pnpm --filter @debugkit/dashboard dev     # http://localhost:4400
 ```
 
 Sign in with `demo@debug.local` / `demo-debug`.
@@ -17,12 +17,12 @@ Sign in with `demo@debug.local` / `demo-debug`.
 ## 1. Instrument the app
 
 ```bash
-npm install @debug/sdk
+npm install @debugkit/sdk
 ```
 
 ```ts
 // Expo
-import { initExpo } from "@debug/sdk/expo";
+import { initExpo } from "@debugkit/sdk/expo";
 initExpo({ endpoint: "https://<your-ingest-url>", ingestKey: "pk_live_megaton", app: { id: "megaton-native" } });
 
 // Where it matters:
@@ -50,9 +50,9 @@ Android emulator) and watch its errors appear.
 import { onRequest } from "firebase-functions/v2/https";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
-import { FirestoreStore } from "@debug/adapters/firestore";
-import { firebaseHandler } from "@debug/ingest/firebase";
-import { parseIngestKeys } from "@debug/ingest";
+import { FirestoreStore } from "@debugkit/adapters/firestore";
+import { firebaseHandler } from "@debugkit/ingest/firebase";
+import { parseIngestKeys } from "@debugkit/ingest";
 
 initializeApp();
 export const debugIngest = onRequest(
@@ -67,9 +67,9 @@ Then deploy `packages/adapters/firestore.indexes.json` (it includes the TTL poli
 ```ts
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
-import { DynamoStore } from "@debug/adapters/dynamodb";
-import { lambdaHandler } from "@debug/ingest/lambda";
-import { parseIngestKeys } from "@debug/ingest";
+import { DynamoStore } from "@debugkit/adapters/dynamodb";
+import { lambdaHandler } from "@debugkit/ingest/lambda";
+import { parseIngestKeys } from "@debugkit/ingest";
 
 const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 export const handler = lambdaHandler({ store: new DynamoStore(doc, { table: process.env.DEBUG_TABLE! }), keys: parseIngestKeys(process.env.DEBUG_INGEST_KEYS) });
@@ -81,9 +81,9 @@ export const handler = lambdaHandler({ store: new DynamoStore(doc, { table: proc
 
 ```bash
 cp apps/dashboard/.env.example apps/dashboard/.env   # set DEBUG_STORE, credentials, secret
-pnpm --filter @debug/dashboard hash-password you@company.com
-pnpm --filter @debug/dashboard build
-pnpm --filter @debug/dashboard start                 # http://127.0.0.1:4400
+pnpm --filter @debugkit/dashboard hash-password you@company.com
+pnpm --filter @debugkit/dashboard build
+pnpm --filter @debugkit/dashboard start                 # http://127.0.0.1:4400
 ```
 
 Give the dashboard **read-only** database credentials. It binds to `127.0.0.1` by default.
@@ -111,10 +111,10 @@ cd examples/<app> && npm install
 
 ## Publishing
 
-The four packages (`@debug/schema`, `@debug/sdk`, `@debug/ingest`, `@debug/adapters`) are
+The four packages (`@debugkit/schema`, `@debugkit/sdk`, `@debugkit/ingest`, `@debugkit/adapters`) are
 versioned together with [changesets](.changeset/README.md):
 
-1. Create the `@debug` organisation on npmjs.com (or confirm you own it).
+1. Create the `@debugkit` organisation on npmjs.com (or confirm you own it).
 2. Add an npm automation token as the `NPM_TOKEN` secret in the GitHub repo.
 3. Add a changeset to each change (`pnpm changeset`). On merge to `main`, the Release workflow
    opens a "Version packages" PR. Merging that PR publishes to npm, with provenance.

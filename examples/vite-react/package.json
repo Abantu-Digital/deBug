@@ -8,8 +8,8 @@
     "preview": "vite preview --port 5173"
   },
   "dependencies": {
-    "@debug/schema": "file:../../.packs/debug-schema.tgz",
-    "@debug/sdk": "file:../../.packs/debug-sdk.tgz",
+    "@debugkit/schema": "file:../../.packs/debugkit-schema.tgz",
+    "@debugkit/sdk": "file:../../.packs/debugkit-sdk.tgz",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
@@ -21,6 +21,6 @@
     "vite": "^8.3.7"
   },
   "overrides": {
-    "@debug/schema": "file:../../.packs/debug-schema.tgz"
+    "@debugkit/schema": "file:../../.packs/debugkit-schema.tgz"
   }
 }

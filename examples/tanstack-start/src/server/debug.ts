@@ -1,4 +1,4 @@
-import { deBug, initNode } from "@debug/sdk/node";
+import { deBug, initNode } from "@debugkit/sdk/node";
 
 // Server side. Called lazily from server functions so nothing here reaches the client bundle.
 export function ensureServerDebug() {

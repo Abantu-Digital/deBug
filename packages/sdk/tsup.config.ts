@@ -18,5 +18,5 @@ export default defineConfig({
   treeshake: true,
   // Everything the app already has stays external; the schema core is inlined so the SDK has no runtime deps on zod.
   external: ["react", "react-native", "expo-device", "expo-application", "expo-router", "node:os"],
-  noExternal: ["@debug/schema"],
+  noExternal: ["@debugkit/schema"],
 });

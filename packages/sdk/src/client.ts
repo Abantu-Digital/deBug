@@ -1,8 +1,8 @@
-import type { Breadcrumb, ContextInput, EnvelopeInput, EventInput, Severity } from "@debug/schema/core";
-import { parseStack } from "@debug/schema/core";
+import type { Breadcrumb, ContextInput, EnvelopeInput, EventInput, Severity } from "@debugkit/schema/core";
+import { parseStack } from "@debugkit/schema/core";
 import { browserContext, mergeContext, type ContextPatch } from "./context";
 
-export const SDK_NAME = "@debug/sdk";
+export const SDK_NAME = "@debugkit/sdk";
 export const SDK_VERSION = "0.1.0";
 
 /** Optional persistence so events survive app restarts / offline. e.g. AsyncStorage. */
@@ -41,7 +41,7 @@ export interface EventMeta {
   tags?: Record<string, string>;
 }
 
-const QUEUE_KEY = "@debug/queue";
+const QUEUE_KEY = "@debugkit/queue";
 const MAX_QUEUE = 500;
 
 const uid = () =>

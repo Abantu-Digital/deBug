@@ -3,7 +3,7 @@
 deBug is self-hosted observability for apps. The customer's data lives in the
 customer's own cloud (Firebase or AWS to start). deBug provides:
 
-1. **An SDK** (`@debug/sdk`) that apps use to log errors and events.
+1. **An SDK** (`@debugkit/sdk`) that apps use to log errors and events.
 2. **An ingest function** deployed *into the customer's cloud* (Cloud Function or
    Lambda) that validates, enriches, groups, and stores events.
 3. **A dashboard** (TanStack Start) that reads the customer's data and tells the
@@ -20,7 +20,7 @@ App (SDK)                      Customer's cloud
 ─────────                      ─────────────────────────────────────────
 deBug.error(err, {flow})  ──►  Ingest function (Cloud Function / Lambda)
 deBug.event(name, {flow})        • check ingest key
-  + auto device/OS/app context   • validate against @debug/schema
+  + auto device/OS/app context   • validate against @debugkit/schema
   + breadcrumbs                  • fingerprint errors → issues
   + offline queue, batching      • write raw events
                                  • update rollups (counts per issue/flow/day)
@@ -54,7 +54,7 @@ by rate limits per key and by rotating keys.
 
 ---
 
-## 2. Event model (`@debug/schema`)
+## 2. Event model (`@debugkit/schema`)
 
 Every payload is an **envelope**: one batch of events, sent with shared context.
 
