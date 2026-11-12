@@ -110,7 +110,7 @@ cd examples/<app> && npm install
 
 | Example | What it shows | Verified |
 |---|---|---|
-| `vite-react` | React web: error boundary, window errors, rejections, `track()` | Run in the browser; all events reached the dashboard |
+| `vite-react` | React web: error boundary, window errors, rejections, `track()`, and a request captured with no deBug code | Run in the browser; all events reached the dashboard, including the automatic network error, clicks, console and navigation breadcrumbs (0.2) |
 | `tanstack-start` | Browser plus server functions (`withDebug`), router breadcrumbs | Run in the browser; client and server events reached the dashboard |
 | `expo-app` | Expo SDK 58: `initExpo`, error boundary, Expo Router breadcrumbs, Hermes rejections | Run in Expo Go on the iOS simulator; crash, rejection, breadcrumbs and device context arrived. The `track()` login button wasn't confirmed on the device |
 | `bare-react-native` | React Native 0.88 with `react-native-device-info` | Metro release bundles build for iOS and Android. **Not yet run on a device** |

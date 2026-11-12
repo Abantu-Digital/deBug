@@ -68,8 +68,10 @@ Envelope {
 }
 
 Event =
-  | ErrorEvent  { type: "error",  id, ts, flow?, step?, severity?, error: { name, message, stack?, frames? }, handled, tags?, breadcrumbs? }
-  | CustomEvent { type: "event",  id, ts, flow?, step?, name, outcome?, props?, tags? }
+  | ErrorEvent   { type: "error",   id, ts, flow?, step?, severity?, error: { name, message, stack?, frames? }, handled, tags?, breadcrumbs?,
+                   request?: { method, url, status?, durationMs? } }   // set for failed HTTP requests
+  | CustomEvent  { type: "event",   id, ts, flow?, step?, name, outcome?, props?, tags? }
+  | SessionEvent { type: "session", id, ts, status: "started" | "errored" | "crashed" }
 ```
 
 - `flow` is the **part of the app**, e.g. `auth.login` or `checkout.payment`. This
@@ -77,13 +79,40 @@ Event =
 - `step` is a point inside a flow, e.g. `submit_otp`.
 - `outcome` (`success | failure | abandoned`) on custom events lets us compute
   **failure rate per flow**, not just raw counts.
-- `breadcrumbs` holds the last N navigation, network, and log entries before an
-  error.
+- `breadcrumbs` holds the last N navigation, network, click, console, and lifecycle
+  entries before an error.
+- `request` marks an error the SDK's network capture produced. `url` is the path
+  only (query strings and fragments never leave the device) with ids replaced by
+  `:id`.
+- `SessionEvent` is sent automatically: `started` once per session, then `errored`
+  (first unhandled error) and `crashed` (fatal error) at most once each. Ingest only
+  rolls these up; it doesn't store them as events.
+
+### What the SDK captures by itself (0.2)
+
+`init()` turns on all of this; `autoCapture` switches parts off.
+
+- **Errors:** uncaught errors and unhandled rejections (browser, React Native,
+  Node), with React Native fatal crashes and Node `uncaughtException` marked fatal.
+- **Network:** fetch and XHR in browsers and React Native; fetch, `node:http`, and
+  5xx responses the server sends on Node. Every request becomes a breadcrumb.
+  Failures, timeouts, and 5xx responses become errors with the calling code's stack.
+- **Sessions:** one per page load, React Native app launch (or return after 30 min
+  in the background), or Node process.
+- **Breadcrumbs:** console warnings and errors, History API navigation, clicks by
+  label, foreground/background, online/offline.
+- **Noise control:** `maxErrorsPerMinute` (default 60, a sixth of that for one
+  repeating error), `sampleRate`, and collapsed repeated breadcrumbs. Sessions
+  and fatal crashes are never sampled out.
+- **Older ingest:** if an ingest rejects the new fields with a 400, the SDK retries
+  without them and keeps sending that way, so errors still arrive.
 
 ## 3. Grouping and severity
 
 - **Fingerprint** = hash of `error.name` + the normalised top in-app stack frame
-  + `flow`. Numbers, IDs, and URLs are removed from messages before hashing, so
+  + `flow`. Failed requests use the method, path, and status class instead
+  (`GET /v1/feed 5xx`), so one failing endpoint is one issue whichever screen
+  called it. Numbers, IDs, and URLs are removed from messages before hashing, so
   "User 123 not found" and "User 456 not found" are one issue.
 - **Issue** = one fingerprint. It stores `firstSeen`, `lastSeen`, `count`,
   `sampleEvent`, and `title`.
@@ -111,8 +140,9 @@ Firestore and DynamoDB are both poor at "group by and count" queries, so ingest
 increments the **rollups at write time**. The dashboard only reads rollups and
 issues, which keeps it fast and cheap.
 
-Rollup dimensions: `flow`, `issue`, `os`, `appVersion`, `deviceModel`, and the
-`flow+outcome` pair.
+Rollup dimensions: `flow`, `issue`, `os`, `appVersion`, `deviceModel`, the
+`flow+outcome` pair, `session` (`version|started|errored|crashed`, for crash-free
+rates), and `endpoint` (failed requests per `METHOD path`).
 
 ## 5. Dashboard (MVP) — self-hosted
 
@@ -130,9 +160,11 @@ deBug hosts nothing.
   session; agents can use `Authorization: Bearer $DEBUG_API_TOKEN` instead.
   Phase 2: Google / Cognito SSO.
 - **Pages:**
-  1. **Overview:** a plain-language narrative, KPI tiles, errors by flow (coloured
-     by severity, click to filter), a 14-day trend, issues ranked by severity, and
-     OS, app version, and device breakdowns.
+  1. **Overview:** a plain-language narrative, KPI tiles (including crash-free
+     sessions), errors by flow (coloured by severity, click to filter), a 14-day
+     trend, release health (crash-free and error-free rates per version), failing
+     endpoints, issues ranked by severity, and OS, app version, and device
+     breakdowns.
   2. **Issue:** severity, the culprit frame, 48h hourly occurrences, where it
      happens (OS, version, device, network), the stack trace with in-app frames
      highlighted, breadcrumbs leading to the error, recent occurrences, and
@@ -144,8 +176,15 @@ deBug hosts nothing.
 
 ## 6. Roadmap
 
-- **MVP:** schema, SDK (React Native/Expo and web), ingest with Firestore and
+- **MVP (0.1):** schema, SDK (React Native/Expo and web), ingest with Firestore and
   DynamoDB adapters, overview, flow, and issue pages.
+- **Automatic capture (0.2, released):** network capture, sessions and crash-free
+  rates, automatic breadcrumbs, noise control.
+- **Next, automatic capture part 2:** freezes (JS thread stalls, long tasks,
+  event-loop lag), performance (web vitals, cold start, slow screens), memory
+  warnings, error spikes, rage clicks, and a Health page.
+- **Then, automatic capture part 3:** source map upload and readable production
+  stack traces; native iOS/Android crashes through an optional native module.
 - **Phase 2:** MCP server, AI "probable cause and fix" per issue, alerts
   (Slack/email), source maps, and severity weighted by user impact.
 - **Phase 3:** Mongo adapter, performance traces, session replay lite.
