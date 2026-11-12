@@ -48,6 +48,15 @@ describe("sdk", () => {
     await c.close();
   });
 
+  it("track() can skip the error when it is reported elsewhere", async () => {
+    const { c, sent } = setup();
+    await expect(c.track("checkout.payment", "charge", async () => { throw new Error("502"); }, { captureError: false })).rejects.toThrow();
+    await c.flush();
+    const events = sent.flatMap((s) => Envelope.parse(s).events);
+    expect(events.map((e) => e.type)).toEqual(["event"]);
+    await c.close();
+  });
+
   it("re-queues on 5xx and drops on 4xx", async () => {
     const bad = setup(503);
     bad.c.error("boom");

@@ -1,0 +1,6 @@
+{
+  "main": "../dist/expo-router.cjs",
+  "module": "../dist/expo-router.js",
+  "react-native": "../dist/expo-router.js",
+  "types": "../dist/expo-router.d.ts"
+}

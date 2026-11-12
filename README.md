@@ -16,31 +16,31 @@ Sign in with `demo@debug.local` / `demo-debug`.
 
 ## 1. Instrument the app
 
-```ts
-import { deBug, expoContext } from "@debug/sdk";
-import * as Device from "expo-device";
-import * as Application from "expo-application";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Platform } from "react-native";
-
-deBug.init({
-  endpoint: "https://<region>-<project>.cloudfunctions.net/debugIngest", // or your Lambda URL
-  ingestKey: "pk_live_megaton",            // public, write-only
-  app: { id: "megaton-native", version: Application.nativeApplicationVersion ?? undefined },
-  context: expoContext({ Device, Application, Platform }),
-  storage: AsyncStorage,                   // keeps events across restarts/offline
-  beforeSend: (e) => e,                    // scrub PII here
-});
-
-// Where you want it:
-deBug.breadcrumb("navigation", "Login → OtpScreen");
-await deBug.track("auth.login", "submit_otp", () => api.verifyOtp(code)); // logs success/failure + error
-deBug.error(err, { flow: "checkout.payment", step: "create_intent" });
-deBug.event("signup_abandoned", { flow: "onboarding.signup", outcome: "abandoned" });
+```bash
+npm install @debug/sdk
 ```
 
-`flow` is the part of the app (dotted lowercase). It's the main axis of the dashboard,
+```ts
+// Expo
+import { initExpo } from "@debug/sdk/expo";
+initExpo({ endpoint: "https://<your-ingest-url>", ingestKey: "pk_live_megaton", app: { id: "megaton-native" } });
+
+// Where it matters:
+await deBug.track("auth.login", "submit_otp", () => api.verifyOtp(code)); // success or failure, plus the error
+deBug.error(err, { flow: "checkout.payment", step: "create_intent" });
+```
+
+There are separate entry points for Expo, Expo Router, bare React Native, React, TanStack
+Start/Router and Node. See **[packages/sdk/README.md](packages/sdk/README.md)** for each one.
+
+`flow` names the part of the app, in dotted lowercase. It's the main axis of the dashboard,
 so use it consistently.
+
+### Try it locally, with no cloud
+
+In demo mode the dashboard also accepts events at `POST /api/ingest` with key `pk_local`.
+Point any app at `http://localhost:4400/api/ingest` (or `http://10.0.2.2:4400/...` from an
+Android emulator) and watch its errors appear.
 
 ## 2. Deploy ingest in your cloud
 
@@ -92,9 +92,40 @@ non-localhost address, set `DEBUG_INSECURE_COOKIES=1`.
 
 Agents and scripts: `curl -H "Authorization: Bearer $DEBUG_API_TOKEN" localhost:4400/api/summary`.
 
+## Example apps
+
+`examples/` holds one app per platform. Each one installs the SDK from **packed tarballs**,
+exactly what npm would serve, not from the workspace:
+
+```bash
+pnpm pack:local                 # build + pack every package into .packs/
+cd examples/<app> && npm install
+```
+
+| Example | What it shows | Verified |
+|---|---|---|
+| `vite-react` | React web: error boundary, window errors, rejections, `track()` | Run in the browser; all events reached the dashboard |
+| `tanstack-start` | Browser plus server functions (`withDebug`), router breadcrumbs | Run in the browser; client and server events reached the dashboard |
+| `expo-app` | Expo SDK 58: `initExpo`, error boundary, Expo Router breadcrumbs, Hermes rejections | Run in Expo Go on the iOS simulator; crash, rejection, breadcrumbs and device context arrived. The `track()` login button wasn't confirmed on the device |
+| `bare-react-native` | React Native 0.88 with `react-native-device-info` | Metro release bundles build for iOS and Android. **Not yet run on a device** |
+
+## Publishing
+
+The four packages (`@debug/schema`, `@debug/sdk`, `@debug/ingest`, `@debug/adapters`) are
+versioned together with [changesets](.changeset/README.md):
+
+1. Create the `@debug` organisation on npmjs.com (or confirm you own it).
+2. Add an npm automation token as the `NPM_TOKEN` secret in the GitHub repo.
+3. Add a changeset to each change (`pnpm changeset`). On merge to `main`, the Release workflow
+   opens a "Version packages" PR. Merging that PR publishes to npm, with provenance.
+
+In the repo, each package resolves to its TypeScript source. On publish, `publishConfig`
+switches the entry points to the built `dist/` files (ESM, CommonJS and `.d.ts`).
+
 ## Develop
 
 ```bash
 pnpm test        # vitest across packages
 pnpm typecheck
+pnpm build       # build every package with tsup
 ```

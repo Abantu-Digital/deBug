@@ -86,3 +86,19 @@ describe("ingest", () => {
     expect(normaliseMessage("User 123 not found at https://x.io/a")).toBe(normaliseMessage("User 9 not found at https://y.io/b"));
   });
 });
+
+describe("react native stacks", () => {
+  it("treats Hermes bundle frames as in-app and shortens the bundle path", async () => {
+    const { parseStack } = await import("@debug/schema/core");
+    const { culpritOf } = await import("./fingerprint");
+    const dev = parseStack(
+      "Error: boom\n    at Bomb (http://127.0.0.1:8081/node_modules/expo-router/entry.bundle//&platform=ios&dev=true:191207:20)\n    at anonymous (http://127.0.0.1:8081/node_modules/expo-router/entry.bundle//&platform=ios&dev=true:1:1)",
+    );
+    expect(dev[0]?.inApp).toBe(true);
+    expect(dev[1]?.inApp).toBe(false);
+    const release = parseStack("TypeError: x\n    at handleOtp (address at index.android.bundle:1:48211)");
+    expect(release[0]).toMatchObject({ fn: "handleOtp", file: "index.android.bundle", inApp: true });
+    const ev = { type: "error", id: "evt_00000001", ts: new Date().toISOString(), handled: true, error: { name: "Error", message: "boom", frames: dev } } as const;
+    expect(culpritOf(ev as never)).toBe("Bomb (entry.bundle:191207)");
+  });
+});

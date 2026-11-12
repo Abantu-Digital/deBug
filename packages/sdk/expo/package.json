@@ -1,0 +1,6 @@
+{
+  "main": "../dist/expo.cjs",
+  "module": "../dist/expo.js",
+  "react-native": "../dist/expo.js",
+  "types": "../dist/expo.d.ts"
+}

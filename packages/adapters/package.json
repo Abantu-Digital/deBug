@@ -8,11 +8,86 @@
     "./firestore": "./src/firestore.ts",
     "./dynamodb": "./src/dynamodb.ts"
   },
-  "scripts": { "typecheck": "tsc -p ." },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "build": "tsup",
+    "prepack": "tsup"
+  },
   "dependencies": {
-    "@debug/schema": "workspace:*",
+    "@debug/schema": "workspace:^"
+  },
+  "description": "deBug storage adapters for Firestore, DynamoDB and in-memory.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Abantu-Digital/deBug.git",
+    "directory": "packages/adapters"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "firestore.indexes.json"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": {
+          "import": "./dist/index.d.ts",
+          "require": "./dist/index.d.cts"
+        },
+        "import": "./dist/index.js",
+        "require": "./dist/index.cjs"
+      },
+      "./memory": {
+        "types": {
+          "import": "./dist/memory.d.ts",
+          "require": "./dist/memory.d.cts"
+        },
+        "import": "./dist/memory.js",
+        "require": "./dist/memory.cjs"
+      },
+      "./firestore": {
+        "types": {
+          "import": "./dist/firestore.d.ts",
+          "require": "./dist/firestore.d.cts"
+        },
+        "import": "./dist/firestore.js",
+        "require": "./dist/firestore.cjs"
+      },
+      "./dynamodb": {
+        "types": {
+          "import": "./dist/dynamodb.d.ts",
+          "require": "./dist/dynamodb.d.cts"
+        },
+        "import": "./dist/dynamodb.js",
+        "require": "./dist/dynamodb.cjs"
+      },
+      "./package.json": "./package.json"
+    }
+  },
+  "peerDependencies": {
+    "firebase-admin": ">=12",
+    "@aws-sdk/client-dynamodb": ">=3",
+    "@aws-sdk/lib-dynamodb": ">=3"
+  },
+  "peerDependenciesMeta": {
+    "firebase-admin": {
+      "optional": true
+    },
+    "@aws-sdk/client-dynamodb": {
+      "optional": true
+    },
+    "@aws-sdk/lib-dynamodb": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "firebase-admin": "^13.0.1",
     "@aws-sdk/client-dynamodb": "^3.700.0",
-    "@aws-sdk/lib-dynamodb": "^3.700.0",
-    "firebase-admin": "^13.0.1"
+    "@aws-sdk/lib-dynamodb": "^3.700.0"
   }
 }

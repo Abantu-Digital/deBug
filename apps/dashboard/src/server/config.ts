@@ -36,6 +36,8 @@ export function config() {
     sessionSecret: secret,
     users: env.DEBUG_DASHBOARD_USERS ?? "",
     apiToken: env.DEBUG_API_TOKEN,
+    /** Demo mode: keys accepted by POST /api/ingest. "*" = any app. */
+    localIngestKeys: env.DEBUG_LOCAL_INGEST_KEYS ?? "pk_local:*",
     firestoreRoot: env.DEBUG_FIRESTORE_ROOT ?? "debug_apps",
     dynamoTable: env.DEBUG_DYNAMO_TABLE ?? "debug",
     severity,

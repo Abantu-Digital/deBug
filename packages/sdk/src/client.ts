@@ -1,6 +1,6 @@
-import type { Breadcrumb, ContextInput, EnvelopeInput, EventInput, Severity } from "@debug/schema";
-import { parseStack } from "@debug/schema";
-import type { ContextPatch } from "./context";
+import type { Breadcrumb, ContextInput, EnvelopeInput, EventInput, Severity } from "@debug/schema/core";
+import { parseStack } from "@debug/schema/core";
+import { browserContext, mergeContext, type ContextPatch } from "./context";
 
 export const SDK_NAME = "@debug/sdk";
 export const SDK_VERSION = "0.1.0";
@@ -17,11 +17,15 @@ export interface InitOptions {
   /** Public, write-only key. Safe to ship in the app. */
   ingestKey: string;
   app: { id: string; version?: string; build?: string; environment?: string };
-  /** Platform context, e.g. expoContext({...}) or browserContext(). */
+  /**
+   * Platform context. Defaults to browserContext() in browsers. The framework entry points
+   * (`/expo`, `/react-native`, `/node`) fill this in for you.
+   */
   context?: ContextPatch;
   /** Capture uncaught errors and unhandled promise rejections. Default true. */
   captureGlobalErrors?: boolean;
   storage?: QueueStorage;
+  /** How often queued events are sent. 0 disables the timer (edge runtimes): call flush() yourself. Default 5000. */
   flushIntervalMs?: number;
   maxBatch?: number;
   maxBreadcrumbs?: number;
@@ -56,15 +60,29 @@ export class DebugClient {
   private backoffUntil = 0;
   private failures = 0;
   private ready = false;
+  private handlersInstalled = false;
 
   init(options: InitOptions): this {
+    if (this.timer) clearInterval(this.timer);
     this.opts = { flushIntervalMs: 5000, maxBatch: 50, maxBreadcrumbs: 30, captureGlobalErrors: true, ...options };
+    if (!this.opts.context && typeof window !== "undefined") this.opts.context = browserContext();
     this.ready = true;
     void this.restore();
-    if (this.opts.captureGlobalErrors) this.installGlobalHandlers();
-    this.timer = setInterval(() => void this.flush(), this.opts.flushIntervalMs);
-    (this.timer as { unref?: () => void }).unref?.();
+    if (this.opts.captureGlobalErrors && !this.handlersInstalled) this.installGlobalHandlers();
+    if (this.opts.flushIntervalMs > 0) {
+      this.timer = setInterval(() => void this.flush(), this.opts.flushIntervalMs);
+      (this.timer as { unref?: () => void }).unref?.();
+    }
     return this;
+  }
+
+  get initialized() {
+    return this.ready;
+  }
+
+  /** Merge extra context (e.g. after an async device lookup). Applies to events sent from now on. */
+  setContext(patch: ContextPatch) {
+    if (this.opts) this.opts.context = mergeContext(this.opts.context ?? {}, patch);
   }
 
   setUser(id: string | undefined) {
@@ -100,14 +118,19 @@ export class DebugClient {
   }
 
   /** Wraps an async step: logs success, or failure + the error, against a flow. */
-  async track<T>(flow: string, step: string, fn: () => Promise<T>): Promise<T> {
+  /**
+   * Wraps an async step: logs a success or failure outcome for the flow, plus the error.
+   * Pass `{ captureError: false }` when the error is already reported elsewhere, e.g. a
+   * server function wrapped in withDebug, so it isn't counted twice.
+   */
+  async track<T>(flow: string, step: string, fn: () => Promise<T>, opts: { captureError?: boolean } = {}): Promise<T> {
     try {
       const out = await fn();
       this.event(`${flow}.${step}`, { flow, step, outcome: "success" });
       return out;
     } catch (err) {
       this.event(`${flow}.${step}`, { flow, step, outcome: "failure" });
-      this.error(err, { flow, step });
+      if (opts.captureError !== false) this.error(err, { flow, step });
       throw err;
     }
   }
@@ -196,6 +219,7 @@ export class DebugClient {
   }
 
   private installGlobalHandlers() {
+    this.handlersInstalled = true;
     const g = globalThis as Record<string, any>;
     // React Native
     if (g.ErrorUtils?.setGlobalHandler) {
@@ -206,8 +230,8 @@ export class DebugClient {
         prev?.(err, isFatal);
       });
     }
-    // Browser
-    if (typeof g.addEventListener === "function") {
+    // Browser (not workers / edge runtimes, which also expose addEventListener)
+    if (typeof window !== "undefined" && typeof g.addEventListener === "function") {
       g.addEventListener("error", (ev: { error?: unknown; message?: string }) => this.error(ev.error ?? ev.message, { handled: false }));
       g.addEventListener("unhandledrejection", (ev: { reason?: unknown }) => this.error(ev.reason, { handled: false }));
     }

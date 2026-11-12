@@ -1,9 +1,13 @@
 import { DebugClient } from "./client";
 
-export { DebugClient, SDK_VERSION } from "./client";
+export { DebugClient, SDK_NAME, SDK_VERSION } from "./client";
 export type { InitOptions, EventMeta, QueueStorage } from "./client";
-export { browserContext, expoContext } from "./context";
-export { parseStack } from "@debug/schema";
+export { browserContext, mergeContext, type ContextPatch } from "./context";
+export { parseStack } from "@debug/schema/core";
+export type { Breadcrumb, EventInput, Severity, StackFrame } from "@debug/schema/core";
 
-/** Default singleton: `import { deBug } from "@debug/sdk"`. */
+/**
+ * Default client. Framework entry points (`/react`, `/react-native`, `/expo`, `/node`) use this
+ * same instance, so `import { deBug } from "@debug/sdk"` works everywhere.
+ */
 export const deBug = new DebugClient();

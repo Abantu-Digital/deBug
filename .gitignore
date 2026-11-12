@@ -4,3 +4,10 @@ dist
 *.log
 .DS_Store
 !.env.example
+.packs
+examples/*/node_modules
+examples/*/ios/Pods
+examples/*/ios/build
+examples/*/android/build
+examples/*/android/app/build
+examples/*/.expo

@@ -1,6 +1,8 @@
 import { z } from "zod";
+import { SCHEMA_VERSION } from "./core";
 
-export const SCHEMA_VERSION = 1;
+// Everything that does not need zod lives in ./core so client bundles stay small.
+export * from "./core";
 
 /** Dotted, lowercase identifier for a part of the app, e.g. "auth.login". */
 export const Flow = z
@@ -183,23 +185,3 @@ export interface RollupRow {
   events: number;
 }
 
-/* ---------- Severity (shared by ingest + dashboard) ---------- */
-
-export interface SeverityThresholds {
-  critical: number;
-  high: number;
-  medium: number;
-}
-
-/** Occurrences in the trailing 24h window. */
-export const DEFAULT_SEVERITY_THRESHOLDS: SeverityThresholds = { critical: 100, high: 25, medium: 5 };
-
-export function severityFromCount(count: number, t: SeverityThresholds = DEFAULT_SEVERITY_THRESHOLDS): Severity {
-  if (count >= t.critical) return "critical";
-  if (count >= t.high) return "high";
-  if (count >= t.medium) return "medium";
-  return "low";
-}
-
-export const SEVERITY_ORDER: Record<Severity, number> = { critical: 3, high: 2, medium: 1, low: 0 };
-export { parseStack } from "./stack";
