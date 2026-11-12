@@ -49,7 +49,7 @@ export class DebugErrorBoundary extends Component<DebugErrorBoundaryProps, State
 /** Adds a navigation breadcrumb whenever `path` changes. Works with any router. */
 export function useDebugNavigation(path: string | undefined, client: DebugClient = deBug) {
   useEffect(() => {
-    if (path) client.breadcrumb("navigation", path);
+    if (path) client.navigated(path);
   }, [path, client]);
 }
 
@@ -64,7 +64,7 @@ interface RouterLike {
  * Returns an unsubscribe function.
  */
 export function trackTanStackRouter(router: RouterLike, client: DebugClient = deBug) {
-  return router.subscribe("onResolved", ({ toLocation }) => client.breadcrumb("navigation", toLocation.pathname));
+  return router.subscribe("onResolved", ({ toLocation }) => client.navigated(toLocation.pathname));
 }
 
 export { deBug } from "./index";

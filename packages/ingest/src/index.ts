@@ -80,6 +80,11 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
     // Clients that don't parse stacks (curl, other SDKs) still get grouped by code location.
     if (event.type === "error" && !event.error.frames?.length && event.error.stack) event.error.frames = parseStack(event.error.stack);
     const day = dayOf(event.ts);
+    // Session health only feeds the crash-free rollup; storing each one would cost a write per session.
+    if (event.type === "session") {
+      rollups.push({ app, day, dimension: "session", key: `${context.app.version || "unknown"}|${event.status}`, kind: "event", by: 1 });
+      continue;
+    }
     const kind = event.type === "error" ? "error" : "event";
     const inc = (dimension: RollupIncrement["dimension"], key: string | undefined) =>
       rollups.push({ app, day, dimension, key: key || "unknown", kind, by: 1 });
@@ -101,6 +106,7 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
         lastEvent: cur && cur.ts > event.ts ? cur.lastEvent : se,
       });
       inc("issue", fp);
+      if (event.request) inc("endpoint", `${event.request.method.toUpperCase()} ${event.request.url}`);
       rollups.push({ app, day: event.ts.slice(0, 13), dimension: "issueHour", key: fp, kind, by: 1 });
     }
 
@@ -116,12 +122,12 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
 
   await opts.store.registerApp(app);
   await Promise.all([
-    opts.store.writeEvents(stored),
+    stored.length ? opts.store.writeEvents(stored) : undefined,
     opts.store.upsertIssues([...issues.values()]),
     opts.store.incrementRollups(rollups),
   ]);
 
-  return { status: 202, body: { ok: true, accepted: stored.length } };
+  return { status: 202, body: { ok: true, accepted: env.events.length } };
 }
 
 export const CORS_HEADERS = {

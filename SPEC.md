@@ -155,7 +155,7 @@ deBug hosts nothing.
 ```
 packages/schema     event schema (zod) + /core: types, severity, stack parsing (no zod)
 packages/sdk        the npm package apps install: core + /react /react-native /expo
-                    /expo-router /node entry points (~3 KB gzipped core)
+                    /expo-router /node entry points (~6 KB gzipped core)
 packages/ingest     validate, fingerprint and roll up events; /firebase and /lambda handlers
 packages/adapters   storage adapters: memory, firestore, dynamodb (cloud SDKs are optional peers)
 apps/dashboard      self-hosted TanStack Start dashboard (Recharts); demo mode accepts local ingest

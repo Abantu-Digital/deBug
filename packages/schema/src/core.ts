@@ -14,6 +14,7 @@ export type {
   Severity,
   ErrorEvent,
   CustomEvent,
+  SessionEvent,
   Event,
   EventInput,
   Envelope,

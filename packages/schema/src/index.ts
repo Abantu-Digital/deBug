@@ -96,6 +96,16 @@ export const ErrorEvent = EventBase.extend({
     frames: z.array(StackFrame).max(100).optional(),
   }),
   breadcrumbs: z.array(Breadcrumb).max(50).optional(),
+  /** Set when the error is a failed HTTP request captured by the SDK's network instrumentation. */
+  request: z
+    .object({
+      method: z.string().max(10),
+      /** Path without query string or fragment, ids replaced with :id, e.g. "/v1/orders/:id". */
+      url: z.string().max(500),
+      status: z.number().int().optional(), // absent for network failures and timeouts
+      durationMs: z.number().optional(),
+    })
+    .optional(),
 });
 
 export const CustomEvent = EventBase.extend({
@@ -105,7 +115,17 @@ export const CustomEvent = EventBase.extend({
   props: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
 });
 
-export const Event = z.discriminatedUnion("type", [ErrorEvent, CustomEvent]);
+/**
+ * Session health, sent automatically by the SDK: "started" once per session, then at most one
+ * "errored" (first unhandled error) and one "crashed" (fatal error). Crash-free rate per release
+ * = 1 - crashed / started.
+ */
+export const SessionEvent = EventBase.extend({
+  type: z.literal("session"),
+  status: z.enum(["started", "errored", "crashed"]),
+});
+
+export const Event = z.discriminatedUnion("type", [ErrorEvent, CustomEvent, SessionEvent]);
 
 export const Envelope = z.object({
   schema: z.literal(SCHEMA_VERSION).default(SCHEMA_VERSION),
@@ -125,6 +145,7 @@ export type StackFrame = z.infer<typeof StackFrame>;
 export type Severity = z.infer<typeof Severity>;
 export type ErrorEvent = z.infer<typeof ErrorEvent>;
 export type CustomEvent = z.infer<typeof CustomEvent>;
+export type SessionEvent = z.infer<typeof SessionEvent>;
 export type Event = z.infer<typeof Event>;
 export type EventInput = z.input<typeof Event>;
 export type Envelope = z.infer<typeof Envelope>;
@@ -165,7 +186,11 @@ export type RollupDimension =
   | "os"
   | "appVersion"
   | "deviceModel"
-  | "flowOutcome";
+  | "flowOutcome"
+  /** Session health: key "<appVersion>|started|errored|crashed", counted in `events`. */
+  | "session"
+  /** Failed HTTP requests captured by the SDK: key "<METHOD> <path>", counted in `errors`. */
+  | "endpoint";
 
 export interface RollupIncrement {
   app: string;

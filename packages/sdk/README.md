@@ -4,11 +4,13 @@ Log errors and events from your app into **your own** cloud. This is the client 
 [deBug](https://github.com/Abantu-Digital/deBug): events go to an ingest function you deploy
 in Firebase or AWS, and a dashboard you run yourself tells you what is failing and why.
 
-- About 3 KB gzipped, with no runtime dependencies in your bundle.
+- About 6 KB gzipped, with no runtime dependencies in your bundle.
 - Works with React, React Native (bare and Expo), Expo Router, TanStack Start/Router, Next.js
   and plain Node.
-- Captures crashes, unhandled rejections and render errors automatically. Batches, retries,
-  and queues events while offline.
+- **Works on its own once initialised:** crashes, failed requests, sessions and the steps
+  leading up to each error are recorded without any extra code. See
+  [What it records by itself](#what-it-records-by-itself).
+- Batches, retries, rate-limits, and queues events while offline.
 
 ## Install
 
@@ -31,6 +33,56 @@ hooks, and they all share the same `deBug` client.
 
 Your ingest endpoint and key come from your deBug deployment. During development, point at a
 dashboard running in demo mode: `http://localhost:4400/api/ingest` with key `pk_local`.
+
+## What it records by itself
+
+Calling `init()` (or `initExpo`, `initReactNative`, `initNode`) turns on everything in this
+table. The manual API below is for what only you know: which part of the app a step belongs to,
+and whether it succeeded.
+
+| | Browser | React Native / Expo | Node |
+|---|---|---|---|
+| Uncaught errors and unhandled rejections | ✓ | ✓ (fatal crashes marked critical) | ✓ (flushes, then exits like Node) |
+| Render errors | with `DebugErrorBoundary` | with `DebugErrorBoundary` | |
+| **Failed requests** (5xx, timeouts, network failures) as errors, every request as a breadcrumb | fetch, XHR | fetch, XHR (axios too) | fetch, `node:http` (axios, SDKs), plus 5xx your server sends |
+| **Sessions**: crash-free and error-free rates per release | one per page load | new session after 30 min in the background | one per process |
+| Navigation breadcrumbs | any router (History API) | add `useDebugExpoRouter` or `trackReactNavigation` | |
+| Clicks on buttons and links, by their label | ✓ | | |
+| `console.warn` / `console.error` as breadcrumbs | ✓ | ✓ | off by default |
+| Foreground/background, online/offline | ✓ | foreground/background | |
+| Device, OS, app version, network type on every event | ✓ | ✓ | ✓ |
+
+Every error carries the last 30 breadcrumbs, so the dashboard shows what happened just
+before it: the screen, the click, the request that failed.
+
+**Privacy.** Query strings and fragments are dropped from every URL before anything is
+recorded, and ids in paths become `:id` (`/v1/orders/8812?token=…` becomes `/v1/orders/:id`).
+Request and response bodies, headers and what users type are never read. Use `beforeSend` to
+scrub anything else.
+
+**Noise control.** At most 60 errors a minute are sent (`maxErrorsPerMinute`), and one repeating
+error gets at most a sixth of that. Breadcrumbs that repeat are collapsed into one. `sampleRate`
+keeps a fraction of errors and events. Sessions and fatal crashes are never sampled out, so
+crash-free rates stay accurate.
+
+### Tuning it
+
+```ts
+deBug.init({
+  endpoint, ingestKey, app: { id: "your-app", version: "2.4.0" },
+  autoCapture: { console: false, clicks: false }, // or `false` to turn everything off
+  network: {
+    flows: [["/v2/auth/", "auth.login"], [/\/payments\//, "checkout.payment"]], // tag requests by URL
+    ignoreUrls: ["analytics.example.com"],
+    isFailure: (status) => status >= 500 || status === 429, // default: 500 and above
+    slowMs: 3000, // slower requests get a warning breadcrumb
+  },
+  sampleRate: 1,
+  maxErrorsPerMinute: 60,
+});
+```
+
+Requests to your ingest endpoint and to the Metro and Expo dev servers are never recorded.
 
 ## Expo
 

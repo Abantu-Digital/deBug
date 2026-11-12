@@ -30,8 +30,14 @@ await deBug.track("auth.login", "submit_otp", () => api.verifyOtp(code)); // suc
 deBug.error(err, { flow: "checkout.payment", step: "create_intent" });
 ```
 
+Once initialised, deBug works on its own. It records crashes, failed requests (with the code
+that made them), sessions and crash-free rates per release, and the breadcrumbs leading up to
+each error: navigation, clicks, console warnings, failed requests. The manual calls above add
+what only you know: which flow a step belongs to, and whether it succeeded.
+
 There are separate entry points for Expo, Expo Router, bare React Native, React, TanStack
-Start/Router and Node. See **[packages/sdk/README.md](packages/sdk/README.md)** for each one.
+Start/Router and Node. See **[packages/sdk/README.md](packages/sdk/README.md)** for each one,
+and for what each platform records by itself.
 
 `flow` names the part of the app, in dotted lowercase. It's the main axis of the dashboard,
 so use it consistently.

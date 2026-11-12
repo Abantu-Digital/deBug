@@ -25,6 +25,11 @@ export function App() {
         setStatus("Logged a failed login and its error under auth.login.");
       }
     }],
+    ["Call a server that is down (no deBug code)", async () => {
+      // Nothing here mentions deBug: network capture records the failure on its own.
+      await fetch("http://localhost:9/v1/orders/8812?token=secret").catch(() => {});
+      setStatus("A request failed. deBug recorded it automatically, without the query string.");
+    }],
     ["Custom event (search used)", () => {
       deBug.event("search.used", { flow: "search.query", outcome: "success", props: { results: 12 } });
       setStatus("Logged a success event for search.query.");

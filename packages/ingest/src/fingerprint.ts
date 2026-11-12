@@ -49,7 +49,14 @@ export function culpritOf(e: ErrorEvent): string | undefined {
  */
 export function fingerprint(e: ErrorEvent): string {
   const f = topInAppFrame(e.error.frames);
-  const where = f ? `${f.fn ?? "?"}@${normaliseFile(f.file)}` : normaliseMessage(e.error.message);
+  // Failed requests group by endpoint and status class: every 503 from /v1/feed is one issue,
+  // whichever screen made the call.
+  const r = e.request;
+  const where = r
+    ? `${r.method.toUpperCase()} ${r.url} ${r.status ? `${Math.floor(r.status / 100)}xx` : "failed"}`
+    : f
+      ? `${f.fn ?? "?"}@${normaliseFile(f.file)}`
+      : normaliseMessage(e.error.message);
   return createHash("sha256")
     .update([e.error.name, where, e.flow ?? ""].join("|"))
     .digest("hex")
