@@ -32,6 +32,10 @@ export async function seedDemo(): Promise<MemoryStore> {
     weight: (dayAgo: number, d: (typeof devices)[number], version: string) => number;
     error: () => { name: string; message: string; stack: string };
     crumbs?: { category: "network" | "navigation" | "ui"; message: string; level?: "error" | "info" }[];
+    /** Unhandled and fatal: the app crashes (feeds crash-free rates). */
+    fatal?: boolean;
+    /** The failed request the SDK's network capture records alongside the error. */
+    request?: { method: string; url: string; status?: number; message: string };
   };
 
   const scenarios: Scenario[] = [
@@ -44,8 +48,9 @@ export async function seedDemo(): Promise<MemoryStore> {
       crumbs: [
         { category: "navigation", message: "Login → OtpScreen" },
         { category: "ui", message: "Tapped Verify" },
-        { category: "network", message: "POST /v2/auth/otp/verify → 200 (body: {\"session\":{...}})" },
+        { category: "network", message: "POST /v2/auth/otp/verify → 200 (412ms)" },
       ],
+      fatal: true,
     },
     {
       flow: "checkout.payment",
@@ -54,15 +59,17 @@ export async function seedDemo(): Promise<MemoryStore> {
       error: () => ({ name: "NetworkError", message: `Request timed out after ${pick([15000, 20000, 30000])}ms`, stack: stack("createPaymentIntent", "services/payments.ts", 54) }),
       crumbs: [
         { category: "navigation", message: "Cart → Checkout" },
-        { category: "network", message: "POST /v1/payments/intent → timeout", level: "error" },
+        { category: "network", message: "POST /v1/payments/intent → timed out (30000ms)", level: "error" },
       ],
+      request: { method: "POST", url: "/v1/payments/intent", message: "POST /v1/payments/intent timed out" },
     },
     {
       flow: "feed.load",
       step: "parse",
       weight: () => 0.35,
       error: () => ({ name: "SyntaxError", message: "JSON Parse error: Unexpected token '<'", stack: stack("loadFeed", "features/feed/useFeed.ts", 23) }),
-      crumbs: [{ category: "network", message: "GET /v1/feed?page=2 → 502", level: "error" }],
+      crumbs: [{ category: "network", message: "GET /v1/feed → 502 (2210ms)", level: "error" }],
+      request: { method: "GET", url: "/v1/feed", status: 502, message: "GET /v1/feed responded 502" },
     },
     {
       flow: "profile.update",
@@ -88,19 +95,37 @@ export async function seedDemo(): Promise<MemoryStore> {
       const appVersion = rand() < 0.85 ? version : "2.3.1";
       const events: EventInput[] = [];
       const userId = `user_${Math.floor(rand() * 400)}`;
+      const id = () => `evt_${(seq++).toString().padStart(10, "0")}`;
+      let crashed = false;
 
       for (const sc of scenarios) {
         const w = sc.weight(dayAgo, dev, appVersion);
         let n = Math.floor(w) + (rand() < w % 1 ? 1 : 0);
         while (n-- > 0) {
           const err = sc.error();
+          if (sc.request) {
+            const r = sc.request;
+            events.push({
+              type: "error",
+              id: id(),
+              ts,
+              flow: sc.flow,
+              handled: true,
+              tags: { source: "network" },
+              error: { name: r.status ? "HttpError" : "NetworkError", message: r.message },
+              request: { method: r.method, url: r.url, status: r.status, durationMs: r.status ? 2210 : 30000 },
+              breadcrumbs: (sc.crumbs ?? []).map((c) => ({ ts, level: c.level ?? "info", ...c })),
+            });
+          }
+          if (sc.fatal) crashed = true;
           events.push({
             type: "error",
             id: `evt_${(seq++).toString().padStart(10, "0")}`,
             ts,
             flow: sc.flow,
             step: sc.step,
-            handled: true,
+            handled: !sc.fatal,
+            ...(sc.fatal ? { severity: "critical" as const } : {}),
             error: err,
             breadcrumbs: (sc.crumbs ?? []).map((c) => ({ ts, level: c.level ?? "info", ...c })),
           });
@@ -111,7 +136,10 @@ export async function seedDemo(): Promise<MemoryStore> {
         if (rand() < 0.55)
           events.push({ type: "event", id: `evt_${(seq++).toString().padStart(10, "0")}`, ts, name: `${flow}.complete`, flow, outcome: "success" });
       }
-      if (!events.length) continue;
+      // Session markers, as the SDK sends them: started, then errored/crashed at most once.
+      events.unshift({ type: "session", id: id(), ts, status: "started" });
+      if (crashed) events.push({ type: "session", id: id(), ts, status: "errored" }, { type: "session", id: id(), ts, status: "crashed" });
+      if (events.length > 100) events.length = 100;
 
       const env: EnvelopeInput = {
         sdk: { name: "@debugkit/sdk", version: "0.1.0" },

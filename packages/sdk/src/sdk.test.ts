@@ -14,7 +14,7 @@ function setup(status = 200) {
     ingestKey: "pk_test",
     app: { id: "megaton-native", version: "2.3.1" },
     context: { os: { name: "android", version: "14" }, runtime: { name: "react-native" } },
-    captureGlobalErrors: false,
+    autoCapture: false,
     fetch: fetch as unknown as typeof globalThis.fetch,
   });
   return { c, sent, fetch };

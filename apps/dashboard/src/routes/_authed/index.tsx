@@ -70,7 +70,12 @@ function Overview() {
         />
         <Stat label="Critical issues" value={totals.criticalIssues} tone={totals.criticalIssues ? "critical" : undefined} hint="≥ threshold occurrences in 24h" />
         <Stat label="Failing flows" value={totals.failingFlows} hint="parts of the app with errors in 24h" />
-        <Stat label="Active issues (14d)" value={totals.activeIssues} hint={`${totals.events14d.toLocaleString()} tracked events in 14d`} />
+        <Stat
+          label="Crash-free sessions (14d)"
+          value={asPct(summary.health.crashFreeRate)}
+          tone={summary.health.crashFreeRate !== null && summary.health.crashFreeRate < 0.99 ? "high" : undefined}
+          hint={`${summary.health.sessions14d.toLocaleString()} sessions · ${totals.activeIssues} active issues`}
+        />
       </div>
 
       <div className="grid gap-5 lg:grid-cols-5">
@@ -96,6 +101,47 @@ function Overview() {
             <DataTable columns={["Day", "Errors", "Events"]} rows={summary.trend.map((d) => [d.day, d.errors, d.events])} />
           </Card>
         </div>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Card
+          title="Release health"
+          subtitle="Share of sessions without a crash or unhandled error, per app version (14d). Recorded automatically by the SDK."
+        >
+          {summary.health.releases.length ? (
+            <div className="-mx-4 overflow-x-auto sm:mx-0">
+              <table className="tabular w-full min-w-[420px] text-left text-sm">
+                <thead className="text-xs text-muted">
+                  <tr className="border-b border-line">
+                    <th className="px-4 py-2 font-medium sm:px-2">Version</th>
+                    <th className="px-2 py-2 text-right font-medium">Sessions</th>
+                    <th className="px-2 py-2 text-right font-medium">Crash-free</th>
+                    <th className="px-2 py-2 text-right font-medium">Error-free</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.health.releases.map((r) => (
+                    <tr key={r.version} className="border-b border-line last:border-0">
+                      <td className="px-4 py-2 font-medium sm:px-2">{r.version}</td>
+                      <td className="px-2 py-2 text-right text-muted">{r.sessions.toLocaleString()}</td>
+                      <td className={`px-2 py-2 text-right font-semibold ${healthTone(r.crashFreeRate)}`}>{asPct(r.crashFreeRate)}</td>
+                      <td className="px-2 py-2 text-right">{asPct(r.errorFreeRate)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-sm text-muted">No sessions yet. They're recorded automatically from SDK 0.2.</p>
+          )}
+        </Card>
+        <Card title="Failing endpoints" subtitle="Requests that returned 5xx, timed out or failed, 14d. Captured automatically from fetch and XHR.">
+          {summary.health.endpoints.length ? (
+            <ShareBars rows={summary.health.endpoints.map((e) => ({ key: e.endpoint, value: e.failures14d }))} />
+          ) : (
+            <p className="text-sm text-muted">No failed requests.</p>
+          )}
+        </Card>
       </div>
 
       <Card
@@ -150,4 +196,13 @@ function Overview() {
       </p>
     </main>
   );
+}
+
+function asPct(rate: number | null) {
+  return rate === null ? "—" : `${(Math.floor(rate * 1000) / 10).toFixed(1)}%`;
+}
+
+function healthTone(rate: number | null) {
+  if (rate === null) return "";
+  return rate < 0.98 ? "text-sev-critical" : rate < 0.995 ? "text-sev-high" : "";
 }

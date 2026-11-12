@@ -70,6 +70,8 @@ export interface ReactNativeInitOptions extends InitOptions {
 
 declare const __DEV__: boolean | undefined;
 
+const SESSION_TIMEOUT_MS = 30 * 60_000;
+
 /** Initialise deBug in a React Native app (bare or Expo). Fills in device context and flushes when the app is backgrounded. */
 export function initReactNative(options: ReactNativeInitOptions, client: DebugClient = deBug): DebugClient {
   const { deviceInfo, captureUnhandledRejections = "production", ...rest } = options;
@@ -80,8 +82,18 @@ export function initReactNative(options: ReactNativeInitOptions, client: DebugCl
     context: mergeContext(base, rest.context ?? {}),
   });
 
+  // Sessions end after 30 minutes in the background; coming back after that starts a new one.
+  let backgroundedAt = 0;
   AppState.addEventListener("change", (state) => {
-    if (state !== "active") void client.flush();
+    if (state === "active") {
+      if (client.autoCapture.lifecycle) client.sink().lifecycle("foreground");
+      if (backgroundedAt && Date.now() - backgroundedAt > SESSION_TIMEOUT_MS) client.startSession();
+      backgroundedAt = 0;
+    } else if (!backgroundedAt) {
+      backgroundedAt = Date.now();
+      if (client.autoCapture.lifecycle) client.sink().lifecycle("background");
+      else void client.flush();
+    }
   });
 
   const dev = typeof __DEV__ !== "undefined" && __DEV__;
@@ -108,11 +120,9 @@ interface NavigationRefLike {
  *   <NavigationContainer ref={nav} {...trackReactNavigation(nav)}>
  */
 export function trackReactNavigation(ref: NavigationRefLike, client: DebugClient = deBug) {
-  let last: string | undefined;
   const record = () => {
     const name = ref.getCurrentRoute()?.name;
-    if (name && name !== last) client.breadcrumb("navigation", last ? `${last} → ${name}` : name);
-    last = name ?? last;
+    if (name) client.navigated(name);
   };
   return { onReady: record, onStateChange: record };
 }

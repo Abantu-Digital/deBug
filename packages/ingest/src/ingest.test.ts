@@ -7,7 +7,7 @@ import { lambdaHandler } from "./lambda";
 const NOW = new Date("2026-11-09T12:00:00.000Z");
 
 /** Wire a real SDK client straight into ingest + memory store. */
-function harness() {
+function harness(opts: { autoCapture?: Parameters<DebugClient["init"]>[0]["autoCapture"] } = {}) {
   const store = new MemoryStore();
   const keys = { pk_test: "megaton-native" };
   const fetch = (async (_url: string, init: { body: string; headers: Record<string, string> }) => {
@@ -19,7 +19,7 @@ function harness() {
     ingestKey: "pk_test",
     app: { id: "megaton-native", version: "2.3.1" },
     context: { os: { name: "Android", version: "14" }, runtime: { name: "react-native" }, device: { model: "SM-S918B" } },
-    captureGlobalErrors: false,
+    autoCapture: opts.autoCapture ?? false,
     fetch,
   });
   return { store, client };
@@ -32,6 +32,35 @@ function loginError(user: number) {
 }
 
 describe("ingest", () => {
+  it("rolls session markers up per release without storing them as events", async () => {
+    const { store, client } = harness({ autoCapture: { sessions: true } });
+    client.error(new Error("crash"), { handled: false, fatal: true });
+    await client.close();
+    while ((client as any).queue.length) await client.flush();
+    const rows = await store.getRollups("megaton-native", "session", "2026-11-09", "2026-11-09");
+    expect(Object.fromEntries(rows.map((r) => [r.key, r.events]))).toEqual({ "2.3.1|started": 1, "2.3.1|errored": 1, "2.3.1|crashed": 1 });
+    expect(store.events.map((e) => e.event.type)).toEqual(["error"]);
+  });
+
+  it("groups failed requests by endpoint and status class, wherever they were made", async () => {
+    const { store, client } = harness();
+    const sendFailure = (status: number, where: string) =>
+      client.captureError(
+        { name: "HttpError", message: `GET /v1/feed responded ${status}`, stack: `Error\n    at ${where} (/app/src/${where}.ts:1:1)` },
+        { tags: { source: "network" } },
+        { method: "GET", url: "/v1/feed", status },
+      );
+    sendFailure(502, "FeedScreen");
+    sendFailure(503, "HomeScreen");
+    sendFailure(404, "FeedScreen");
+    await client.close();
+    while ((client as any).queue.length) await client.flush();
+    const issues = await store.listIssues("megaton-native");
+    expect(issues.map((i) => i.count).sort()).toEqual([1, 2]);
+    const rows = await store.getRollups("megaton-native", "endpoint", "2026-11-09", "2026-11-09");
+    expect(rows.map((r) => [r.key, r.errors])).toEqual([["GET /v1/feed", 3]]);
+  });
+
   it("groups repeated errors into one issue and rolls up by flow / os / version", async () => {
     const { store, client } = harness();
     for (let u = 0; u < 3; u++) client.error(loginError(u), { flow: "auth.login" });
