@@ -8,10 +8,14 @@ export function mergeContext(a: ContextPatch, b: ContextPatch): ContextPatch {
   const out: Record<string, unknown> = { ...a };
   for (const [k, v] of Object.entries(b)) {
     const prev = out[k];
-    out[k] = v && typeof v === "object" && prev && typeof prev === "object" ? { ...prev, ...v } : v ?? prev;
+    // undefined in b never wipes a value a: expo-device reading nothing mustn't erase what
+    // react-native-device-info read.
+    out[k] = v && typeof v === "object" && prev && typeof prev === "object" ? { ...prev, ...defined(v as Record<string, unknown>) } : v ?? prev;
   }
   return out as ContextPatch;
 }
+
+const defined = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([, x]) => x !== undefined));
 
 function safe<T>(fn: () => T): T | undefined {
   try {

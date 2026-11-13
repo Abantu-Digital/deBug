@@ -25,10 +25,11 @@ export default defineConfig({
   // build) only bundles literal require("…") calls, so put the device-info one back.
   async onSuccess() {
     for (const f of readdirSync("dist")) {
-      if (!f.endsWith(".js")) continue;
+      if (!f.endsWith(".js") && !f.endsWith(".cjs")) continue;
       const file = `dist/${f}`;
       const src = readFileSync(file, "utf8");
-      const out = src.replace(/__require\("react-native-device-info"\)/g, 'require("react-native-device-info")');
+      // ESM: __require("…"); CJS chunks: someChunk.__require("…").
+      const out = src.replace(/(?:[\w$]+\.)?__require\("react-native-device-info"\)/g, 'require("react-native-device-info")');
       if (out !== src) writeFileSync(file, out);
     }
   },

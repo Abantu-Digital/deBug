@@ -66,7 +66,7 @@ function read<T>(fn: (() => T) | undefined): T | undefined {
 const known = (v: string | undefined) => (v === undefined || v === "" || v === "unknown" || v === "--" ? undefined : v);
 
 /** Free storage, grouped so the tag splits devices instead of listing byte counts. */
-export const FREE_DISK_BANDS: { belowMb: number; label: string }[] = [
+const FREE_DISK_BANDS: { belowMb: number; label: string }[] = [
   { belowMb: 500, label: "<500MB" },
   { belowMb: 2048, label: "500MB-2GB" },
   { belowMb: 8192, label: "2GB-8GB" },
@@ -80,15 +80,10 @@ export function freeDiskBand(bytes: number | undefined): string | undefined {
 }
 
 type Loader = () => unknown;
-let loader: Loader = () => {
-  // Plain require inside try: Metro treats it as optional, so a missing package is a runtime
-  // miss here rather than a build error. (The build keeps this a literal require; see tsup.config.)
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return require("react-native-device-info");
-};
+let testLoader: Loader | undefined;
 /** For tests: replace how react-native-device-info is loaded. */
 export function setDeviceInfoLoader(fn: Loader) {
-  loader = fn;
+  testLoader = fn;
   cached = undefined;
 }
 
@@ -105,7 +100,11 @@ export function loadDeviceInfo(): DeviceInfoModule | undefined {
     const turbo = (globalThis as { __turboModuleProxy?: (name: string) => unknown }).__turboModuleProxy;
     const native = NativeModules?.RNDeviceInfo ?? read(() => turbo?.("RNDeviceInfo"));
     if (native) {
-      const m = loader() as { default?: DeviceInfoModule } & DeviceInfoModule;
+      // The require sits directly inside this try: Metro then treats it as optional, so an app
+      // without the package still builds (and gets the fallback). The build keeps it a literal
+      // require in every chunk; see tsup.config.ts.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const m = (testLoader ? testLoader() : require("react-native-device-info")) as { default?: DeviceInfoModule } & DeviceInfoModule;
       mod = m?.default ?? m;
     }
   } catch {
