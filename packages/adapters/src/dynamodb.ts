@@ -1,8 +1,8 @@
 import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { BatchWriteCommand, type BatchWriteCommandOutput, GetCommand, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import type { Issue, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debugkit/schema";
+import { isRegression, type Issue, type RollupDimension, type RollupIncrement, type RollupRow, type StoredEvent } from "@debugkit/schema";
 import { coalesceRollups } from "./rollups";
-import { HOURLY_ROLLUP_DAYS, type AppSettings, type IssueUpsert, type RestampResult, type Store } from "./index";
+import { HOURLY_ROLLUP_DAYS, type AppSettings, type IssueStatusChange, type IssueUpsert, type RestampResult, type Store, type UserMark } from "./index";
 
 /**
  * Single-table layout. Table needs: partition key `pk` (S), sort key `sk` (S),
@@ -14,6 +14,7 @@ import { HOURLY_ROLLUP_DAYS, type AppSettings, type IssueUpsert, type RestampRes
  *   APP#{app}#ISSUEEV#{fp}       | {ts}#{id}        StoredEvent (error events by issue)
  *   APP#{app}#EV#{day}           | {ts}#{id}        StoredEvent (all events by day)
  *   APP#{app}#SETTINGS           | app              AppSettings
+ *   APP#{app}#USERS#{scope}      | {member}         { lastDay } (hashed ids; for "users affected")
  *
  * Hourly rollups (dimension issueHour) also carry `ttl`, so they expire after 7 days.
  */
@@ -75,20 +76,36 @@ export class DynamoStore implements Store {
             },
           }),
         );
-        // lastSeen / lastEvent only move forward.
+        // lastSeen / lastEvent / lastVersion only move forward.
         await this.doc
           .send(
             new UpdateCommand({
               TableName: this.table,
               Key: { pk: `APP#${u.app}#ISSUE`, sk: u.fingerprint },
-              UpdateExpression: "SET lastSeen = :ts, lastEvent = :ev",
+              UpdateExpression: "SET lastSeen = :ts, lastEvent = :ev, lastVersion = :v, firstVersion = if_not_exists(firstVersion, :v)",
               ConditionExpression: "attribute_not_exists(lastSeen) OR lastSeen < :ts",
-              ExpressionAttributeValues: { ":ts": u.ts, ":ev": u.lastEvent },
+              ExpressionAttributeValues: { ":ts": u.ts, ":ev": u.lastEvent, ":v": u.version ?? null },
             }),
           )
           .catch((e: { name?: string }) => {
             if (e.name !== "ConditionalCheckFailedException") throw e;
           });
+        // A resolved issue seen again in the fixed release (or later) has regressed.
+        const cur = (await this.doc.send(new GetCommand({ TableName: this.table, Key: { pk: `APP#${u.app}#ISSUE`, sk: u.fingerprint }, ProjectionExpression: "#s, resolvedIn, resolvedAt", ExpressionAttributeNames: { "#s": "status" } }))).Item as Partial<Issue> | undefined;
+        if (cur?.status === "resolved" && isRegression(cur.resolvedIn, u.version, cur.resolvedAt, u.ts)) {
+          await this.doc.send(
+            new UpdateCommand({
+              TableName: this.table,
+              Key: { pk: `APP#${u.app}#ISSUE`, sk: u.fingerprint },
+              UpdateExpression: "SET #s = :r, regressedAt = :ts",
+              ConditionExpression: "#s = :resolved",
+              ExpressionAttributeNames: { "#s": "status" },
+              ExpressionAttributeValues: { ":r": "regressed", ":ts": u.ts, ":resolved": "resolved" },
+            }),
+          ).catch((e: { name?: string }) => {
+            if (e.name !== "ConditionalCheckFailedException") throw e;
+          });
+        }
         // firstSeen can also move backwards if an older event arrives late.
         await this.doc
           .send(
@@ -132,6 +149,64 @@ export class DynamoStore implements Store {
     );
   }
 
+  async markUsers(app: string, marks: UserMark[]) {
+    await Promise.all(
+      marks.map((m) =>
+        this.doc
+          .send(
+            new UpdateCommand({
+              TableName: this.table,
+              Key: { pk: `APP#${app}#USERS#${m.scope}`, sk: m.member },
+              UpdateExpression: "SET lastDay = :d",
+              ConditionExpression: "attribute_not_exists(lastDay) OR lastDay < :d",
+              ExpressionAttributeValues: { ":d": m.day },
+            }),
+          )
+          .catch((e: { name?: string }) => {
+            if (e.name !== "ConditionalCheckFailedException") throw e;
+          }),
+      ),
+    );
+  }
+  async countUsers(app: string, scope: string, sinceDay: string) {
+    let n = 0;
+    let ExclusiveStartKey: Record<string, unknown> | undefined;
+    do {
+      const out = await this.doc.send(
+        new QueryCommand({
+          TableName: this.table,
+          KeyConditionExpression: "pk = :pk",
+          FilterExpression: "lastDay >= :d",
+          ExpressionAttributeValues: { ":pk": `APP#${app}#USERS#${scope}`, ":d": sinceDay },
+          Select: "COUNT",
+          ExclusiveStartKey,
+        }),
+      );
+      n += out.Count ?? 0;
+      ExclusiveStartKey = out.LastEvaluatedKey;
+    } while (ExclusiveStartKey);
+    return n;
+  }
+  async setIssueStatus(app: string, fp: string, change: IssueStatusChange) {
+    const resolved = change.status === "resolved";
+    const out = await this.doc
+      .send(
+        new UpdateCommand({
+          TableName: this.table,
+          Key: { pk: `APP#${app}#ISSUE`, sk: fp },
+          UpdateExpression: resolved ? "SET #s = :s, resolvedAt = :at, resolvedIn = :in REMOVE regressedAt" : "SET #s = :s REMOVE resolvedIn, resolvedAt, regressedAt",
+          ConditionExpression: "attribute_exists(pk)",
+          ExpressionAttributeNames: { "#s": "status" },
+          ExpressionAttributeValues: resolved ? { ":s": change.status, ":at": new Date().toISOString(), ":in": change.resolvedIn ?? null } : { ":s": change.status },
+          ReturnValues: "ALL_NEW",
+        }),
+      )
+      .catch((e: { name?: string }) => {
+        if (e.name === "ConditionalCheckFailedException") return null;
+        throw e;
+      });
+    return out?.Attributes ? clean(out.Attributes as Issue) : null;
+  }
   async getSettings(app: string) {
     const out = await this.doc.send(new GetCommand({ TableName: this.table, Key: { pk: `APP#${app}#SETTINGS`, sk: "app" } }));
     return out.Item ? (clean(out.Item) as AppSettings) : null;

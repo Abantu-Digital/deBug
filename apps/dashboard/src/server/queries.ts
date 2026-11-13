@@ -1,8 +1,10 @@
 import type { ReadStore } from "@debugkit/adapters";
 import {
+  compareVersions,
   SEVERITY_ORDER,
   severityFromCount,
   type Issue,
+  type IssueStatus,
   type RollupRow,
   type Severity,
   type SeverityThresholds,
@@ -33,6 +35,14 @@ export interface IssueRow {
   countTotal: number;
   firstSeen: string;
   lastSeen: string;
+  status: IssueStatus;
+  resolvedIn?: string;
+  firstVersion?: string;
+  lastVersion?: string;
+  /** First seen in the newest release: a likely regression from that release. */
+  newInLatest: boolean;
+  /** Distinct users affected since the start of the range. Filled for the top issues only. */
+  users?: number;
 }
 
 export interface FlowRow {
@@ -83,6 +93,10 @@ export interface Summary {
   issues: IssueRow[];
   breakdowns: Record<"os" | "appVersion" | "deviceModel", { key: string; errors: number }[]>;
   health: Health;
+  /** Releases (version, plus OTA update) first seen inside the range, oldest first: markers on the trend. */
+  releases: { release: string; firstDay: string; sessions: number }[];
+  /** The newest version with sessions in the range. */
+  latestVersion: string | null;
 }
 
 export interface ReleaseHealth {
@@ -104,6 +118,11 @@ export interface Health {
   releases: ReleaseHealth[];
   /** Endpoints with the most failed requests (5xx, timeouts, network failures) in the range. */
   endpoints: { endpoint: string; failuresRange: number; failures24h: number }[];
+  /** Distinct users (or installs) active since the start of the range, and how many of them crashed. */
+  users: number;
+  crashedUsers: number;
+  /** 1 - crashedUsers / users. null when no users were recorded. */
+  crashFreeUsersRate: number | null;
 }
 
 /** Description of every field, shipped with the JSON API so agents can interpret it without docs. */
@@ -127,6 +146,12 @@ export const SUMMARY_FIELDS = {
   "health.errorFreeRate": "Share of sessions in the range with no unhandled error.",
   "health.releases[]": "Crash-free and error-free rates per app version.",
   "health.endpoints[]": "HTTP endpoints whose requests failed most (5xx, timeouts, network errors), from automatic network capture.",
+  "health.users": "Distinct users active since the start of the range (user id when set, else the install's anonymous id; stored hashed).",
+  "health.crashFreeUsersRate": "Share of those users who didn't crash.",
+  "issues[].status": "open, resolved, ignored, or regressed (seen again in the fixed release or later).",
+  "issues[].newInLatest": "First seen in latestVersion: likely introduced by the newest release.",
+  "issues[].users": "Distinct users affected since the start of the range (top issues only).",
+  "releases[]": "Releases first seen inside the range, with the day they appeared: markers on the trend.",
 } as const;
 
 const sumRows = (rows: RollupRow[], field: "errors" | "events" = "errors") => rows.reduce((a, r) => a + r[field], 0);
@@ -176,6 +201,10 @@ export async function buildSummary(
     store.getRollups(app, "issueHour", hours(now, 48)[0]!, hourKey(now)),
     retentionFor(store, app, opts.retentionDays, now),
   ]);
+  // A year of release rows, to know which releases first appeared inside the range.
+  const releaseRows = await store.getRollups(app, "release", dayKey(Date.parse(`${from}T00:00:00Z`) - 365 * DAY), to);
+  const usersSince = hourly ? dayKey(now - DAY) : from;
+  const [users, crashedUsers] = await Promise.all([store.countUsers(app, "app", usersSince), store.countUsers(app, "crash", usersSince)]);
 
   const last24 = new Set(h24);
   let errors24h = 0;
@@ -214,10 +243,29 @@ export async function buildSummary(
   const issueRange = new Map<string, number>();
   for (const r of issueDays) issueRange.set(r.key, (issueRange.get(r.key) ?? 0) + r.errors);
   const rangeStart = hourly ? new Date(now - DAY).toISOString() : `${from}T00:00:00.000Z`;
+  const versionsInRange = [...new Set(sessionRows.map((r) => r.key.split("|")[0]!).filter((v) => v && v !== "unknown"))].sort(compareVersions);
+  const latestVersion = versionsInRange[versionsInRange.length - 1] ?? null;
   const issueRows: IssueRow[] = issues
     .filter((i) => i.lastSeen >= rangeStart && i.firstSeen <= `${to}T23:59:59.999Z`)
-    .map((i) => toIssueRow(i, issue24h.get(i.fingerprint) ?? 0, hourly ? (issue24h.get(i.fingerprint) ?? 0) : (issueRange.get(i.fingerprint) ?? 0), thresholds))
+    .map((i) => toIssueRow(i, issue24h.get(i.fingerprint) ?? 0, hourly ? (issue24h.get(i.fingerprint) ?? 0) : (issueRange.get(i.fingerprint) ?? 0), thresholds, latestVersion))
     .sort(bySeverityThenCount);
+  // Users affected: one count per issue, so only for the issues people look at first.
+  const active = issueRows.filter((i) => i.status !== "ignored" && i.status !== "resolved");
+  await Promise.all(active.slice(0, 10).map(async (i) => (i.users = await store.countUsers(app, `issue:${i.fingerprint}`, usersSince))));
+
+  const firstDay = new Map<string, { day: string; sessions: number }>();
+  for (const r of releaseRows) {
+    const cur = firstDay.get(r.key);
+    if (!cur) firstDay.set(r.key, { day: r.day, sessions: r.events });
+    else {
+      if (r.day < cur.day) cur.day = r.day;
+      cur.sessions += r.events;
+    }
+  }
+  const releases = [...firstDay.entries()]
+    .filter(([, v]) => v.day >= from && v.day <= to)
+    .map(([release, v]) => ({ release, firstDay: v.day, sessions: v.sessions }))
+    .sort((a, b) => a.firstDay.localeCompare(b.firstDay));
 
   const flowMap = new Map<string, FlowRow>();
   const flowOf = (flow: string) => {
@@ -226,7 +274,7 @@ export async function buildSummary(
     return f;
   };
   for (const r of flowRows) if (r.errors > 0) flowOf(r.key).errorsRange += r.errors;
-  for (const i of issueRows) {
+  for (const i of active) {
     const f = flowOf(i.flow ?? "untagged");
     f.issues++;
     f.errors24h += i.count24h;
@@ -262,8 +310,8 @@ export async function buildSummary(
       // A percentage against a near-empty previous period (new app, short history) only misleads.
       changePct: errorsPrev >= 10 ? Math.round(((errorsRange - errorsPrev) / errorsPrev) * 100) : null,
       eventsRange: sumRows(total, "events"),
-      activeIssues: issueRows.length,
-      criticalIssues: issueRows.filter((i) => i.severity === "critical").length,
+      activeIssues: active.length,
+      criticalIssues: active.filter((i) => i.severity === "critical").length,
       failingFlows: flows.filter((f) => (hourly ? f.errors24h : f.errorsRange) > 0).length,
     },
     narrative: [],
@@ -271,7 +319,9 @@ export async function buildSummary(
     flows,
     issues: issueRows,
     breakdowns: { os: top(os), appVersion: top(appVersion), deviceModel: top(deviceModel) },
-    health: buildHealth(sessionRows, endpointRows, dayKey(now)),
+    health: { ...buildHealth(sessionRows, endpointRows, dayKey(now)), users, crashedUsers, crashFreeUsersRate: users > 0 ? Math.max(0, 1 - crashedUsers / users) : null },
+    releases,
+    latestVersion,
   };
   summary.narrative = narrate(summary);
   return summary;
@@ -279,20 +329,9 @@ export async function buildSummary(
 
 const rate = (bad: number, total: number) => (total > 0 ? Math.max(0, 1 - bad / total) : null);
 
-/** "2.10.0" sorts after "2.9.1". */
-export function compareVersions(a: string, b: string) {
-  const pa = a.split(/[.-]/);
-  const pb = b.split(/[.-]/);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const x = pa[i] ?? "";
-    const y = pb[i] ?? "";
-    const d = /^\d+$/.test(x) && /^\d+$/.test(y) ? Number(x) - Number(y) : x.localeCompare(y);
-    if (d) return d;
-  }
-  return 0;
-}
+export { compareVersions };
 
-function buildHealth(sessionRows: RollupRow[], endpointRows: RollupRow[], today: string): Health {
+function buildHealth(sessionRows: RollupRow[], endpointRows: RollupRow[], today: string): Omit<Health, "users" | "crashedUsers" | "crashFreeUsersRate"> {
   const byVersion = new Map<string, ReleaseHealth>();
   for (const r of sessionRows) {
     const [version = "unknown", status] = r.key.split("|");
@@ -325,8 +364,13 @@ function buildHealth(sessionRows: RollupRow[], endpointRows: RollupRow[], today:
   };
 }
 
-function toIssueRow(i: Issue, count24h: number, countRange: number, t: SeverityThresholds): IssueRow {
+function toIssueRow(i: Issue, count24h: number, countRange: number, t: SeverityThresholds, latestVersion: string | null = null): IssueRow {
   return {
+    status: i.status ?? "open",
+    resolvedIn: i.resolvedIn,
+    firstVersion: i.firstVersion,
+    lastVersion: i.lastVersion,
+    newInLatest: !!latestVersion && i.firstVersion === latestVersion,
     fingerprint: i.fingerprint,
     title: i.title,
     culprit: i.culprit,
@@ -371,7 +415,7 @@ function narrate(s: Summary): string[] {
     const n = r.preset === "24h" ? f.errors24h : f.errorsRange;
     out.push(`${f.flow} is the most affected flow (${f.severity}): ${plural(n, "error")} in ${r.label} from ${plural(f.issues, "issue")}.${failRate}`);
   }
-  const i = s.issues[0];
+  const i = s.issues.find((x) => x.status !== "ignored" && x.status !== "resolved");
   if (i && i.countRange > 0) {
     const isNew = Date.parse(s.generatedAt) - Date.parse(i.firstSeen) < 3 * DAY;
     out.push(`Top issue: "${i.title}"${i.culprit ? ` in ${i.culprit}` : ""}, ${plural(i.countRange, "time")} in ${r.label}${isNew ? `, first seen ${relDays(s.generatedAt, i.firstSeen)}` : ""}.`);
@@ -406,7 +450,10 @@ export interface IssueDetail {
   hourly: { hour: string; count: number }[];
   daily: { day: string; count: number }[];
   breakdowns: Record<"os" | "appVersion" | "deviceModel" | "network" | "runtime", { key: string; count: number; share: number }[]>;
+  /** Distinct users affected since the start of the range (all of them, not just recent events). */
   affectedUsers: number;
+  /** Prefilled "new issue" links for trackers configured on the dashboard. */
+  links: { linear?: string; github?: string };
   sample: StoredEvent | null;
   recent: { ts: string; os: string; appVersion?: string; device?: string; message: string; userId?: string }[];
   hints: { title: string; detail: string }[];
@@ -418,7 +465,7 @@ export async function buildIssueDetail(
   fingerprint: string,
   thresholds: SeverityThresholds,
   now = Date.now(),
-  opts: { range?: { range?: string; from?: string; to?: string }; retentionDays?: number } = {},
+  opts: { range?: { range?: string; from?: string; to?: string }; retentionDays?: number; trackers?: Trackers } = {},
 ): Promise<IssueDetail | null> {
   const issue = await store.getIssue(app, fingerprint);
   if (!issue) return null;
@@ -453,10 +500,14 @@ export async function buildIssueDetail(
     network: split((e) => e.context.network?.type),
     runtime: split((e) => [e.context.runtime.name, e.context.runtime.engine].filter(Boolean).join(" / ")),
   };
-  const users = new Set(events.map((e) => e.user?.id ?? e.user?.anonymousId ?? e.sessionId));
+  const usersSince = range.preset === "24h" ? dayKey(now - DAY) : range.from;
+  const counted = await store.countUsers(app, `issue:${fingerprint}`, usersSince);
+  // Data from before 0.6 has no user marks: fall back to the users in recent events.
+  const affectedUsers = counted || new Set(events.map((e) => e.user?.id ?? e.user?.anonymousId ?? e.sessionId)).size;
 
   const row = toIssueRow(issue, count24h, countRange, thresholds);
-  return {
+  const hints = hintsFor(issue, breakdowns, events);
+  const detail = {
     app,
     range,
     retention,
@@ -464,7 +515,8 @@ export async function buildIssueDetail(
     hourly,
     daily,
     breakdowns,
-    affectedUsers: users.size,
+    affectedUsers,
+    links: {},
     sample: events[0] ?? issue.lastEvent ?? null,
     recent: events.slice(0, 25).map((e) => ({
       ts: e.event.ts,
@@ -474,7 +526,52 @@ export async function buildIssueDetail(
       message: e.event.type === "error" ? e.event.error.message : e.event.type === "event" ? e.event.name : `session ${e.event.status}`,
       userId: e.user?.id,
     })),
-    hints: hintsFor(issue, breakdowns, events),
+    hints,
+  } satisfies IssueDetail;
+  detail.links = trackerLinks(detail, opts.trackers ?? {});
+  return detail;
+}
+
+/** Where "Create issue" buttons point. */
+export interface Trackers {
+  /** Linear team key (e.g. ABA). Without one, links go to linear.new and your default team. */
+  linearTeam?: string;
+  linear?: boolean;
+  /** owner/name of a GitHub repository. */
+  githubRepo?: string;
+  /** The dashboard's public URL, to link back from the ticket. */
+  dashboardUrl?: string;
+}
+
+/** The issue as a ticket: what, where, how often, what to look at. Kept short enough for a URL. */
+export function issueStory(d: Omit<IssueDetail, "links">, dashboardUrl?: string): { title: string; body: string } {
+  const i = d.issue;
+  const top = (rows: { key: string; share: number }[]) => rows.filter((r) => r.key !== "unknown").slice(0, 3).map((r) => `${r.key} (${Math.round(r.share * 100)}%)`).join(", ") || "n/a";
+  const frames = d.sample?.event.type === "error" ? (d.sample.event.error.frames ?? []).filter((f) => f.inApp).slice(0, 3) : [];
+  const body = [
+    `**${i.title}**`,
+    i.culprit ? `At \`${i.culprit}\`${i.flow ? ` in flow \`${i.flow}\`` : ""}.` : i.flow ? `In flow \`${i.flow}\`.` : "",
+    "",
+    `- ${i.countRange.toLocaleString()} occurrences in ${d.range.label}, ${i.count24h} in the last 24h (severity: ${i.severity})`,
+    `- ${d.affectedUsers.toLocaleString()} users affected`,
+    `- First seen ${i.firstSeen.slice(0, 10)}${i.firstVersion ? ` in ${i.firstVersion}` : ""}; last seen ${i.lastSeen.slice(0, 10)}${i.lastVersion ? ` in ${i.lastVersion}` : ""}`,
+    `- Versions: ${top(d.breakdowns.appVersion)}`,
+    `- OS: ${top(d.breakdowns.os)}; devices: ${top(d.breakdowns.deviceModel)}`,
+    ...(frames.length ? ["", "Stack (in-app frames):", ...frames.map((f) => `- \`${f.fn ?? "?"}\` ${f.file ?? ""}:${f.line ?? ""}`)] : []),
+    ...(d.hints.length ? ["", "What to look at:", ...d.hints.slice(0, 3).map((h) => `- ${h.title}: ${h.detail}`)] : []),
+    ...(dashboardUrl ? ["", `deBug: ${dashboardUrl.replace(/\/+$/, "")}/issues/${i.fingerprint}?app=${encodeURIComponent(d.app)}`] : []),
+  ]
+    .filter((l, n, all) => !(l === "" && all[n - 1] === ""))
+    .join("\n");
+  return { title: `[deBug] ${i.title}`.slice(0, 200), body: body.slice(0, 3000) };
+}
+
+function trackerLinks(d: Omit<IssueDetail, "links">, t: Trackers): IssueDetail["links"] {
+  const { title, body } = issueStory(d, t.dashboardUrl);
+  const q = (p: Record<string, string>) => new URLSearchParams(p).toString();
+  return {
+    ...(t.linear || t.linearTeam ? { linear: `${t.linearTeam ? `https://linear.app/team/${encodeURIComponent(t.linearTeam)}/new` : "https://linear.new"}?${q({ title, description: body })}` } : {}),
+    ...(t.githubRepo && /^[\w.-]+\/[\w.-]+$/.test(t.githubRepo) ? { github: `https://github.com/${t.githubRepo}/issues/new?${q({ title, body })}` } : {}),
   };
 }
 

@@ -76,6 +76,18 @@ export async function writeRetention(app: string, days: number): Promise<Setting
   return readSettings(app);
 }
 
+/** Open, resolve (optionally "fixed in <version>") or ignore an issue. */
+export async function writeIssueStatus(app: string, fingerprint: string, status: "open" | "resolved" | "ignored", resolvedIn?: string) {
+  const writer = settingsWriter();
+  if (writer === "admin") return admin<{ status: string; resolvedIn: string | null }>("PUT", "/issue", { app, fingerprint, status, resolvedIn });
+  if (writer === "local") {
+    const issue = await (await getLocalWriteStore())!.setIssueStatus(app, fingerprint, { status, resolvedIn });
+    if (!issue) throw new Error("No such issue.");
+    return { status: issue.status, resolvedIn: issue.resolvedIn ?? null };
+  }
+  throw new Error("Issue status can't be changed from this dashboard: DEBUG_ADMIN_URL and DEBUG_ADMIN_TOKEN aren't set.");
+}
+
 /** One page of re-stamping existing events with the current retention. */
 export async function restampStep(app: string, cursor?: string): Promise<RestampResult> {
   const writer = settingsWriter();

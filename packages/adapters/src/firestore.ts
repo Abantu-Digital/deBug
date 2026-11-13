@@ -1,8 +1,8 @@
 import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
-import type { Issue, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debugkit/schema";
+import { isRegression, type Issue, type RollupDimension, type RollupIncrement, type RollupRow, type StoredEvent } from "@debugkit/schema";
 import { coalesceRollups, rollupId } from "./rollups";
-import { HOURLY_ROLLUP_DAYS, type AppSettings, type IssueUpsert, type RestampResult, type Store } from "./index";
+import { HOURLY_ROLLUP_DAYS, type AppSettings, type IssueStatusChange, type IssueUpsert, type RestampResult, type Store, type UserMark } from "./index";
 
 /**
  * Firestore layout (all under one root collection so it's easy to find / secure / delete):
@@ -12,6 +12,7 @@ import { HOURLY_ROLLUP_DAYS, type AppSettings, type IssueUpsert, type RestampRes
  *   {root}/{app}/rollups/{day__dim__key}  RollupRow (counters via FieldValue.increment)
  *   {root}/{app}/events/{eventId}     StoredEvent + expireAt (enable a TTL policy on `expireAt`)
  *   {root}/{app}/settings/app         AppSettings (retention, set from the dashboard)
+ *   {root}/{app}/users/{scope__member} { scope, member, lastDay } (hashed ids; for "users affected")
  *
  * Hourly rollups (dimension issueHour) also carry expireAt, so they expire after 7 days.
  *
@@ -55,6 +56,7 @@ export class FirestoreStore implements Store {
           const snap = await tx.get(ref);
           const cur = snap.data() as Issue | undefined;
           const newer = !cur || u.ts >= cur.lastSeen;
+          const regressed = cur?.status === "resolved" && isRegression(cur.resolvedIn, u.version, cur.resolvedAt, u.ts);
           tx.set(
             ref,
             strip({
@@ -66,7 +68,9 @@ export class FirestoreStore implements Store {
               firstSeen: cur && cur.firstSeen < u.firstTs ? cur.firstSeen : u.firstTs,
               lastSeen: newer ? u.ts : cur!.lastSeen,
               count: FieldValue.increment(u.by),
-              ...(newer ? { lastEvent: strip(u.lastEvent) } : {}),
+              ...(newer ? { lastEvent: strip(u.lastEvent), lastVersion: u.version } : {}),
+              ...(!cur?.firstVersion && u.version ? { firstVersion: u.version } : {}),
+              ...(regressed ? { status: "regressed", regressedAt: u.ts } : {}),
             }),
             { merge: true },
           );
@@ -97,6 +101,30 @@ export class FirestoreStore implements Store {
       }
       await batch.commit();
     }
+  }
+
+  async markUsers(app: string, marks: UserMark[]) {
+    for (const chunk of chunks(marks, 400)) {
+      const batch = this.db.batch();
+      for (const m of chunk) batch.set(this.app(app).collection("users").doc(`${m.scope}__${m.member}`.slice(0, 1400)), { scope: m.scope, member: m.member, lastDay: m.day }, { merge: true });
+      await batch.commit();
+    }
+  }
+  async countUsers(app: string, scope: string, sinceDay: string) {
+    const snap = await this.app(app).collection("users").where("scope", "==", scope).where("lastDay", ">=", sinceDay).count().get();
+    return snap.data().count;
+  }
+  async setIssueStatus(app: string, fp: string, change: IssueStatusChange) {
+    const ref = this.app(app).collection("issues").doc(fp);
+    const snap = await ref.get();
+    if (!snap.exists) return null;
+    await ref.update({
+      status: change.status,
+      resolvedIn: change.status === "resolved" && change.resolvedIn ? change.resolvedIn : FieldValue.delete(),
+      resolvedAt: change.status === "resolved" ? new Date().toISOString() : FieldValue.delete(),
+      regressedAt: FieldValue.delete(),
+    });
+    return (await ref.get()).data() as Issue;
   }
 
   private settingsRef(app: string) {

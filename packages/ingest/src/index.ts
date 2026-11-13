@@ -1,5 +1,6 @@
-import { Envelope, parseStack, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debugkit/schema";
-import type { IssueUpsert, WriteStore } from "@debugkit/adapters";
+import { createHash } from "node:crypto";
+import { Envelope, parseStack, releaseKey, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debugkit/schema";
+import type { IssueUpsert, UserMark, WriteStore } from "@debugkit/adapters";
 import { effectiveRetention } from "./admin";
 import { culpritOf, fingerprint, titleOf } from "./fingerprint";
 
@@ -81,6 +82,8 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
   const stored: StoredEvent[] = [];
   const rollups: RollupIncrement[] = [];
   const issues = new Map<string, IssueUpsert>();
+  /** Where this envelope's user counts: "app", "crash", "issue:<fp>". */
+  const scopes = new Set<string>();
 
   for (const raw of env.events) {
     const event = { ...raw, ts: sanitiseTs(raw.ts, now) } as Event;
@@ -90,8 +93,13 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
     // Session health only feeds the crash-free rollup; storing each one would cost a write per session.
     if (event.type === "session") {
       rollups.push({ app, day, dimension: "session", key: `${context.app.version || "unknown"}|${event.status}`, kind: "event", by: 1 });
+      // Anyone with a session is an active user, errors or not: the denominator for crash-free users.
+      scopes.add("app");
+      if (event.status === "started") rollups.push({ app, day, dimension: "release", key: releaseKey(context.app), kind: "event", by: 1 });
+      if (event.status === "crashed") scopes.add("crash");
       continue;
     }
+    scopes.add("app");
     const kind = event.type === "error" ? "error" : "event";
     const inc = (dimension: RollupIncrement["dimension"], key: string | undefined) =>
       rollups.push({ app, day, dimension, key: key || "unknown", kind, by: 1 });
@@ -111,7 +119,9 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
         ts: cur && cur.ts > event.ts ? cur.ts : event.ts,
         firstTs: cur && cur.firstTs < event.ts ? cur.firstTs : event.ts,
         lastEvent: cur && cur.ts > event.ts ? cur.lastEvent : se,
+        version: context.app.version,
       });
+      scopes.add(`issue:${fp}`);
       inc("issue", fp);
       if (event.request) inc("endpoint", `${event.request.method.toUpperCase()} ${event.request.url}`);
       rollups.push({ app, day: event.ts.slice(0, 13), dimension: "issueHour", key: fp, kind, by: 1 });
@@ -133,9 +143,31 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
     stored.length ? opts.store.writeEvents(stored, { retentionDays }) : undefined,
     opts.store.upsertIssues([...issues.values()]),
     opts.store.incrementRollups(rollups),
+    markUsers(opts.store, app, env.user?.id ?? env.user?.anonymousId ?? env.session.id, scopes, dayOf(receivedAt)),
   ]);
 
   return { status: 202, body: { ok: true, accepted: env.events.length } };
+}
+
+/** Recently written (scope, member, day) marks, so a busy user costs one write per day, not per batch. */
+const seenMarks = new Set<string>();
+
+/**
+ * Count the envelope's user in each scope. The id is hashed, so the store never holds user ids,
+ * and each (scope, user, day) is written at most once per function instance.
+ */
+async function markUsers(store: WriteStore, app: string, who: string, scopes: Set<string>, day: string) {
+  if (!scopes.size) return;
+  const member = createHash("sha256").update(`${app}\u0000${who}`).digest("hex").slice(0, 24);
+  const marks: UserMark[] = [];
+  for (const scope of scopes) {
+    const k = `${app}|${scope}|${member}|${day}`;
+    if (seenMarks.has(k)) continue;
+    seenMarks.add(k);
+    marks.push({ scope, member, day });
+  }
+  if (seenMarks.size > 50_000) seenMarks.clear();
+  if (marks.length) await store.markUsers(app, marks);
 }
 
 export const CORS_HEADERS = {

@@ -86,6 +86,19 @@ deBug.init({
 
 Requests to your ingest endpoint and to the Metro and Expo dev servers are never recorded.
 
+## Releases and over-the-air updates
+
+deBug groups crash-free rates and "new in" labels by `app.version`. If you ship JavaScript updates without a store release (hot-updater, expo-updates), pass the update id too, so each update counts as its own release:
+
+```ts
+import { HotUpdater } from "@hot-updater/react-native";
+initExpo({ …, app: { id: "your-app", update: HotUpdater.getBundleId() } }); // or expo-updates: Updates.updateId
+```
+
+## Users
+
+"Users affected" counts `setUser(id)` when you call it. Otherwise it counts an anonymous id per install: the SDK keeps it in localStorage on the web, and in the `storage` you pass on React Native (for example AsyncStorage). Ingest stores only a hash of either.
+
 ## Turning it off for some builds
 
 Pass `enabled: false` and deBug stays inert:

@@ -92,3 +92,58 @@ describe("date ranges", () => {
     expect(s.range.preset).toBe("14d");
   });
 });
+
+describe("who and when", () => {
+  const now = Date.parse("2026-11-13T12:00:00Z");
+  async function app() {
+    const store = new MemoryStore();
+    let n = 0;
+    const send = async (ts: string, user: string, version: string, opts: { error?: string; crash?: boolean } = {}) => {
+      const events: unknown[] = [{ type: "session", id: `s${++n}xxxxxxxx`, ts, status: "started" }];
+      if (opts.error) events.push({ type: "error", id: `e${++n}xxxxxxxx`, ts, error: { name: "TypeError", message: opts.error, stack: `TypeError\n    at ${opts.error} (/app/src/${opts.error}.ts:1:1)` } });
+      if (opts.crash) events.push({ type: "session", id: `c${++n}xxxxxxxx`, ts, status: "crashed" });
+      const env = { sdk: { name: "t", version: "1" }, context: { app: { id: "a", version }, os: { name: "ios" }, runtime: { name: "rn" } }, user: { id: user, anonymousId: user }, session: { id: `x${n}`, startedAt: ts }, events };
+      await ingest(JSON.stringify(env), "k", { store, keys: { k: "a" }, now: () => new Date(ts) });
+    };
+    await send("2026-11-05T09:00:00.000Z", "u1", "2.3.0", { error: "old" });
+    await send("2026-11-10T09:00:00.000Z", "u2", "2.4.0", { error: "fresh", crash: true });
+    await send("2026-11-12T09:00:00.000Z", "u3", "2.4.0");
+    await send("2026-11-12T10:00:00.000Z", "u4", "2.4.0", { error: "fresh" });
+    return store;
+  }
+
+  it("reports users, crash-free users and release markers for the range", async () => {
+    const s = (await buildSummary(await app(), "a", DEFAULT_SEVERITY_THRESHOLDS, now, { range: { range: "7d" } }))!;
+    expect(s.health).toMatchObject({ users: 3, crashedUsers: 1 });
+    expect(s.health.crashFreeUsersRate).toBeCloseTo(2 / 3);
+    expect(s.latestVersion).toBe("2.4.0");
+    expect(s.releases.map((r) => [r.release, r.firstDay])).toEqual([["2.4.0", "2026-11-10"]]); // 2.3.0 first appeared before the range
+    const fresh = s.issues.find((i) => i.title === "TypeError: fresh")!;
+    expect(fresh).toMatchObject({ newInLatest: true, firstVersion: "2.4.0", users: 2, status: "open" });
+  });
+
+  it("leaves ignored and resolved issues out of the story", async () => {
+    const store = await app();
+    const fresh = [...store.issues.values()].find((i) => i.title === "TypeError: fresh")!;
+    await store.setIssueStatus("a", fresh.fingerprint, { status: "ignored" });
+    const s = (await buildSummary(store, "a", DEFAULT_SEVERITY_THRESHOLDS, now, { range: { range: "30d" } }))!;
+    expect(s.issues.find((i) => i.fingerprint === fresh.fingerprint)?.status).toBe("ignored");
+    expect(s.totals.activeIssues).toBe(1);
+    expect(s.narrative.join(" ")).not.toContain("TypeError: fresh");
+  });
+
+  it("builds a prefilled ticket for Linear and GitHub", async () => {
+    const store = await app();
+    const fresh = [...store.issues.values()].find((i) => i.title === "TypeError: fresh")!;
+    const d = (await buildIssueDetail(store, "a", fresh.fingerprint, DEFAULT_SEVERITY_THRESHOLDS, now, { range: { range: "7d" }, trackers: { linearTeam: "ABA", githubRepo: "Abantu-Digital/deBug", dashboardUrl: "https://debug.example" } }))!;
+    expect(d.affectedUsers).toBe(2);
+    const linear = new URL(d.links.linear!);
+    expect(linear.origin + linear.pathname).toBe("https://linear.app/team/ABA/new");
+    expect(linear.searchParams.get("title")).toBe("[deBug] TypeError: fresh");
+    expect(linear.searchParams.get("description")).toContain("2 users affected");
+    expect(linear.searchParams.get("description")).toContain(`https://debug.example/issues/${fresh.fingerprint}?app=a`);
+    expect(d.links.github).toMatch(/^https:\/\/github\.com\/Abantu-Digital\/deBug\/issues\/new\?/);
+    const none = (await buildIssueDetail(store, "a", fresh.fingerprint, DEFAULT_SEVERITY_THRESHOLDS, now))!;
+    expect(none.links).toEqual({});
+  });
+});

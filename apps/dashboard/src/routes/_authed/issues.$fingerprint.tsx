@@ -1,8 +1,9 @@
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-router";
+import { useState } from "react";
 import { HourlyChart, TrendChart } from "~/components/charts";
 import { RangePicker, rangeSearch, RetentionNote, type RangeSearch } from "~/components/range-picker";
-import { Card, DataTable, SeverityBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
-import { getIssueDetail } from "~/server/fns";
+import { Card, DataTable, IssueLabels, SeverityBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
+import { getIssueDetail, updateIssueStatus } from "~/server/fns";
 
 export const Route = createFileRoute("/_authed/issues/$fingerprint")({
   validateSearch: (s: Record<string, unknown>): { app: string } & RangeSearch => ({ app: typeof s.app === "string" ? s.app : "", ...rangeSearch(s) }),
@@ -40,12 +41,15 @@ function IssuePage() {
         </div>
         <h1 className="mt-2 break-words text-xl font-semibold tracking-tight sm:text-2xl">{issue.title}</h1>
         {issue.culprit && <p className="mt-1 font-mono text-sm text-muted">{issue.culprit}</p>}
+        <IssueLabels issue={issue} />
       </div>
+
+      <IssueActions app={d.app} issue={issue} canChange={d.canChangeStatus} links={d.links} />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Occurrences (24h)" value={issue.count24h} tone={issue.severity} />
         <Stat label={`Occurrences (${range.label})`} value={issue.countRange.toLocaleString()} hint={`${issue.countTotal.toLocaleString()} since first seen`} />
-        <Stat label="Users affected" value={d.affectedUsers} hint="in the last 200 events" />
+        <Stat label="Users affected" value={d.affectedUsers.toLocaleString()} hint={`since ${range.preset === "24h" ? "yesterday" : range.from}`} />
         <Stat label="Top app version" value={d.breakdowns.appVersion[0]?.key ?? "—"} hint={d.breakdowns.appVersion[0] ? `${Math.round(d.breakdowns.appVersion[0].share * 100)}% of occurrences` : undefined} />
       </div>
 
@@ -152,5 +156,58 @@ function IssuePage() {
         </div>
       </Card>
     </main>
+  );
+}
+
+/** Resolve (with the fixed version), ignore or reopen, and open a prefilled ticket. */
+function IssueActions({
+  app,
+  issue,
+  canChange,
+  links,
+}: {
+  app: string;
+  issue: { fingerprint: string; status: string; resolvedIn?: string; lastVersion?: string };
+  canChange: boolean;
+  links: { linear?: string; github?: string };
+}) {
+  const router = useRouter();
+  const [version, setVersion] = useState(issue.resolvedIn ?? issue.lastVersion ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const set = async (status: "open" | "resolved" | "ignored") => {
+    setBusy(true);
+    setError(null);
+    const out = await updateIssueStatus({ data: { app, fingerprint: issue.fingerprint, status, resolvedIn: status === "resolved" ? version : undefined } }).catch((e: Error) => ({ ok: false as const, error: e.message }));
+    setBusy(false);
+    if (!out.ok) return setError(out.error);
+    await router.invalidate();
+  };
+  const btn = "rounded-md border border-line px-3 py-1.5 text-sm hover:bg-panel-2 disabled:opacity-40";
+  const closed = issue.status === "resolved" || issue.status === "ignored";
+  return (
+    <section aria-label="Issue actions" className="flex flex-wrap items-center gap-2">
+      {canChange && !closed && (
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void set("resolved");
+          }}
+        >
+          <label className="text-sm text-muted" htmlFor="fixed-in">Fixed in</label>
+          <input id="fixed-in" value={version} onChange={(e) => setVersion(e.target.value)} placeholder="2.4.1" className="w-28 rounded-md border border-line bg-panel px-2 py-1.5 text-sm" />
+          <button type="submit" disabled={busy} className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40">Resolve</button>
+          <button type="button" disabled={busy} onClick={() => void set("ignored")} className={btn}>Ignore</button>
+        </form>
+      )}
+      {canChange && closed && (
+        <button type="button" disabled={busy} onClick={() => void set("open")} className={btn}>Reopen</button>
+      )}
+      {links.linear && <a href={links.linear} target="_blank" rel="noopener noreferrer" className={btn}>Create Linear issue</a>}
+      {links.github && <a href={links.github} target="_blank" rel="noopener noreferrer" className={btn}>Create GitHub issue</a>}
+      {canChange && !closed && <p className="w-full text-xs text-muted">If it shows up again in {version || "that version"} or later, it's marked Regressed. Occurrences from older versions don't count: those users haven't updated yet.</p>}
+      {error && <p role="alert" className="w-full text-sm text-sev-critical">{error}</p>}
+    </section>
   );
 }

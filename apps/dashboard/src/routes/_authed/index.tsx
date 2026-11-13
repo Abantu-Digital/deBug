@@ -1,16 +1,17 @@
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { FlowChart, TrendChart } from "~/components/charts";
-import { Card, DataTable, SeverityBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
+import { Card, DataTable, IssueLabels, SeverityBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
 import { RangePicker, rangeSearch, RetentionNote, type RangeSearch } from "~/components/range-picker";
 import { getOverview } from "~/server/fns";
 
-type Search = { app?: string; flow?: string } & RangeSearch;
+type Search = { app?: string; flow?: string; status?: string } & RangeSearch;
 
 export const Route = createFileRoute("/_authed/")({
   validateSearch: (s: Record<string, unknown>): Search => ({
     app: typeof s.app === "string" ? s.app : undefined,
     flow: typeof s.flow === "string" ? s.flow : undefined,
+    status: typeof s.status === "string" ? s.status : undefined,
     ...rangeSearch(s),
   }),
   loaderDeps: ({ search }) => ({ app: search.app, range: search.range, from: search.from, to: search.to }),
@@ -20,14 +21,20 @@ export const Route = createFileRoute("/_authed/")({
 
 function Overview() {
   const summary = Route.useLoaderData();
-  const { flow } = Route.useSearch();
+  const search = Route.useSearch();
+  const { flow } = search;
   const navigate = useNavigate({ from: Route.fullPath });
 
   if (!summary) return <EmptyState />;
 
   const { totals, range } = summary;
   const span = range.preset === "custom" ? "range" : range.preset;
-  const issues = flow ? summary.issues.filter((i) => (i.flow ?? "untagged") === flow) : summary.issues;
+  const statusFilter = search.status ?? "open";
+  const byStatus = summary.issues.filter((i) =>
+    statusFilter === "all" ? true : statusFilter === "open" ? i.status === "open" || i.status === "regressed" : i.status === statusFilter,
+  );
+  const issues = flow ? byStatus.filter((i) => (i.flow ?? "untagged") === flow) : byStatus;
+  const countFor = (st: string) => summary.issues.filter((i) => (st === "open" ? i.status === "open" || i.status === "regressed" : i.status === st)).length;
   const change = totals.changePct;
 
   return (
@@ -75,7 +82,12 @@ function Overview() {
           hint={change === null ? "not enough earlier data to compare" : change > 500 ? `▲ from ${totals.errorsPrev.toLocaleString()} in the previous ${range.span}` : `${change > 0 ? "▲" : change < 0 ? "▼" : "•"} ${Math.abs(change)}% vs previous ${range.span}`}
         />
         <Stat label="Critical issues" value={totals.criticalIssues} tone={totals.criticalIssues ? "critical" : undefined} hint="≥ threshold occurrences in 24h" />
-        <Stat label="Failing flows" value={totals.failingFlows} hint={`parts of the app with errors in ${range.label}`} />
+        <Stat
+          label={`Crash-free users (${span})`}
+          value={asPct(summary.health.crashFreeUsersRate)}
+          tone={summary.health.crashFreeUsersRate !== null && summary.health.crashFreeUsersRate < 0.99 ? "high" : undefined}
+          hint={`${summary.health.users.toLocaleString()} users · ${summary.health.crashedUsers.toLocaleString()} crashed`}
+        />
         <Stat
           label={`Crash-free sessions (${span})`}
           value={asPct(summary.health.crashFreeRate)}
@@ -103,7 +115,10 @@ function Overview() {
         </div>
         <div className="min-w-0 lg:col-span-2">
           <Card title="Error trend" subtitle={`Errors per ${range.granularity}, ${range.label} (UTC)`}>
-            <TrendChart data={summary.trend} />
+            <TrendChart data={summary.trend} markers={summary.releases.map((r) => ({ day: r.firstDay, label: r.release }))} />
+            {summary.releases.length > 0 && (
+              <p className="mt-2 text-xs text-muted">Dashed lines: a release's first sessions ({summary.releases.map((r) => r.release).join(", ")}).</p>
+            )}
             <DataTable columns={["Day", "Errors", "Events"]} rows={summary.trend.map((d) => [d.day, d.errors, d.events])} />
           </Card>
         </div>
@@ -153,7 +168,21 @@ function Overview() {
       <Card
         title={flow ? `Issues in ${flow}` : "Issues by severity"}
         subtitle={`Grouped errors seen in ${range.label}. Severity is set by occurrences in the last 24 hours.`}
-        right={flow ? <button className="text-xs text-accent" onClick={() => navigate({ search: (s) => ({ ...s, flow: undefined }) })}>Clear filter ×</button> : null}
+        right={
+          <div className="flex flex-wrap items-center justify-end gap-1 text-xs">
+            {flow && <button className="mr-2 text-accent" onClick={() => navigate({ search: (s) => ({ ...s, flow: undefined }) })}>Clear flow ×</button>}
+            {(["open", "resolved", "ignored", "all"] as const).map((st) => (
+              <button
+                key={st}
+                onClick={() => navigate({ search: (s) => ({ ...s, status: st === "open" ? undefined : st }) })}
+                className={`rounded-md border px-2 py-1 capitalize ${statusFilter === st ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:bg-panel-2"}`}
+              >
+                {st}
+                {st !== "all" && <span className="ml-1 opacity-70">{countFor(st)}</span>}
+              </button>
+            ))}
+          </div>
+        }
       >
         <div className="-mx-4 overflow-x-auto sm:mx-0">
           <table className="tabular w-full min-w-[640px] text-left text-sm">
@@ -162,6 +191,7 @@ function Overview() {
                 <th className="px-4 py-2 font-medium sm:px-2">Severity</th>
                 <th className="px-2 py-2 font-medium">Issue</th>
                 <th className="px-2 py-2 font-medium">Flow</th>
+                <th className="px-2 py-2 text-right font-medium">Users</th>
                 <th className="px-2 py-2 text-right font-medium">24h</th>
                 <th className="px-2 py-2 text-right font-medium">{span === "24h" ? "Total" : span === "range" ? "Range" : span}</th>
                 <th className="px-2 py-2 text-right font-medium">Last seen</th>
@@ -176,15 +206,17 @@ function Overview() {
                       {i.title}
                     </Link>
                     {i.culprit && <div className="truncate font-mono text-xs text-muted">{i.culprit}</div>}
+                    <IssueLabels issue={i} />
                   </td>
                   <td className="px-2 py-2.5 text-xs">{i.flow ?? <span className="text-muted">untagged</span>}</td>
+                  <td className="px-2 py-2.5 text-right text-muted">{i.users ?? "—"}</td>
                   <td className="px-2 py-2.5 text-right font-semibold">{i.count24h}</td>
                   <td className="px-2 py-2.5 text-right text-muted">{span === "24h" ? i.countTotal : i.countRange}</td>
                   <td className="px-2 py-2.5 text-right text-xs text-muted">{timeAgo(i.lastSeen)}</td>
                 </tr>
               ))}
               {!issues.length && (
-                <tr><td colSpan={6} className="px-2 py-6 text-center text-muted">No issues.</td></tr>
+                <tr><td colSpan={7} className="px-2 py-6 text-center text-muted">No issues.</td></tr>
               )}
             </tbody>
           </table>

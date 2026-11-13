@@ -33,7 +33,14 @@ export interface InitOptions {
   endpoint: string;
   /** Public, write-only key. Safe to ship in the app. */
   ingestKey: string;
-  app: { id: string; version?: string; build?: string; environment?: string };
+  app: {
+    id: string;
+    version?: string;
+    build?: string;
+    /** Over-the-air update on top of the store version, e.g. `HotUpdater.getBundleId()` or expo-updates' `updateId`. */
+    update?: string;
+    environment?: string;
+  };
   /**
    * Platform context. Defaults to browserContext() in browsers. The framework entry points
    * (`/expo`, `/react-native`, `/node`) fill this in for you.
@@ -101,6 +108,19 @@ export interface EventMeta {
 }
 
 const QUEUE_KEY = "@debugkit/queue";
+/** One id per install, so "users affected" counts people rather than app launches. */
+const ANON_KEY = "@debugkit/anonymousId";
+
+function webStorage(): { getItem(k: string): string | null; setItem(k: string, v: string): void } | undefined {
+  try {
+    const ls = (globalThis as { localStorage?: { getItem(k: string): string | null; setItem(k: string, v: string): void } }).localStorage;
+    if (!ls) return undefined;
+    ls.getItem(ANON_KEY); // throws in some private modes
+    return ls;
+  } catch {
+    return undefined;
+  }
+}
 const MAX_QUEUE = 500;
 
 const uid = () =>
@@ -143,6 +163,7 @@ export class DebugClient {
     this.auto = resolveAuto(options);
     this.rawFetch = typeof globalThis.fetch === "function" ? (((globalThis.fetch as { __raw?: typeof fetch }).__raw ?? globalThis.fetch) as typeof fetch) : undefined;
     this.ready = true;
+    this.loadAnonymousId();
     void this.restore();
     if (this.auto.errors && !this.handlersInstalled) this.installGlobalHandlers();
     this.instrument();
@@ -397,6 +418,32 @@ export class DebugClient {
     try {
       await this.opts.storage?.setItem(QUEUE_KEY, JSON.stringify(this.queue));
     } catch {}
+  }
+
+  /**
+   * Reuse the install's anonymous id: from localStorage in browsers straight away, or from the
+   * `storage` option (AsyncStorage in React Native) once it loads. Events queued before then
+   * carry the new id, which only matters for the very first launch.
+   */
+  private loadAnonymousId() {
+    const ws = webStorage();
+    if (ws) {
+      try {
+        const saved = ws.getItem(ANON_KEY);
+        if (saved) this.user = { ...this.user, anonymousId: saved };
+        else ws.setItem(ANON_KEY, this.user.anonymousId);
+      } catch {}
+      return;
+    }
+    const storage = this.opts.storage;
+    if (!storage) return;
+    void (async () => {
+      try {
+        const saved = await storage.getItem(ANON_KEY);
+        if (saved) this.user = { ...this.user, anonymousId: saved };
+        else await storage.setItem(ANON_KEY, this.user.anonymousId);
+      } catch {}
+    })();
   }
 
   private async restore() {
