@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // Production server for a self-hosted deBug dashboard: `pnpm build && pnpm start`.
 // Serves built assets from dist/client and hands every other request to the TanStack Start handler.
 import { createReadStream, existsSync, statSync } from "node:fs";
@@ -7,7 +8,7 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 try {
-  process.loadEnvFile(".env");
+  process.loadEnvFile(process.env.DEBUG_ENV_FILE ?? ".env");
 } catch {}
 process.env.NODE_ENV ??= "production";
 

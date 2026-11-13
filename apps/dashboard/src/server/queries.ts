@@ -314,7 +314,7 @@ function narrate(s: Summary): string[] {
     out.push(`${latest.version} is ${pctOne(latest.crashFreeRate)} crash-free across ${latest.sessions.toLocaleString()} sessions${vs}.`);
   }
   const ep = h.endpoints[0];
-  if (ep && ep.failures24h > 0) out.push(`${ep.endpoint} is the most failing endpoint: ${ep.failures24h} failed requests today.`);
+  if (ep && ep.failures24h > 0) out.push(`${ep.endpoint} is the most failing endpoint: ${ep.failures24h} failed request${ep.failures24h === 1 ? "" : "s"} today.`);
   const os = s.breakdowns.os;
   const osTotal = os.reduce((a, b) => a + b.errors, 0);
   if (os[0] && osTotal > 20 && os[0].errors / osTotal > 0.6) out.push(`${pct(os[0].errors / osTotal)} of errors in the last 14 days come from ${os[0].key}.`);

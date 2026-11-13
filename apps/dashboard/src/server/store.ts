@@ -13,7 +13,8 @@ export function getStore(): Promise<ReadStore> {
  * http://localhost:4400/api/ingest and see them on the dashboard. Real stores stay read-only.
  */
 export async function getLocalWriteStore(): Promise<WriteStore | null> {
-  if (config().store !== "demo") return null;
+  const kind = config().store;
+  if (kind !== "demo" && kind !== "memory") return null;
   return (await getStore()) as unknown as WriteStore;
 }
 
@@ -32,6 +33,10 @@ async function create(): Promise<ReadStore> {
       const { DynamoDBDocumentClient } = await import("@aws-sdk/lib-dynamodb");
       const { DynamoStore } = await import("@debugkit/adapters/dynamodb");
       return new DynamoStore(DynamoDBDocumentClient.from(new DynamoDBClient({})), { table: cfg.dynamoTable });
+    }
+    case "memory": {
+      const { MemoryStore } = await import("@debugkit/adapters/memory");
+      return new MemoryStore();
     }
     default: {
       const { seedDemo } = await import("./demo");

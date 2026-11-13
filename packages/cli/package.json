@@ -1,0 +1,48 @@
+{
+  "name": "debugkit",
+  "version": "0.2.0",
+  "description": "Set up deBug in your app: npx debugkit init. Picks a cloud, deploys ingest to your own account, wires the SDK and walks you through the dashboard.",
+  "type": "module",
+  "bin": {
+    "debugkit": "./dist/cli.js"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "build": "tsup",
+    "prepack": "tsup"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.9.0",
+    "fflate": "^0.8.3",
+    "picocolors": "^1.1.1"
+  },
+  "optionalDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.700.0",
+    "@aws-sdk/client-iam": "^3.700.0",
+    "@aws-sdk/client-lambda": "^3.700.0",
+    "@aws-sdk/client-sts": "^3.700.0",
+    "@aws-sdk/credential-providers": "^3.700.0"
+  },
+  "devDependencies": {
+    "@debugkit/adapters": "workspace:^",
+    "@debugkit/ingest": "workspace:^",
+    "@debugkit/sdk": "workspace:^",
+    "@aws-sdk/lib-dynamodb": "^3.700.0"
+  },
+  "engines": {
+    "node": ">=20.12"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Abantu-Digital/deBug.git",
+    "directory": "packages/cli"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
