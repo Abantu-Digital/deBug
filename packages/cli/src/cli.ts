@@ -152,46 +152,62 @@ async function init(cwd: string, preset?: ProviderId) {
   // The two values people copy, outside the box so no border characters come along.
   printValues("Your ingest endpoint and key (the key is public: it ships in your app):", { endpoint: cfg.endpoint, key: cfg.ingestKey });
 
-  /* 3. The app's code */
-  const remaining = await wireApp(app, cfg);
-
-  /* 4. The dashboard, empty, then the walkthrough */
+  /* 3. The dashboard login, then (in the same cloud, straight after ingest) hosting it */
   await prepareDashboardEnv(cwd, result.dashboardEnv, dashboardPort);
-  let dash: Awaited<ReturnType<typeof startDashboard>>;
-  try {
-    dash = await startDashboard(cwd);
-  } catch (err) {
-    p.log.error((err as Error).message);
-    p.outro(`deBug is set up, but the dashboard didn't start. Try ${code(cmdFor("dashboard"))}.`);
-    return;
-  }
-  await walkthrough({ cwd, app, cfg, dashboardUrl: dash.url, remaining });
-
-  if (provider === "local") {
-    p.log.info(`The dashboard is your ingest on this setup, so keep it running while you try the app. Stop it with ${code("Ctrl-C")}.`);
-    p.outro("deBug is set up.");
-    await new Promise<void>((r) => dash.child.once("exit", () => r()));
-    return;
-  }
-  dash.stop();
-
-  /* 5. Optionally, the dashboard online, for the team */
   let hostedUrl = cfg.hosted?.url;
-  p.note(
-    [
-      `The dashboard ran on this machine. deBug can also host it in your ${provider === "aws" ? "AWS account" : "Firebase project"}, reading the same data,`,
-      "at a link you can share with your team. It signs in with the same login. You can still run it locally.",
-    ].join("\n"),
-    "Host the dashboard?",
-  );
-  if (await yes(hostedUrl ? `Update the hosted dashboard at ${hostedUrl}?` : "Host the dashboard online too?", !hostedUrl)) {
+  let hostedLive = false;
+  if (provider !== "local") {
+    p.note(
+      [
+        `deBug can host the dashboard in your ${provider === "aws" ? "AWS account" : "Firebase project"} too, reading the same data,`,
+        "at a link you can share with your team. It signs in with the same login, and you can still run it locally.",
+        "Skip it and setup carries on; host it later with npx debugkit deploy-dashboard.",
+      ].join("\n"),
+      "Host the dashboard",
+    );
+    const choice = await choose(
+      hostedUrl ? `The dashboard is hosted at ${hostedUrl}. Update it?` : "Host the dashboard online?",
+      [
+        { value: "host", label: hostedUrl ? "Update it" : "Host it", hint: "a few minutes" },
+        { value: "skip", label: "Skip for now" },
+      ],
+      "host",
+    );
+    if (choice === "host") {
+      try {
+        const out = await hostDashboard(cwd, readConfig(cwd) ?? cfg, { optional: true });
+        if (out) [hostedUrl, hostedLive] = [out.url, out.live];
+      } catch (err) {
+        p.log.error((err as Error).message);
+        p.log.info(`Setup carries on without it. Host it later with ${code(cmdFor("deploy-dashboard"))}.`);
+      }
+    } else p.log.info(dim(`Skipped. Any time later: ${cmdFor("deploy-dashboard")}`));
+  }
+
+  /* 4. The app's code */
+  const remaining = await wireApp(app, readConfig(cwd) ?? cfg);
+
+  /* 5. The dashboard, empty, then the walkthrough: on the hosted one when it's up */
+  let dash: Awaited<ReturnType<typeof startDashboard>> | undefined;
+  if (!(hostedUrl && hostedLive)) {
     try {
-      hostedUrl = (await hostDashboard(cwd, readConfig(cwd) ?? cfg)).url;
+      dash = await startDashboard(cwd);
     } catch (err) {
       p.log.error((err as Error).message);
-      p.log.info(`deBug itself is set up. Try hosting again with ${code(cmdFor("deploy-dashboard"))}.`);
+      p.outro(`deBug is set up, but the dashboard didn't start. Try ${code(cmdFor("dashboard"))}.`);
+      return;
     }
-  } else p.log.info(dim(`Any time later: ${cmdFor("deploy-dashboard")}`));
+  }
+  await walkthrough({ cwd, app, cfg: readConfig(cwd) ?? cfg, dashboardUrl: dash?.url ?? hostedUrl!, remaining });
+
+  if (provider === "local" && dash) {
+    const running = dash;
+    p.log.info(`The dashboard is your ingest on this setup, so keep it running while you try the app. Stop it with ${code("Ctrl-C")}.`);
+    p.outro("deBug is set up.");
+    await new Promise<void>((r) => running.child.once("exit", () => r()));
+    return;
+  }
+  dash?.stop();
 
   const others = listEnvironments(cwd).filter((e) => e !== environment.get());
   p.outro(
@@ -204,7 +220,9 @@ async function deployDashboard(cwd: string) {
   const cfg = requireConfig(cwd);
   p.intro(`${pc.bgRed(pc.white(" deBug "))} host the dashboard${envLabel()}`);
   if (cfg.provider === "local") bail(`This setup keeps data on this machine, so there's nothing to host. Run ${code(cmdFor("init"))} with Firebase or AWS first.`);
-  const { url } = await hostDashboard(cwd, cfg);
+  const out = await hostDashboard(cwd, cfg);
+  if (!out) return;
+  const { url } = out;
   const { openUrl } = await import("./exec");
   openUrl(url);
   p.outro(`Share ${code(url)} with your team. ${loginHint(cwd)}`);

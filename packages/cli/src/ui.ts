@@ -36,7 +36,8 @@ export async function yes(message: string, initial = true): Promise<boolean> {
 /** Pause a walkthrough step until the user is ready. */
 export async function next(message = "Continue") {
   if (flags.yes) return;
-  must<boolean>(await p.confirm({ message, active: "Next", inactive: "Stop here", initialValue: true })) || bail("Stopped the walkthrough. Run npx debugkit guide to pick it up again.");
+  // One way forward: setup runs start to finish, so there's no "Stop here" to drop off at.
+  must(await p.select({ message, options: [{ value: "next", label: "Next" }] }));
 }
 
 export const code = (s: string) => pc.cyan(s);

@@ -93,12 +93,33 @@ async function waitLive(url: string, ms = 120_000): Promise<boolean> {
 export interface HostResult {
   url: string;
   created: string[];
+  /** It answered its sign-in page after the deploy. */
+  live: boolean;
+}
+
+/**
+ * During init, hosting can be skipped but never ends the setup: declining or a failed deploy
+ * returns undefined and init carries on. `npx debugkit deploy-dashboard` stops instead.
+ */
+export interface HostOptions {
+  optional?: boolean;
+}
+
+/** Leave hosting out (init) or stop (deploy-dashboard). */
+function skipOrStop(opts: HostOptions, message: string): undefined {
+  if (opts.optional) {
+    p.log.info(`${message} Host it any time with ${code("npx debugkit deploy-dashboard")}.`);
+    return undefined;
+  }
+  bail(message);
 }
 
 /** Put the dashboard online in the same cloud as the data. Saves the URL in .debugkit/config.json. */
-export async function hostDashboard(cwd: string, cfg: DebugkitConfig): Promise<HostResult> {
+export async function hostDashboard(cwd: string, cfg: DebugkitConfig, opts: HostOptions = {}): Promise<HostResult | undefined> {
   const local = readEnv(paths(cwd).dashboardEnv);
-  const out = cfg.provider === "firebase" ? await hostFirebase(cwd, cfg, local) : cfg.provider === "aws" ? await hostAws(cfg, local) : bail("The dashboard can only be hosted on Firebase or AWS. On this setup, run it locally.");
+  const out =
+    cfg.provider === "firebase" ? await hostFirebase(cwd, cfg, local, opts) : cfg.provider === "aws" ? await hostAws(cfg, local, opts) : bail("The dashboard can only be hosted on Firebase or AWS. On this setup, run it locally.");
+  if (!out) return undefined;
   // Configs from before 0.6.1 kept the Google account in config.json: move it to the gitignored env.
   if (cfg.firebase?.account) {
     if (!local.DEBUGKIT_FIREBASE_ACCOUNT) upsertEnv(paths(cwd).dashboardEnv, { DEBUGKIT_FIREBASE_ACCOUNT: cfg.firebase.account });
@@ -109,9 +130,10 @@ export async function hostDashboard(cwd: string, cfg: DebugkitConfig): Promise<H
   await linkAlerts(local, cfg.appId, out.hosted.url);
   const s = p.spinner();
   s.start(`Checking ${out.hosted.url}`);
-  if (await waitLive(out.hosted.url)) s.stop(`The dashboard is live at ${code(out.hosted.url)}`);
+  const live = await waitLive(out.hosted.url);
+  if (live) s.stop(`The dashboard is live at ${code(out.hosted.url)}`);
   else s.error(`${out.hosted.url} didn't answer yet. New deploys can take a minute; open it again shortly.`);
-  return { url: out.hosted.url, created: out.created };
+  return { url: out.hosted.url, created: out.created, live };
 }
 
 /* ------------------------------------------------------------------ Firebase */
@@ -205,7 +227,7 @@ export function writeHostingConfig(dir: string, site: string, region: string) {
   }));
 }
 
-async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<string, string>) {
+async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<string, string>, opts: HostOptions) {
   const fbc = cfg.firebase ?? bail("This setup has no Firebase project saved. Run npx debugkit init again.");
   const [fbCmd, fbPre] = await firebaseCli();
   const account = local.DEBUGKIT_FIREBASE_ACCOUNT || fbc.account;
@@ -238,7 +260,7 @@ async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<stri
   }
   if (!site) {
     s.error("Couldn't find a free Hosting site name");
-    bail(`Create one in the Firebase console (Hosting → Add another site), then run ${code("npx debugkit deploy-dashboard")}.`);
+    return skipOrStop(opts, "Create a site in the Firebase console (Hosting → Add another site).");
   }
   const url = `https://${site}.web.app`;
   s.stop(`Hosting site ${code(site)}: ${url}`);
@@ -276,7 +298,7 @@ async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<stri
     ].join("\n"),
     "About to host the dashboard",
   );
-  if (!(await yes(`Host the dashboard in ${fbc.projectId}?`))) bail("Nothing was deployed. The dashboard still runs locally with npx debugkit dashboard.");
+  if (!(await yes(`Host the dashboard in ${fbc.projectId}?`))) return skipOrStop(opts, "Skipped hosting: the dashboard still runs locally with npx debugkit dashboard.");
 
   // A newer dashboard can query with indexes an older setup never added. Add deBug's current
   // ones; never with --force, which would delete indexes the project has that aren't in the file.
@@ -295,11 +317,11 @@ async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<stri
         // Hosting can't reach functions in some regions (africa-south1, for one): a plain retry fails the same way.
         ...(region !== "us-central1" ? [{ value: "us", label: "Retry with the function in us-central1", hint: "the usual fix when Hosting can't reach the function's region" }] : []),
         { value: "retry", label: "Retry as it is" },
-        { value: "stop", label: "Stop here" },
+        { value: "stop", label: opts.optional ? "Skip hosting for now" : "Stop here" },
       ],
       region !== "us-central1" ? "us" : "retry",
     );
-    if (choice === "stop") bail(`Fix the error above, then run ${code("npx debugkit deploy-dashboard")}.`);
+    if (choice === "stop") return skipOrStop(opts, "The dashboard isn't hosted yet: fix the error above.");
     if (choice === "us") {
       region = "us-central1";
       write();
@@ -347,7 +369,7 @@ export async function dashboardZip(): Promise<Uint8Array> {
   }
 }
 
-async function hostAws(cfg: DebugkitConfig, local: Record<string, string>) {
+async function hostAws(cfg: DebugkitConfig, local: Record<string, string>, opts: HostOptions) {
   const aws = cfg.aws ?? bail("This setup has no AWS details saved. Run npx debugkit init again.");
   if (!aws.readOnlyPolicyArn) bail("The read-only policy for the dashboard is missing. Run npx debugkit init again (it adds it), then npx debugkit deploy-dashboard.");
   const { fromNodeProviderChain } = await import("@aws-sdk/credential-providers");
@@ -369,7 +391,7 @@ async function hostAws(cfg: DebugkitConfig, local: Record<string, string>) {
     ].join("\n"),
     "About to host the dashboard",
   );
-  if (!(await yes("Host the dashboard in AWS?"))) bail("Nothing was deployed. The dashboard still runs locally with npx debugkit dashboard.");
+  if (!(await yes("Host the dashboard in AWS?"))) return skipOrStop(opts, "Skipped hosting: the dashboard still runs locally with npx debugkit dashboard.");
 
   const s = p.spinner();
   s.start("Packaging the dashboard");
