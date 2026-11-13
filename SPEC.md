@@ -185,6 +185,12 @@ deBug hosts nothing.
   app, opens the empty dashboard, and walks through it with a test event. The dashboard is
   published as `@debugkit/dashboard`. Verified end to end on a real Firebase project; the AWS
   path is covered by unit tests only.
+- **Per-build switch and environments (0.4, released):**
+  - The SDK's `enabled` option leaves deBug inert in builds where it's off.
+  - `npx debugkit init --env <name>` sets up each environment separately (its own provider, project,
+    endpoint and dashboard login), with EAS variables for Expo.
+  - Built for project-megatron-native, whose preview and production are separate apps on separate
+    Firebase projects. The EAS step hasn't been run against a real project yet.
 - **Next, automatic capture part 2:** freezes (JS thread stalls, long tasks,
   event-loop lag), performance (web vitals, cold start, slow screens), memory
   warnings, error spikes, rage clicks, and a Health page.

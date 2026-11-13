@@ -70,6 +70,7 @@ Options: `--provider firebase|aws|local` skips the provider question, `--cwd <di
 | Just this machine | Run end to end: the empty dashboard, then test events arriving |
 | Firebase | Run end to end against a real project: function deployed, indexes added without touching existing ones, test events read back on the dashboard |
 | AWS | Unit-tested (profile parsing, the "not found" handling, key merging) and the bundled Lambda run locally. Not yet run against a real account |
+| Environments (`--env`) | Run end to end with "just this machine" in an Expo-style app: separate config and login, `.env` untouched, `debug.ts` with the on/off switch. `eas env:set` is checked against EAS's help but not yet run against a real EAS project |
 | Platforms | Vite and React run for real. The Expo, React Native, Next.js, TanStack Start and Node templates are unit-tested |
 
 ## What it needs
