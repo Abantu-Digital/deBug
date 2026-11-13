@@ -200,3 +200,31 @@ describe("older ingest", () => {
     expect(bodies.map((b) => b.events.map((e) => e.type).join(","))).toEqual(["session,error", "error", "error"]);
   });
 });
+
+describe("enabled: false", () => {
+  it("patches nothing, sends nothing, and keeps the API safe to call", async () => {
+    const appFetch = vi.fn(async () => new Response("", { status: 503 }));
+    g.fetch = appFetch;
+    const upload = vi.fn(async () => new Response("", { status: 202 }));
+    const c = new DebugClient().init({ enabled: false, endpoint: "", ingestKey: "", app: { id: "web" }, fetch: upload as unknown as typeof fetch, flushIntervalMs: 0 });
+    clients.push(c);
+    expect(c.enabled).toBe(false);
+    expect(g.fetch).toBe(appFetch); // fetch not wrapped
+    await fetch("/v1/feed");
+    c.error(new Error("ignored"));
+    c.event("ignored");
+    c.breadcrumb("ui", "ignored");
+    await expect(c.track("auth.login", "submit", async () => 42)).resolves.toBe(42);
+    await expect(c.track("auth.login", "submit", async () => Promise.reject(new Error("still thrown")))).rejects.toThrow("still thrown");
+    await c.flush();
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it("switching off after an enabled init undoes the instrumentation", async () => {
+    const { c, app } = setup({}, async () => new Response(""));
+    expect((g.fetch as { __debug?: boolean }).__debug).toBe(true);
+    c.init({ enabled: false, endpoint: "", ingestKey: "", app: { id: "web" } });
+    expect(g.fetch).toBe(app);
+    expect(c.enabled).toBe(false);
+  });
+});

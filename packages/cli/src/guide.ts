@@ -3,7 +3,7 @@ import type { AppInfo, Platform } from "./detect";
 import { PLATFORM_LABEL } from "./detect";
 import { loginHint, summary } from "./dashboard";
 import { openUrl } from "./exec";
-import type { DebugkitConfig } from "./state";
+import { cmdFor, type DebugkitConfig } from "./state";
 import { bold, code, dim, next, p, pc } from "./ui";
 
 /** What the SDK records on each platform without any code, as the walkthrough explains it. */
@@ -224,9 +224,9 @@ export async function walkthrough(opts: { cwd: string; app: AppInfo; cfg: Debugk
       ...opts.remaining.map((l, i) => `${i + 1}. ${l}`),
       `${opts.remaining.length + 1}. Run the app and watch the dashboard fill in`,
       "",
-      `${code("npx debugkit dashboard")}  open the dashboard again`,
-      `${code("npx debugkit test")}       send another test event`,
-      `${code("npx debugkit guide")}      replay this walkthrough`,
+      `${code(cmdFor("dashboard"))}  open the dashboard again`,
+      `${code(cmdFor("test"))}  send another test event`,
+      `${code(cmdFor("guide"))}  replay this walkthrough`,
     ].join("\n"),
     "6 · Finish wiring your app",
   );

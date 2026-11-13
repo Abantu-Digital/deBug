@@ -4,8 +4,8 @@ import { capture, interactive, openUrl, which } from "../exec";
 import FIRESTORE_INDEXES from "../../../adapters/firestore.indexes.json" with { type: "json" };
 import { VERSION } from "../dashboard";
 import { mergeKeys } from "../keys";
-import { paths } from "../state";
-import { ask, bail, choose, code, dim, next, p, yes } from "../ui";
+import { environment, paths } from "../state";
+import { ask, bail, bold, choose, code, dim, next, p, yes } from "../ui";
 import type { ProviderResult, SetupContext } from "./types";
 
 /** Firestore locations offered, with the Cloud Functions region that sits closest to each. */
@@ -145,6 +145,20 @@ export async function setupFirebase(ctx: SetupContext): Promise<ProviderResult> 
     bail();
   }
   s.stop("Installed the ingest function's dependencies");
+
+  // Say exactly what's about to change in the project, and get a yes.
+  p.note(
+    [
+      `In ${bold(projectId)}${environment.get() ? ` (your ${environment.get()} environment)` : ""}, deBug will add:`,
+      `• a Cloud Function ${code(FUNCTION_NAME)} in ${region}, with a public URL (each request needs the ingest key)`,
+      `• a ${code("debug_apps")} collection in Firestore, with raw events expiring after 30 days`,
+      `• two Firestore indexes for it (your existing indexes are left alone)`,
+      "",
+      "Nothing else in the project is changed. Usage is billed to the project's Blaze plan.",
+    ].join("\n"),
+    "About to deploy",
+  );
+  if (!(await yes(`Deploy deBug into ${projectId}?`))) bail("Nothing was deployed.");
 
   // Indexes first, and never with --force: that would delete indexes the project already has
   // that aren't in deBug's file. Non-interactive, firebase-tools adds ours and leaves the rest alone.
