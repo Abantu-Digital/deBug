@@ -10,4 +10,6 @@ const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOption
 export const handler = lambdaHandler({
   store: new DynamoStore(doc, { table: process.env.DEBUG_TABLE ?? "debugkit" }),
   keys: parseIngestKeys(process.env.DEBUG_INGEST_KEYS),
+  retentionDays: Number(process.env.DEBUG_RETENTION_DAYS) || undefined,
+  adminToken: process.env.DEBUG_ADMIN_TOKEN,
 });

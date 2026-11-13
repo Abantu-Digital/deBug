@@ -16,11 +16,12 @@ Run it from your app's folder. It walks you through these steps:
    - **AWS:** a Lambda with a public URL and DynamoDB.
    - **Just this machine:** no cloud, for a first look.
 3. **Signs you in and sets everything up in your own account.**
-   - **Firebase:** you sign in with Google in your browser, then pick or create a project. The CLI creates the Firestore database, deploys the indexes and the 30-day expiry on raw events, and deploys the ingest function. Cloud Functions need the Blaze plan, so it opens the billing page if you need to upgrade.
+   - **Firebase:** you sign in with Google in your browser, then pick or create a project. The CLI creates the Firestore database, deploys the indexes and the expiry on raw events, and deploys the ingest function. Cloud Functions need the Blaze plan, so it opens the billing page if you need to upgrade.
    - **AWS:** you use an existing profile or sign in with AWS SSO in your browser, so you don't paste any access keys. The CLI creates the DynamoDB table, a Lambda with a public URL, an IAM role that can only write to the table, and a read-only policy for hosting the dashboard later.
-4. **Wires up your app.** It writes the endpoint and ingest key to `.env` (or into the code for bare React Native), creates `debug.ts`, and tells you the one or two lines left to add.
-5. **Opens your dashboard,** connected to your data and still empty, behind a login you choose.
-6. **Walks you through it:**
+4. **Asks how long to keep raw events:** 30, 60 (default), 90, 180 or 365 days, or any number, with a rough storage cost. Counts, issues and release health are kept forever. You can change it later on the dashboard's Settings page.
+5. **Wires up your app.** It writes the endpoint and ingest key to `.env` (or into the code for bare React Native), creates `debug.ts`, and tells you the one or two lines left to add.
+6. **Opens your dashboard,** connected to your data and still empty, behind a login you choose.
+7. **Walks you through it:**
    - what each part of the dashboard will show;
    - a test event, sent through the real ingest so you watch it arrive;
    - what the SDK records on its own;

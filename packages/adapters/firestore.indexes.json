@@ -4,22 +4,40 @@
       "collectionGroup": "rollups",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "dimension", "order": "ASCENDING" },
-        { "fieldPath": "day", "order": "ASCENDING" }
+        {
+          "fieldPath": "dimension",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "day",
+          "order": "ASCENDING"
+        }
       ]
     },
     {
       "collectionGroup": "events",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "fingerprint", "order": "ASCENDING" },
-        { "fieldPath": "ts", "order": "DESCENDING" }
+        {
+          "fieldPath": "fingerprint",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "ts",
+          "order": "DESCENDING"
+        }
       ]
     }
   ],
   "fieldOverrides": [
     {
       "collectionGroup": "events",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "rollups",
       "fieldPath": "expireAt",
       "ttl": true,
       "indexes": []

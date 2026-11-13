@@ -1,8 +1,10 @@
 import { Envelope, parseStack, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debugkit/schema";
 import type { IssueUpsert, WriteStore } from "@debugkit/adapters";
+import { effectiveRetention } from "./admin";
 import { culpritOf, fingerprint, titleOf } from "./fingerprint";
 
 export * from "./fingerprint";
+export { handleAdmin, effectiveRetention, type AdminOptions } from "./admin";
 
 export interface IngestOptions {
   store: WriteStore;
@@ -14,6 +16,11 @@ export interface IngestOptions {
   keys: Record<string, string>;
   /** Hard cap on accepted payload size in bytes. Default 512 KB. */
   maxBytes?: number;
+  /**
+   * How long raw events are kept when the app has no retention setting yet (set at `init`,
+   * usually from DEBUG_RETENTION_DAYS). The dashboard's Settings page overrides it per app.
+   */
+  retentionDays?: number;
   now?: () => Date;
 }
 
@@ -121,8 +128,9 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
   }
 
   await opts.store.registerApp(app);
+  const retentionDays = stored.length ? await effectiveRetention(opts.store, app, opts.retentionDays) : undefined;
   await Promise.all([
-    stored.length ? opts.store.writeEvents(stored) : undefined,
+    stored.length ? opts.store.writeEvents(stored, { retentionDays }) : undefined,
     opts.store.upsertIssues([...issues.values()]),
     opts.store.incrementRollups(rollups),
   ]);

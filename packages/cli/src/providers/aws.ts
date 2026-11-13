@@ -7,7 +7,7 @@ import { interactive, which } from "../exec";
 import { keyEntry, mergeKeys } from "../keys";
 import { environment } from "../state";
 import { ask, bail, choose, code, dim, next, p, yes } from "../ui";
-import type { ProviderResult, SetupContext } from "./types";
+import { adminEnv, type ProviderResult, type SetupContext } from "./types";
 
 const REGIONS = [
   { value: "af-south-1", label: "Cape Town (af-south-1)" },
@@ -235,11 +235,13 @@ export async function setupAws(ctx: SetupContext): Promise<ProviderResult> {
       new lambdaMod.UpdateFunctionConfigurationCommand({
         FunctionName: functionName,
         Role: roleArn,
-        Environment: { Variables: { ...fn.Configuration?.Environment?.Variables, DEBUG_TABLE: table, DEBUG_INGEST_KEYS: keys } },
+        Environment: {
+          Variables: { ...fn.Configuration?.Environment?.Variables, DEBUG_TABLE: table, DEBUG_INGEST_KEYS: keys, DEBUG_RETENTION_DAYS: String(ctx.retentionDays), DEBUG_ADMIN_TOKEN: ctx.adminToken },
+        },
       }),
     );
   } else {
-    const env = { Variables: { DEBUG_TABLE: table, DEBUG_INGEST_KEYS: keyEntry(ctx.ingestKey, ctx.app.appId) } };
+    const env = { Variables: { DEBUG_TABLE: table, DEBUG_INGEST_KEYS: keyEntry(ctx.ingestKey, ctx.app.appId), DEBUG_RETENTION_DAYS: String(ctx.retentionDays), DEBUG_ADMIN_TOKEN: ctx.adminToken } };
     // A new role takes a few seconds before Lambda can assume it.
     for (let attempt = 0; ; attempt++) {
       try {
@@ -307,7 +309,7 @@ export async function setupAws(ctx: SetupContext): Promise<ProviderResult> {
 
   return {
     config: { provider: "aws", endpoint: url.replace(/\/$/, ""), ingestKey: ctx.ingestKey, aws: { region, profile, table, functionName, roleName, readOnlyPolicyArn } },
-    dashboardEnv: { DEBUG_STORE: "dynamodb", AWS_REGION: region, DEBUG_DYNAMO_TABLE: table, ...(profile ? { AWS_PROFILE: profile } : {}) },
+    dashboardEnv: { DEBUG_STORE: "dynamodb", AWS_REGION: region, DEBUG_DYNAMO_TABLE: table, ...(profile ? { AWS_PROFILE: profile } : {}), ...adminEnv(url, ctx) },
     created: [
       `DynamoDB table ${code(table)} in ${region}${ownTable ? " (on-demand)" : " (your existing table)"}`,
       `Lambda ${code(functionName)} with a public URL: ${code(url)}`,

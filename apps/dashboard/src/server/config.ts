@@ -43,6 +43,11 @@ export function config() {
     firestoreRoot: env.DEBUG_FIRESTORE_ROOT ?? "debug_apps",
     dynamoTable: env.DEBUG_DYNAMO_TABLE ?? "debug",
     severity,
+    /** The ingest function's admin routes (…/admin) and their token, for changing settings. */
+    adminUrl: env.DEBUG_ADMIN_URL?.replace(/\/+$/, ""),
+    adminToken: env.DEBUG_ADMIN_TOKEN,
+    /** The deployment's default retention (what ingest uses before an app has a setting). */
+    retentionDays: num(env.DEBUG_RETENTION_DAYS, 0) || undefined,
     secureCookies: env.NODE_ENV === "production" && env.DEBUG_INSECURE_COOKIES !== "1",
   };
 }

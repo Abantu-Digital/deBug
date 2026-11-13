@@ -191,6 +191,10 @@ deBug hosts nothing.
     endpoint and dashboard login), with EAS variables for Expo.
   - Built for project-megatron-native, whose preview and production are separate apps on separate
     Firebase projects. The EAS step hasn't been run against a real project yet.
+- **Retention and date ranges (0.5):**
+  - Retention for raw events is chosen at `init` (default 60 days) and changed per app on the dashboard's Settings page. The setting lives in the customer's own database and is written through the ingest function's `/admin` routes, so the dashboard stays read-only.
+  - Every view takes a date range: 24h (hourly), 7/14/30/90 days (daily), or custom (weekly past 90 days), compared with the previous period. The range is in the URL and in `/api/summary`.
+  - Hourly counters expire after 7 days.
 - **Next, automatic capture part 2:** freezes (JS thread stalls, long tasks,
   event-loop lag), performance (web vitals, cold start, slow screens), memory
   warnings, error spikes, rage clicks, and a Health page.

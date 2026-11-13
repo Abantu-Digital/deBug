@@ -29,7 +29,7 @@ export function SeverityBadge({ severity }: { severity: Severity }) {
 
 export function Card({ title, subtitle, children, right }: { title: string; subtitle?: string; children: ReactNode; right?: ReactNode }) {
   return (
-    <section className="rounded-xl border border-line bg-panel p-4 sm:p-5">
+    <section className="min-w-0 rounded-xl border border-line bg-panel p-4 sm:p-5">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold">{title}</h2>
