@@ -223,7 +223,7 @@ function EmptyState() {
         <p className="text-xs uppercase tracking-wide text-muted">Connected · waiting for the first event</p>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">Your dashboard is ready, and empty for now.</h1>
         <p className="mt-2 max-w-2xl text-sm text-muted">
-          Nothing has arrived yet. Run your app with the SDK initialised, or send a test event with <code>npx debugkit test</code>. This page fills in on its own.
+          Nothing has arrived yet. Run your app with the SDK initialised, or send a test event with <code>npx debugkit test</code> (or <code>npx @debugkit/cli test</code>). This page fills in on its own.
         </p>
       </div>
 

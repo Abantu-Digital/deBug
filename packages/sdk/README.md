@@ -31,6 +31,8 @@ hooks, and they all share the same `deBug` client.
 | Next.js, Remix, Express, any Node server | `@debugkit/sdk/node` | |
 | Anything else (workers, edge, vanilla JS) | `@debugkit/sdk` | |
 
+The quickest setup is `npx debugkit init` in your app's folder, once the SDK is installed. It deploys ingest to your own Firebase or AWS account, writes the endpoint and key into your app, and walks you through the dashboard. See [@debugkit/cli](https://www.npmjs.com/package/@debugkit/cli).
+
 Your ingest endpoint and key come from your deBug deployment. During development, point at a
 dashboard running in demo mode: `http://localhost:4400/api/ingest` with key `pk_local`.
 

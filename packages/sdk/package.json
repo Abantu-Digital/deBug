@@ -2,6 +2,9 @@
   "name": "@debugkit/sdk",
   "version": "0.3.0",
   "type": "module",
+  "bin": {
+    "debugkit": "./bin/debugkit.mjs"
+  },
   "exports": {
     ".": "./src/index.ts",
     "./react": "./src/react.tsx",
@@ -33,7 +36,8 @@
     "expo",
     "expo-router",
     "node",
-    "README.md"
+    "README.md",
+    "bin"
   ],
   "publishConfig": {
     "access": "public",

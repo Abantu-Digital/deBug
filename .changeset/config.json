@@ -9,7 +9,7 @@
       "@debugkit/ingest",
       "@debugkit/adapters",
       "@debugkit/dashboard",
-      "debugkit"
+      "@debugkit/cli"
     ]
   ],
   "linked": [],
