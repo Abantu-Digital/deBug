@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
-import { freePort, prepareDashboardEnv, startDashboard } from "./dashboard";
+import { freePort, prepareDashboardEnv, resetLogin, startDashboard } from "./dashboard";
 import { detectApp, PLATFORM_LABEL, type AppInfo } from "./detect";
 import { sendTestEvents, walkthrough } from "./guide";
 import { setupAws } from "./providers/aws";
@@ -19,6 +19,7 @@ const HELP = `${bold("debugkit")} ${VERSION}: set up deBug in your app
   ${code("npx debugkit dashboard")}   run the dashboard against your data
   ${code("npx debugkit test")}        send test events and check they arrive
   ${code("npx debugkit guide")}       replay the walkthrough
+  ${code("npx debugkit password")}    reset the dashboard login
 
 Options
   --provider <firebase|aws|local>   skip the provider question
@@ -166,6 +167,13 @@ async function guide(cwd: string) {
   }
 }
 
+async function password(cwd: string) {
+  requireConfig(cwd);
+  p.intro(`${pc.bgRed(pc.white(" deBug "))} reset the dashboard login`);
+  await resetLogin(cwd);
+  p.outro(`Saved. Restart the dashboard (${code("npx debugkit dashboard")}) and sign in with the new password.`);
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   flags.yes = args.yes;
@@ -183,6 +191,8 @@ async function main() {
       return test(args.cwd);
     case "guide":
       return guide(args.cwd);
+    case "password":
+      return password(args.cwd);
     default:
       console.log(HELP);
       process.exitCode = 1;

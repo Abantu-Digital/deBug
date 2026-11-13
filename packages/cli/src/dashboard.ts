@@ -51,17 +51,27 @@ export async function prepareDashboardEnv(cwd: string, storeEnv: Record<string, 
   if (!cur.DEBUG_API_TOKEN) values.DEBUG_API_TOKEN = `dbk_${randomBytes(24).toString("hex")}`;
   if (!cur.DEBUG_DASHBOARD_USERS) {
     p.note("The dashboard is behind a login, even on your own machine. Pick the email and password you'll sign in with.", "Dashboard login");
-    const gitEmail = (await capture("git", ["config", "user.email"], { cwd })).stdout.trim();
-    const email = await ask("Dashboard email", { initial: gitEmail || undefined, validate: (v) => (/^\S+@\S+\.\S+$/.test(v) ? undefined : "Enter an email address") });
-    const password =
-      flags.yes && process.env.DEBUGKIT_DASHBOARD_PASSWORD
-        ? process.env.DEBUGKIT_DASHBOARD_PASSWORD
-        : String(must(await p.password({ message: "Dashboard password (10+ characters)", validate: (v) => ((v ?? "").length >= 10 ? undefined : "At least 10 characters") })));
-    values.DEBUG_DASHBOARD_USERS = `${email.toLowerCase()}=${hashPassword(password)}`;
-    values.DEBUGKIT_LOGIN_EMAIL = email.toLowerCase();
+    Object.assign(values, await askLogin(cwd));
   }
   upsertEnv(file, values);
   return file;
+}
+
+/** Ask for the dashboard email and password; returns the env values (only a hash of the password). */
+export async function askLogin(cwd: string, currentEmail?: string): Promise<Record<string, string>> {
+  const gitEmail = currentEmail ?? (await capture("git", ["config", "user.email"], { cwd })).stdout.trim();
+  const email = await ask("Dashboard email", { initial: gitEmail || undefined, validate: (v) => (/^\S+@\S+\.\S+$/.test(v) ? undefined : "Enter an email address") });
+  const password =
+    flags.yes && process.env.DEBUGKIT_DASHBOARD_PASSWORD
+      ? process.env.DEBUGKIT_DASHBOARD_PASSWORD
+      : String(must(await p.password({ message: "Dashboard password (10+ characters)", validate: (v) => ((v ?? "").length >= 10 ? undefined : "At least 10 characters") })));
+  return { DEBUG_DASHBOARD_USERS: `${email.toLowerCase()}=${hashPassword(password)}`, DEBUGKIT_LOGIN_EMAIL: email.toLowerCase() };
+}
+
+/** Replace the dashboard login (npx debugkit password). */
+export async function resetLogin(cwd: string) {
+  const file = paths(cwd).dashboardEnv;
+  upsertEnv(file, await askLogin(cwd, readEnv(file).DEBUGKIT_LOGIN_EMAIL));
 }
 
 /** How to run the dashboard: a local checkout (for deBug's own development) or the published package. */
@@ -87,7 +97,9 @@ export async function startDashboard(cwd: string): Promise<RunningDashboard> {
   const [cmd, args] = dashboardCommand();
   const child = spawn(cmd, args, {
     cwd,
-    env: { ...process.env, ...env, DEBUG_ENV_FILE: envFile, NODE_ENV: "production" },
+    // The dashboard runs on this machine over plain http, where browsers drop Secure cookies
+    // (the login would bounce straight back to the sign-in page). Behind HTTPS, set DEBUG_INSECURE_COOKIES=0.
+    env: { ...process.env, ...env, DEBUG_ENV_FILE: envFile, NODE_ENV: "production", DEBUG_INSECURE_COOKIES: env.DEBUG_INSECURE_COOKIES ?? "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let log = "";
