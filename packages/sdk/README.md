@@ -86,6 +86,22 @@ deBug.init({
 
 Requests to your ingest endpoint and to the Metro and Expo dev servers are never recorded.
 
+## Response times
+
+With network capture on, the SDK also times every request. It sends one small summary per endpoint about once a minute: a count, failures, and a histogram. It doesn't send one event per request. The dashboard turns these into p50/p95 response times per endpoint. Paths are normalised the same way as for failures (no query strings, ids replaced with `:id`).
+
+## Network type and country
+
+Errors are broken down by network type, from `context.network.type`, and by country.
+- **Browsers** report the network type on their own.
+- **React Native and Expo** need you to pass it, for example from `@react-native-community/netinfo`:
+
+```ts
+NetInfo.addEventListener((s) => deBug.setContext({ network: { type: s.type === "wifi" ? "wifi" : s.type === "cellular" ? "cellular" : "unknown", isConnected: !!s.isConnected } }));
+```
+
+Country is worked out by ingest from the device's timezone, then its locale. IP addresses are never used.
+
 ## Releases and over-the-air updates
 
 deBug groups crash-free rates and "new in" labels by `app.version`. If you ship JavaScript updates without a store release (hot-updater, expo-updates), pass the update id too, so each update counts as its own release:

@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { Card } from "~/components/ui";
-import { getSettings, restampExisting, saveRetention } from "~/server/fns";
+import { getSettings, restampExisting, saveAppSettings, saveRetention, sendTestAlert } from "~/server/fns";
 
 export const Route = createFileRoute("/_authed/settings")({
   validateSearch: (s: Record<string, unknown>): { app?: string } => ({ app: typeof s.app === "string" ? s.app : undefined }),
@@ -126,11 +126,83 @@ function SettingsPage() {
         </Card>
       )}
 
+      {canEdit && <FlowsAndAlerts key={settings.app + (settings.updatedAt ?? "")} settings={settings} onStatus={setStatus} />}
+
       {status && (
         <p role="status" className={`rounded-lg border px-3 py-2 text-sm ${status.tone === "error" ? "border-sev-critical text-sev-critical" : status.tone === "ok" ? "border-line bg-panel-2" : "border-line text-muted"}`}>
           {status.text}
         </p>
       )}
     </main>
+  );
+}
+
+function FlowsAndAlerts({
+  settings,
+  onStatus,
+}: {
+  settings: { app: string; criticalFlows: string[]; alerts: { slackWebhookUrl?: string; newIssues?: boolean; regressions?: boolean; onlyCriticalFlows?: boolean; dashboardUrl?: string }; writer: string };
+  onStatus: (s: { tone: "ok" | "error" | "info"; text: string } | null) => void;
+}) {
+  const router = useRouter();
+  const [flows, setFlows] = useState(settings.criticalFlows.join(", "));
+  const [hook, setHook] = useState(settings.alerts.slackWebhookUrl ?? "");
+  const [newIssues, setNewIssues] = useState(settings.alerts.newIssues !== false);
+  const [regressions, setRegressions] = useState(settings.alerts.regressions !== false);
+  const [onlyCritical, setOnlyCritical] = useState(settings.alerts.onlyCriticalFlows === true);
+  const [dashboardUrl, setDashboardUrl] = useState(settings.alerts.dashboardUrl ?? (typeof window !== "undefined" ? window.location.origin : ""));
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    setBusy(true);
+    onStatus(null);
+    const out = await saveAppSettings({
+      data: {
+        app: settings.app,
+        criticalFlows: flows.split(/[\s,]+/).filter(Boolean),
+        alerts: { slackWebhookUrl: hook, newIssues, regressions, onlyCriticalFlows: onlyCritical, dashboardUrl },
+      },
+    }).catch((e: Error) => ({ ok: false as const, error: e.message }));
+    setBusy(false);
+    if (!out.ok) return onStatus({ tone: "error", text: out.error });
+    onStatus({ tone: "ok", text: "Saved. Alerts and critical flows apply within about a minute." });
+    await router.invalidate();
+  };
+  const test = async () => {
+    setBusy(true);
+    const out = await sendTestAlert({ data: { app: settings.app } }).catch((e: Error) => ({ ok: false as const, error: e.message }));
+    setBusy(false);
+    onStatus(out.ok ? { tone: "ok", text: "Test message sent. Check your Slack channel." } : { tone: "error", text: out.error });
+  };
+  const box = "rounded-md border border-line bg-panel px-2 py-1.5 text-sm";
+  return (
+    <>
+      <Card title="Critical flows" subtitle="Issues in these flows rank one severity level higher, and can be the only ones that alert.">
+        <label className="block text-sm font-medium" htmlFor="flows">Flows, separated by commas</label>
+        <input id="flows" value={flows} onChange={(e) => setFlows(e.target.value)} placeholder="checkout.payment, auth.login" className={`mt-2 w-full ${box}`} />
+      </Card>
+      <Card title="Slack alerts" subtitle="Your ingest function posts to Slack when an issue first appears or comes back after being resolved.">
+        <div className="space-y-3 text-sm">
+          <div>
+            <label className="block font-medium" htmlFor="hook">Incoming webhook URL</label>
+            <input id="hook" value={hook} onChange={(e) => setHook(e.target.value)} placeholder="https://hooks.slack.com/services/…" className={`mt-2 w-full font-mono ${box}`} />
+            <p className="mt-1 text-xs text-muted">Create one under your Slack app's Incoming Webhooks. Leave empty to turn alerts off.</p>
+          </div>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={newIssues} onChange={(e) => setNewIssues(e.target.checked)} /> New issues</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={regressions} onChange={(e) => setRegressions(e.target.checked)} /> Regressions</label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={onlyCritical} onChange={(e) => setOnlyCritical(e.target.checked)} /> Only for critical flows</label>
+          <div>
+            <label className="block font-medium" htmlFor="dash-url">Dashboard address, for links in alerts</label>
+            <input id="dash-url" value={dashboardUrl} onChange={(e) => setDashboardUrl(e.target.value)} className={`mt-2 w-full ${box}`} />
+          </div>
+        </div>
+      </Card>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={() => void save()} disabled={busy} className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40">Save flows and alerts</button>
+        {settings.alerts.slackWebhookUrl && settings.writer === "admin" && (
+          <button type="button" onClick={() => void test()} disabled={busy} className="rounded-md border border-line px-3 py-1.5 text-sm hover:bg-panel-2 disabled:opacity-40">Send a test alert</button>
+        )}
+      </div>
+    </>
   );
 }

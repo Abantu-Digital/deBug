@@ -228,3 +228,31 @@ describe("enabled: false", () => {
     expect(c.enabled).toBe(false);
   });
 });
+
+describe("request timings", () => {
+  it("sends one metric event per endpoint with a latency histogram", async () => {
+    const { c, sent } = setup({ autoCapture: { sessions: false } }, async (url) => new Response("", { status: url.includes("fail") ? 503 : 200 }));
+    await fetch("/v1/feed");
+    await fetch("/v1/feed");
+    await fetch("/v1/fail");
+    await c.close(); // closing sends the timings collected so far
+    const metrics = sent.filter((e) => e.type === "metric");
+    expect(metrics.map((m) => m.type === "metric" && [m.key, m.count, m.errors])).toEqual([["GET /v1/feed", 2, 0], ["GET /v1/fail", 1, 1]]);
+    const m = metrics[0]!;
+    if (m.type === "metric") expect(m.buckets.reduce((a, b) => a + b, 0)).toBe(2);
+  });
+
+  it("stops sending metrics, and only metrics, when an older ingest rejects them", async () => {
+    const bodies: string[][] = [];
+    const old = vi.fn(async (_u: string, init: { body: string }) => {
+      const b = JSON.parse(init.body) as { events: { type: string }[] };
+      bodies.push(b.events.map((e) => e.type));
+      return new Response("", { status: b.events.some((e) => e.type === "metric") ? 400 : 202 });
+    });
+    const { c } = setup({ fetch: old as unknown as typeof fetch }, async () => new Response(""));
+    await fetch("/v1/feed");
+    await c.close();
+    expect(bodies[bodies.length - 1]).toEqual(["session"]); // sessions kept, metrics dropped
+    expect(bodies.flat()).toContain("metric");
+  });
+});

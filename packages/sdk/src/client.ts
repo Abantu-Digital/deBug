@@ -1,5 +1,5 @@
 import type { Breadcrumb, ContextInput, EnvelopeInput, EventInput, Severity } from "@debugkit/schema/core";
-import { parseStack } from "@debugkit/schema/core";
+import { latencyBucket, LATENCY_BUCKETS_MS, parseStack } from "@debugkit/schema/core";
 import { browserContext, mergeContext, type ContextPatch } from "./context";
 import {
   instrumentClicks,
@@ -262,7 +262,34 @@ export class DebugClient {
     }
   }
 
+  /** Response times per endpoint, sent as one metric event each about once a minute. */
+  private timings = new Map<string, { count: number; errors: number; buckets: number[] }>();
+  private timingsSince = Date.now();
+  /** Set when the ingest rejects metric events (older than 0.7): stop sending them, keep the rest. */
+  private noMetrics = false;
+
+  private timeRequest(key: string, ms: number, failed: boolean) {
+    if (this.noMetrics) return;
+    let t = this.timings.get(key);
+    if (!t) {
+      if (this.timings.size >= 50) return; // cap the endpoints tracked per minute
+      this.timings.set(key, (t = { count: 0, errors: 0, buckets: new Array(LATENCY_BUCKETS_MS.length + 1).fill(0) }));
+    }
+    t.count++;
+    if (failed) t.errors++;
+    t.buckets[latencyBucket(ms)]!++;
+  }
+
+  /** Turn the collected timings into metric events (every minute, or now when `force`). */
+  private queueTimings(force = false) {
+    if (!this.timings.size || this.noMetrics || (!force && Date.now() - this.timingsSince < 60_000)) return;
+    for (const [key, t] of this.timings) this.push({ type: "metric", id: uid(), ts: now(), name: "http", key: key.slice(0, 300), count: t.count, errors: t.errors, buckets: t.buckets });
+    this.timings.clear();
+    this.timingsSince = Date.now();
+  }
+
   async flush(): Promise<void> {
+    this.queueTimings(this.closing);
     // Wait for an upload in progress, then send whatever was queued meanwhile (a crash marker, say).
     if (this.flushing) await this.flushing.catch(() => {});
     if (this.flushing) return this.flushing;
@@ -286,10 +313,13 @@ export class DebugClient {
   }
 
   /** Stop the flush timer, undo automatic instrumentation and send what is queued. */
+  private closing = false;
+
   close() {
     if (this.timer) clearInterval(this.timer);
     this.uninstrument();
-    return this.flush();
+    this.closing = true;
+    return this.flush().finally(() => (this.closing = false));
   }
 
   /* ---------------- internals ---------------- */
@@ -382,6 +412,7 @@ export class DebugClient {
   private legacyIngest = false;
 
   private async send(events: EventInput[]): Promise<void> {
+    if (this.noMetrics) events = events.filter((e) => e.type !== "metric");
     if (this.legacyIngest) events = toLegacy(events);
     if (!events.length) return;
     const body: EnvelopeInput = {
@@ -405,6 +436,13 @@ export class DebugClient {
       this.log(`ingest rejected batch (${res.status})`, await res.text().catch(() => ""));
       // An ingest older than this SDK rejects session markers and request details. Retry once
       // without them rather than lose the errors; upgrade @debugkit/ingest to keep them.
+      // Step down one format at a time: first drop metric events (0.5/0.6 ingests), then
+      // session markers and request details (0.1).
+      if (res.status === 400 && !this.noMetrics && events.some((e) => e.type === "metric")) {
+        this.noMetrics = true;
+        this.timings.clear();
+        return this.send(events);
+      }
       if (res.status === 400 && !this.legacyIngest && hasNewFields(events)) {
         this.legacyIngest = true;
         return this.send(events);
@@ -500,7 +538,10 @@ export class DebugClient {
       navigated: (to) => this.navigated(to),
       lifecycle: (state) => {
         this.breadcrumb("ui", state === "background" ? "App went to the background" : "App came to the foreground");
-        if (state === "background") void this.flush();
+        if (state === "background") {
+          this.queueTimings(true);
+          void this.flush();
+        }
       },
       ignored: (url) => this.isIgnored(url),
     };
@@ -522,6 +563,7 @@ export class DebugClient {
     const slow = ms >= (net.slowMs ?? 3000);
     const outcome = r.aborted ? "aborted" : r.timedOut ? "timed out" : r.status !== undefined ? String(r.status) : "failed";
     this.breadcrumb("network", `${r.method} ${url} → ${outcome} (${ms}ms)`, { status: r.status ?? null, durationMs: ms }, failed ? "error" : slow ? "warning" : "info");
+    if (!r.aborted) this.timeRequest(`${r.method} ${url}`, ms, failed);
     if (!failed) return;
 
     const flow = net.flows?.find(([p]) => (typeof p === "string" ? url.includes(p) : p.test(url)))?.[1];
@@ -573,7 +615,7 @@ const hasNewFields = (events: EventInput[]) => events.some((e) => e.type === "se
 function toLegacy(events: EventInput[]): EventInput[] {
   const out: EventInput[] = [];
   for (const e of events) {
-    if (e.type === "session") continue;
+    if (e.type === "session" || e.type === "metric") continue;
     if (e.type === "error" && e.request) {
       const { request: _r, ...rest } = e;
       out.push(rest);

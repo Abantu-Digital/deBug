@@ -1,6 +1,6 @@
 import { isRegression, type Issue, type RollupDimension, type RollupIncrement, type RollupRow, type StoredEvent } from "@debugkit/schema";
 import { coalesceRollups, rollupId } from "./rollups";
-import type { AppSettings, IssueStatusChange, IssueUpsert, RestampResult, Store, UserMark } from "./index";
+import type { AppSettings, IssueStatusChange, IssueUpsert, RestampResult, Store, UpsertOutcome, UserMark } from "./index";
 
 /** In-process store for tests and the dashboard's demo mode. */
 export class MemoryStore implements Store {
@@ -59,12 +59,15 @@ export class MemoryStore implements Store {
     const next = start + page.length;
     return { updated: page.length, cursor: next < mine.length ? String(next) : undefined };
   }
-  async upsertIssues(updates: IssueUpsert[]) {
+  async upsertIssues(updates: IssueUpsert[]): Promise<UpsertOutcome> {
+    const outcome: UpsertOutcome = { created: [], regressed: [] };
     for (const u of updates) {
       const k = `${u.app}/${u.fingerprint}`;
       const cur = this.issues.get(k);
       const regressed = cur?.status === "resolved" && isRegression(cur.resolvedIn, u.version, cur.resolvedAt, u.ts);
       const newer = !cur || u.ts >= cur.lastSeen;
+      if (!cur) outcome.created.push(u.fingerprint);
+      if (regressed) outcome.regressed.push(u.fingerprint);
       this.issues.set(k, {
         ...cur,
         ...(regressed ? { status: "regressed" as const, regressedAt: u.ts } : {}),
@@ -81,6 +84,7 @@ export class MemoryStore implements Store {
         lastEvent: cur && cur.lastSeen > u.ts ? cur.lastEvent : u.lastEvent,
       });
     }
+    return outcome;
   }
   async incrementRollups(incs: RollupIncrement[]) {
     for (const r of coalesceRollups(incs)) {

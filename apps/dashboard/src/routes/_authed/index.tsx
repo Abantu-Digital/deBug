@@ -103,7 +103,7 @@ function Overview() {
             <DataTable
               columns={["Flow", "Severity", "Errors 24h", `Errors (${span})`, "Issues", `Failure rate (${span})`]}
               rows={summary.flows.map((f) => [
-                f.flow,
+                f.critical ? `${f.flow} (critical)` : f.flow,
                 f.severity,
                 f.errors24h,
                 f.errorsRange,
@@ -165,6 +165,66 @@ function Overview() {
         </Card>
       </div>
 
+      {(summary.steps.length > 0 || summary.timings.length > 0) && (
+        <div className="grid gap-5 lg:grid-cols-2">
+          {summary.steps.length > 0 && (
+            <Card title="Steps that fail" subtitle={`track() outcomes per step in ${range.label}, most failures first.${flow ? ` Filtered to ${flow}.` : ""}`}>
+              <div className="-mx-4 overflow-x-auto sm:mx-0">
+                <table className="tabular w-full min-w-[420px] text-left text-sm">
+                  <thead className="text-xs text-muted">
+                    <tr className="border-b border-line">
+                      <th className="px-4 py-2 font-medium sm:px-2">Flow · step</th>
+                      <th className="px-2 py-2 text-right font-medium">Tries</th>
+                      <th className="px-2 py-2 text-right font-medium">Failed</th>
+                      <th className="px-2 py-2 text-right font-medium">Failure rate</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.steps.filter((st) => !flow || st.flow === flow).slice(0, 8).map((st) => (
+                      <tr key={`${st.flow}|${st.step}`} className="border-b border-line last:border-0">
+                        <td className="px-4 py-2 font-mono text-xs sm:px-2">{st.flow} · {st.step}</td>
+                        <td className="px-2 py-2 text-right text-muted">{(st.successes + st.failures).toLocaleString()}</td>
+                        <td className="px-2 py-2 text-right">{st.failures.toLocaleString()}</td>
+                        <td className={`px-2 py-2 text-right font-semibold ${st.failureRate !== null && st.failureRate >= 0.1 ? "text-sev-critical" : ""}`}>{st.failureRate === null ? "—" : `${Math.round(st.failureRate * 100)}%`}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+          {summary.timings.length > 0 && (
+            <Card title="Response times" subtitle={`Busiest endpoints in ${range.label}. Measured by the SDK on real devices.`}>
+              <div className="-mx-4 overflow-x-auto sm:mx-0">
+                <table className="tabular w-full min-w-[420px] text-left text-sm">
+                  <thead className="text-xs text-muted">
+                    <tr className="border-b border-line">
+                      <th className="px-4 py-2 font-medium sm:px-2">Endpoint</th>
+                      <th className="px-2 py-2 text-right font-medium">Requests</th>
+                      <th className="px-2 py-2 text-right font-medium">p50</th>
+                      <th className="px-2 py-2 text-right font-medium">p95</th>
+                      <th className="px-2 py-2 text-right font-medium">Failed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.timings.map((t) => (
+                      <tr key={t.endpoint} className="border-b border-line last:border-0">
+                        <td className="max-w-[220px] truncate px-4 py-2 font-mono text-xs sm:px-2" title={t.endpoint}>{t.endpoint}</td>
+                        <td className="px-2 py-2 text-right text-muted">{t.requests.toLocaleString()}</td>
+                        <td className="px-2 py-2 text-right">{ms(t.p50)}</td>
+                        <td className={`px-2 py-2 text-right font-semibold ${t.p95 !== null && t.p95 >= 3000 ? "text-sev-high" : ""}`}>{ms(t.p95)}</td>
+                        <td className={`px-2 py-2 text-right ${t.errorRate >= 0.05 ? "font-semibold text-sev-critical" : "text-muted"}`}>{`${(t.errorRate * 100).toFixed(t.errorRate < 0.1 ? 1 : 0)}%`}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-2 text-xs text-muted">p50/p95: half / 95% of requests finished within this time.</p>
+            </Card>
+          )}
+        </div>
+      )}
+
       <Card
         title={flow ? `Issues in ${flow}` : "Issues by severity"}
         subtitle={`Grouped errors seen in ${range.label}. Severity is set by occurrences in the last 24 hours.`}
@@ -224,6 +284,8 @@ function Overview() {
       </Card>
 
       <div className="grid gap-5 md:grid-cols-3">
+        <Card title="By network" subtitle={`Errors, ${range.label}`}><ShareBars rows={summary.breakdowns.network.map((r) => ({ key: r.key, value: r.errors }))} /></Card>
+        <Card title="By country" subtitle={`Errors, ${range.label}. From the device's timezone, not its IP.`}><ShareBars rows={summary.breakdowns.country.map((r) => ({ key: r.key, value: r.errors }))} /></Card>
         <Card title="By OS" subtitle={`Errors, ${range.label}`}><ShareBars rows={summary.breakdowns.os.map((r) => ({ key: r.key, value: r.errors }))} /></Card>
         <Card title="By app version" subtitle={`Errors, ${range.label}`}><ShareBars rows={summary.breakdowns.appVersion.map((r) => ({ key: r.key, value: r.errors }))} /></Card>
         <Card title="By device" subtitle={`Errors, ${range.label}`}><ShareBars rows={summary.breakdowns.deviceModel.map((r) => ({ key: r.key, value: r.errors }))} /></Card>
@@ -312,4 +374,10 @@ await deBug.track("auth.login", "submit_otp", () => verifyOtp(code));`}</pre>
       </div>
     </main>
   );
+}
+
+function ms(v: number | null) {
+  if (v === null) return "—";
+  if (!Number.isFinite(v)) return "> 10 s";
+  return v >= 1000 ? `≤ ${(v / 1000).toFixed(v % 1000 ? 1 : 0)} s` : `≤ ${v} ms`;
 }

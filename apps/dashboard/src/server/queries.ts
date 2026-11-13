@@ -1,6 +1,7 @@
 import type { ReadStore } from "@debugkit/adapters";
 import {
   compareVersions,
+  percentileMs,
   SEVERITY_ORDER,
   severityFromCount,
   type Issue,
@@ -56,6 +57,27 @@ export interface FlowRow {
   failuresRange: number;
   /** failures / (failures + successes) in the range, from events logged with an outcome. null if no outcome events. */
   failureRate: number | null;
+  /** Marked critical in Settings: its issues rank one severity level higher. */
+  critical: boolean;
+}
+
+export interface StepRow {
+  flow: string;
+  step: string;
+  successes: number;
+  failures: number;
+  abandoned: number;
+  failureRate: number | null;
+}
+
+export interface EndpointTiming {
+  endpoint: string;
+  requests: number;
+  failed: number;
+  errorRate: number;
+  /** Upper bound of the bucket holding the median / 95th percentile, in ms (Infinity: over 10 s). */
+  p50: number | null;
+  p95: number | null;
 }
 
 /** How long the customer keeps raw events, and where that number comes from. */
@@ -91,7 +113,12 @@ export interface Summary {
   trend: { day: string; errors: number; events: number }[];
   flows: FlowRow[];
   issues: IssueRow[];
-  breakdowns: Record<"os" | "appVersion" | "deviceModel", { key: string; errors: number }[]>;
+  breakdowns: Record<"os" | "appVersion" | "deviceModel" | "network" | "country", { key: string; errors: number }[]>;
+  /** track() steps with the most failures in the range. */
+  steps: StepRow[];
+  /** Response times of the busiest endpoints (from the SDK's per-minute request summaries). */
+  timings: EndpointTiming[];
+  criticalFlows: string[];
   health: Health;
   /** Releases (version, plus OTA update) first seen inside the range, oldest first: markers on the trend. */
   releases: { release: string; firstDay: string; sessions: number }[];
@@ -152,6 +179,11 @@ export const SUMMARY_FIELDS = {
   "issues[].newInLatest": "First seen in latestVersion: likely introduced by the newest release.",
   "issues[].users": "Distinct users affected since the start of the range (top issues only).",
   "releases[]": "Releases first seen inside the range, with the day they appeared: markers on the trend.",
+  "steps[]": "track(flow, step) outcomes per step in the range, most failures first.",
+  "timings[]": "Busiest endpoints with p50/p95 response time (bucket upper bounds, ms) and error rate, from automatic request timing.",
+  "breakdowns.network": "Errors by network type (wifi, cellular...).",
+  "breakdowns.country": "Errors by country, from the device's timezone or locale (never IP).",
+  criticalFlows: "Flows marked critical in Settings; their issues rank one severity level higher.",
 } as const;
 
 const sumRows = (rows: RollupRow[], field: "errors" | "events" = "errors") => rows.reduce((a, r) => a + r[field], 0);
@@ -202,7 +234,17 @@ export async function buildSummary(
     retentionFor(store, app, opts.retentionDays, now),
   ]);
   // A year of release rows, to know which releases first appeared inside the range.
-  const releaseRows = await store.getRollups(app, "release", dayKey(Date.parse(`${from}T00:00:00Z`) - 365 * DAY), to);
+  const [releaseRows, stepRows, requestRows, latencyRows, networkRows, countryRows, appSettings] = await Promise.all([
+    store.getRollups(app, "release", dayKey(Date.parse(`${from}T00:00:00Z`) - 365 * DAY), to),
+    store.getRollups(app, "flowStep", from, to),
+    store.getRollups(app, "requests", from, to),
+    store.getRollups(app, "latency", from, to),
+    store.getRollups(app, "network", from, to),
+    store.getRollups(app, "country", from, to),
+    store.getSettings(app).catch(() => null),
+  ]);
+  const criticalFlows = appSettings?.criticalFlows ?? [];
+  const critical = new Set(criticalFlows);
   const usersSince = hourly ? dayKey(now - DAY) : from;
   const [users, crashedUsers] = await Promise.all([store.countUsers(app, "app", usersSince), store.countUsers(app, "crash", usersSince)]);
 
@@ -247,7 +289,7 @@ export async function buildSummary(
   const latestVersion = versionsInRange[versionsInRange.length - 1] ?? null;
   const issueRows: IssueRow[] = issues
     .filter((i) => i.lastSeen >= rangeStart && i.firstSeen <= `${to}T23:59:59.999Z`)
-    .map((i) => toIssueRow(i, issue24h.get(i.fingerprint) ?? 0, hourly ? (issue24h.get(i.fingerprint) ?? 0) : (issueRange.get(i.fingerprint) ?? 0), thresholds, latestVersion))
+    .map((i) => toIssueRow(i, issue24h.get(i.fingerprint) ?? 0, hourly ? (issue24h.get(i.fingerprint) ?? 0) : (issueRange.get(i.fingerprint) ?? 0), thresholds, latestVersion, critical))
     .sort(bySeverityThenCount);
   // Users affected: one count per issue, so only for the issues people look at first.
   const active = issueRows.filter((i) => i.status !== "ignored" && i.status !== "resolved");
@@ -270,7 +312,7 @@ export async function buildSummary(
   const flowMap = new Map<string, FlowRow>();
   const flowOf = (flow: string) => {
     let f = flowMap.get(flow);
-    if (!f) flowMap.set(flow, (f = { flow, errors24h: 0, errorsRange: 0, severity: "low", issues: 0, successesRange: 0, failuresRange: 0, failureRate: null }));
+    if (!f) flowMap.set(flow, (f = { flow, errors24h: 0, errorsRange: 0, severity: "low", issues: 0, successesRange: 0, failuresRange: 0, failureRate: null, critical: critical.has(flow) }));
     return f;
   };
   for (const r of flowRows) if (r.errors > 0) flowOf(r.key).errorsRange += r.errors;
@@ -318,7 +360,10 @@ export async function buildSummary(
     trend,
     flows,
     issues: issueRows,
-    breakdowns: { os: top(os), appVersion: top(appVersion), deviceModel: top(deviceModel) },
+    breakdowns: { os: top(os), appVersion: top(appVersion), deviceModel: top(deviceModel), network: top(networkRows), country: top(countryRows) },
+    steps: buildSteps(stepRows),
+    timings: buildTimings(requestRows, latencyRows),
+    criticalFlows,
     health: { ...buildHealth(sessionRows, endpointRows, dayKey(now)), users, crashedUsers, crashFreeUsersRate: users > 0 ? Math.max(0, 1 - crashedUsers / users) : null },
     releases,
     latestVersion,
@@ -364,7 +409,53 @@ function buildHealth(sessionRows: RollupRow[], endpointRows: RollupRow[], today:
   };
 }
 
-function toIssueRow(i: Issue, count24h: number, countRange: number, t: SeverityThresholds, latestVersion: string | null = null): IssueRow {
+const BUMP: Record<Severity, Severity> = { low: "medium", medium: "high", high: "critical", critical: "critical" };
+
+function buildSteps(rows: RollupRow[]): StepRow[] {
+  const m = new Map<string, StepRow>();
+  for (const r of rows) {
+    const [flow = "", step = "", outcome] = r.key.split("|");
+    const k = `${flow}|${step}`;
+    let s = m.get(k);
+    if (!s) m.set(k, (s = { flow, step, successes: 0, failures: 0, abandoned: 0, failureRate: null }));
+    if (outcome === "success") s.successes += r.events;
+    else if (outcome === "failure") s.failures += r.events;
+    else if (outcome === "abandoned") s.abandoned += r.events;
+  }
+  return [...m.values()]
+    .map((s) => ({ ...s, failureRate: s.successes + s.failures > 0 ? s.failures / (s.successes + s.failures) : null }))
+    .sort((a, b) => b.failures - a.failures || (b.failureRate ?? 0) - (a.failureRate ?? 0))
+    .slice(0, 30);
+}
+
+function buildTimings(requestRows: RollupRow[], latencyRows: RollupRow[]): EndpointTiming[] {
+  const totals = new Map<string, { requests: number; failed: number }>();
+  for (const r of requestRows) {
+    const t = totals.get(r.key) ?? { requests: 0, failed: 0 };
+    t.requests += r.events;
+    t.failed += r.errors;
+    totals.set(r.key, t);
+  }
+  const hist = new Map<string, number[]>();
+  for (const r of latencyRows) {
+    const cut = r.key.lastIndexOf("|");
+    const key = r.key.slice(0, cut);
+    const i = Number(r.key.slice(cut + 1));
+    const b = hist.get(key) ?? new Array(13).fill(0);
+    if (i >= 0 && i < 13) b[i] += r.events;
+    hist.set(key, b);
+  }
+  return [...totals.entries()]
+    .map(([endpoint, t]) => {
+      const b = hist.get(endpoint) ?? [];
+      return { endpoint, requests: t.requests, failed: t.failed, errorRate: t.requests ? t.failed / t.requests : 0, p50: percentileMs(b, 0.5), p95: percentileMs(b, 0.95) };
+    })
+    .sort((a, b) => b.requests - a.requests)
+    .slice(0, 10);
+}
+
+function toIssueRow(i: Issue, count24h: number, countRange: number, t: SeverityThresholds, latestVersion: string | null = null, critical: Set<string> = new Set()): IssueRow {
+  const base = severityFromCount(count24h, t);
   return {
     status: i.status ?? "open",
     resolvedIn: i.resolvedIn,
@@ -375,7 +466,8 @@ function toIssueRow(i: Issue, count24h: number, countRange: number, t: SeverityT
     title: i.title,
     culprit: i.culprit,
     flow: i.flow,
-    severity: severityFromCount(count24h, t),
+    // Issues in a critical flow rank one level higher (only once they've happened in the last 24h).
+    severity: i.flow && critical.has(i.flow) && count24h > 0 ? BUMP[base] : base,
     count24h,
     countRange,
     countTotal: i.count,
@@ -413,7 +505,7 @@ function narrate(s: Summary): string[] {
   if (f && (f.errors24h > 0 || f.errorsRange > 0)) {
     const failRate = f.failureRate !== null ? ` ${pct(f.failureRate)} of attempts fail.` : "";
     const n = r.preset === "24h" ? f.errors24h : f.errorsRange;
-    out.push(`${f.flow} is the most affected flow (${f.severity}): ${plural(n, "error")} in ${r.label} from ${plural(f.issues, "issue")}.${failRate}`);
+    out.push(`${f.flow}${f.critical ? " (a critical flow)" : ""} is the most affected flow (${f.severity}): ${plural(n, "error")} in ${r.label} from ${plural(f.issues, "issue")}.${failRate}`);
   }
   const i = s.issues.find((x) => x.status !== "ignored" && x.status !== "resolved");
   if (i && i.countRange > 0) {
@@ -429,6 +521,10 @@ function narrate(s: Summary): string[] {
   }
   const ep = h.endpoints[0];
   if (ep && ep.failuresRange > 0) out.push(`${ep.endpoint} is the most failing endpoint: ${plural(ep.failuresRange, "failed request")} in ${r.label}.`);
+  const net = s.breakdowns.network.filter((r) => r.key !== "unknown");
+  const netTotal = net.reduce((a, b) => a + b.errors, 0);
+  if (net[0] && netTotal >= 20 && net[0].errors / netTotal > 0.6 && net[0].key !== "wifi")
+    out.push(`${pct(net[0].errors / netTotal)} of errors happen on ${net[0].key}: check timeouts and retries on slow connections.`);
   const os = s.breakdowns.os;
   const osTotal = os.reduce((a, b) => a + b.errors, 0);
   if (os[0] && osTotal > 20 && os[0].errors / osTotal > 0.6) out.push(`${pct(os[0].errors / osTotal)} of errors in ${r.label} come from ${os[0].key}.`);
@@ -523,7 +619,7 @@ export async function buildIssueDetail(
       os: `${e.context.os.name} ${e.context.os.version ?? ""}`.trim(),
       appVersion: e.context.app.version,
       device: e.context.device.model,
-      message: e.event.type === "error" ? e.event.error.message : e.event.type === "event" ? e.event.name : `session ${e.event.status}`,
+      message: e.event.type === "error" ? e.event.error.message : e.event.type === "event" ? e.event.name : e.event.type === "session" ? `session ${e.event.status}` : `requests to ${e.event.key}`,
       userId: e.user?.id,
     })),
     hints,

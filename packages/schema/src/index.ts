@@ -127,7 +127,22 @@ export const SessionEvent = EventBase.extend({
   status: z.enum(["started", "errored", "crashed"]),
 });
 
-export const Event = z.discriminatedUnion("type", [ErrorEvent, CustomEvent, SessionEvent]);
+/**
+ * Request timings for one endpoint over a period (about a minute), sent by the SDK instead of
+ * one event per request. `buckets[i]` counts requests that took up to LATENCY_BUCKETS_MS[i]
+ * milliseconds; the last bucket is everything slower.
+ */
+export const MetricEvent = EventBase.extend({
+  type: z.literal("metric"),
+  name: z.literal("http"),
+  /** "<METHOD> <path>", as in ErrorEvent.request. */
+  key: z.string().min(1).max(300),
+  count: z.number().int().min(1).max(1_000_000),
+  errors: z.number().int().min(0).max(1_000_000),
+  buckets: z.array(z.number().int().min(0)).length(13),
+});
+
+export const Event = z.discriminatedUnion("type", [ErrorEvent, CustomEvent, SessionEvent, MetricEvent]);
 
 export const Envelope = z.object({
   schema: z.literal(SCHEMA_VERSION).default(SCHEMA_VERSION),
@@ -148,6 +163,7 @@ export type Severity = z.infer<typeof Severity>;
 export type ErrorEvent = z.infer<typeof ErrorEvent>;
 export type CustomEvent = z.infer<typeof CustomEvent>;
 export type SessionEvent = z.infer<typeof SessionEvent>;
+export type MetricEvent = z.infer<typeof MetricEvent>;
 export type Event = z.infer<typeof Event>;
 export type EventInput = z.input<typeof Event>;
 export type Envelope = z.infer<typeof Envelope>;
@@ -205,7 +221,17 @@ export type RollupDimension =
   /** Failed HTTP requests captured by the SDK: key "<METHOD> <path>", counted in `errors`. */
   | "endpoint"
   /** Sessions per release (version, plus OTA update when there is one): key "<version>[+<update>]", counted in `events`. */
-  | "release";
+  | "release"
+  /** track() outcomes per step: key "<flow>|<step>|<outcome>", counted in `events`. */
+  | "flowStep"
+  /** Requests per endpoint from metric events: key "<METHOD> <path>"; `events` = requests, `errors` = failed ones. */
+  | "requests"
+  /** Request timing histogram: key "<METHOD> <path>|<bucket index>", counted in `events`. */
+  | "latency"
+  /** Errors by network type (wifi, cellular, …). */
+  | "network"
+  /** Errors by country (ISO 3166 code from the device's timezone or locale; never from IP). */
+  | "country";
 
 export interface RollupIncrement {
   app: string;

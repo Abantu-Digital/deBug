@@ -2,7 +2,7 @@ import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { BatchWriteCommand, type BatchWriteCommandOutput, GetCommand, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { isRegression, type Issue, type RollupDimension, type RollupIncrement, type RollupRow, type StoredEvent } from "@debugkit/schema";
 import { coalesceRollups } from "./rollups";
-import { HOURLY_ROLLUP_DAYS, type AppSettings, type IssueStatusChange, type IssueUpsert, type RestampResult, type Store, type UserMark } from "./index";
+import { HOURLY_ROLLUP_DAYS, type AppSettings, type IssueStatusChange, type IssueUpsert, type RestampResult, type Store, type UpsertOutcome, type UserMark } from "./index";
 
 /**
  * Single-table layout. Table needs: partition key `pk` (S), sort key `sk` (S),
@@ -54,11 +54,12 @@ export class DynamoStore implements Store {
     }
   }
 
-  async upsertIssues(updates: IssueUpsert[]) {
+  async upsertIssues(updates: IssueUpsert[]): Promise<UpsertOutcome> {
+    const outcome: UpsertOutcome = { created: [], regressed: [] };
     await Promise.all(
       updates.map(async (u) => {
-        // Counters + firstSeen in one atomic update.
-        await this.doc.send(
+        // Counters + firstSeen in one atomic update. The old count tells us whether it's new.
+        const first = await this.doc.send(
           new UpdateCommand({
             TableName: this.table,
             Key: { pk: `APP#${u.app}#ISSUE`, sk: u.fingerprint },
@@ -74,8 +75,10 @@ export class DynamoStore implements Store {
               ":culprit": u.culprit ?? null,
               ":first": u.firstTs,
             },
+            ReturnValues: "UPDATED_OLD",
           }),
         );
+        if (first.Attributes?.count === undefined) outcome.created.push(u.fingerprint);
         // lastSeen / lastEvent / lastVersion only move forward.
         await this.doc
           .send(
@@ -102,9 +105,11 @@ export class DynamoStore implements Store {
               ExpressionAttributeNames: { "#s": "status" },
               ExpressionAttributeValues: { ":r": "regressed", ":ts": u.ts, ":resolved": "resolved" },
             }),
-          ).catch((e: { name?: string }) => {
-            if (e.name !== "ConditionalCheckFailedException") throw e;
-          });
+          )
+            .then(() => outcome.regressed.push(u.fingerprint))
+            .catch((e: { name?: string }) => {
+              if (e.name !== "ConditionalCheckFailedException") throw e;
+            });
         }
         // firstSeen can also move backwards if an older event arrives late.
         await this.doc
@@ -122,6 +127,7 @@ export class DynamoStore implements Store {
           });
       }),
     );
+    return outcome;
   }
 
   async incrementRollups(incs: RollupIncrement[]) {
