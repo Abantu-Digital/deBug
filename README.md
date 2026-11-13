@@ -114,7 +114,9 @@ export const handler = lambdaHandler({ store: new DynamoStore(doc, { table: proc
 
 ## 3. Run the dashboard against your data
 
-`npx debugkit dashboard` runs it with the settings `init` saved. To run it yourself:
+`npx debugkit dashboard` runs it with the settings `init` saved. `npx debugkit deploy-dashboard`
+hosts it in your Firebase project or AWS account, at a link your team can open (see
+[the CLI's README](packages/cli/README.md#hosting-the-dashboard-for-your-team)). To run it yourself:
 
 ```bash
 cp apps/dashboard/.env.example apps/dashboard/.env   # set DEBUG_STORE, credentials, secret
@@ -126,6 +128,10 @@ pnpm --filter @debugkit/dashboard start                 # http://127.0.0.1:4400
 Give the dashboard **read-only** database credentials. It binds to `127.0.0.1` by default.
 To serve it to your team, set `HOST=0.0.0.0` and put it behind HTTPS. Over plain HTTP on a
 non-localhost address, set `DEBUG_INSECURE_COOKIES=1`.
+
+To host it somewhere else, `@debugkit/dashboard/handler` exports `createHandler()`, a Node
+`(req, res)` handler (Express and Firebase `onRequest` work as-is), and `@debugkit/dashboard/lambda`
+exports a Lambda `handler` for Function URLs. Behind Firebase Hosting, set `DEBUG_COOKIE_NAME=__session`.
 
 Agents and scripts: `curl -H "Authorization: Bearer $DEBUG_API_TOKEN" localhost:4400/api/summary`.
 

@@ -25,7 +25,7 @@ const CODEBASE = "debugkit";
 export const MIN_FIREBASE_TOOLS = 14;
 
 /** The Firebase CLI: the installed one if it's recent enough, otherwise the latest via npx (same sign-in). */
-async function firebaseCli(): Promise<[string, string[]]> {
+export async function firebaseCli(): Promise<[string, string[]]> {
   if (which("firebase")) {
     const v = await capture("firebase", ["--version"]);
     const major = Number(/^(\d+)/.exec(v.stdout.trim())?.[1] ?? 0);
@@ -256,17 +256,12 @@ export function functionRegion(location: string): string {
 export function writeFunctionSource(ctx: SetupContext, region: string, projectId = "default"): string {
   const dir = paths(ctx.app.cwd).firebase;
   mkdirSync(join(dir, "functions"), { recursive: true });
-  writeFileSync(
-    join(dir, "firebase.json"),
-    JSON.stringify(
-      {
-        functions: [{ source: "functions", codebase: CODEBASE, runtime: "nodejs22" }],
-        firestore: { database: "(default)", indexes: "firestore.indexes.json" },
-      },
-      null,
-      2,
-    ) + "\n",
-  );
+  // Merge: keep the hosted dashboard (another codebase, and hosting) when ingest is set up again.
+  writeFirebaseJson(dir, (cur) => ({
+    ...cur,
+    functions: [{ source: "functions", codebase: CODEBASE, runtime: "nodejs22" }, ...asArray(cur.functions).filter((f) => f.codebase !== CODEBASE)],
+    firestore: { database: "(default)", indexes: "firestore.indexes.json" },
+  }));
   writeFileSync(join(dir, "firestore.indexes.json"), JSON.stringify(FIRESTORE_INDEXES, null, 2) + "\n");
   writeFileSync(
     join(dir, "functions", "package.json"),
@@ -321,4 +316,17 @@ export const ${FUNCTION_NAME} = onRequest(
   // (functions/.env.<projectId>), which .debugkit/.gitignore keeps out of git.
   writeFileSync(join(dir, "functions", `.env.${projectId}`), `DEBUG_ADMIN_TOKEN=${ctx.adminToken}\n`, { mode: 0o600 });
   return dir;
+}
+
+type FirebaseJson = { functions?: unknown; hosting?: unknown; [k: string]: unknown };
+export const asArray = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? v : v && typeof v === "object" ? [v as Record<string, unknown>] : []);
+
+/** Update .debugkit/firebase/firebase.json in place. */
+export function writeFirebaseJson(dir: string, update: (cur: FirebaseJson) => FirebaseJson) {
+  const file = join(dir, "firebase.json");
+  let cur: FirebaseJson = {};
+  try {
+    cur = JSON.parse(readFileSync(file, "utf8")) as FirebaseJson;
+  } catch {}
+  writeFileSync(file, JSON.stringify(update(cur), null, 2) + "\n");
 }

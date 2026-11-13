@@ -9,6 +9,8 @@
   "files": [
     "dist",
     "server.mjs",
+    "handler.mjs",
+    "lambda.mjs",
     "scripts",
     ".env.example"
   ],
@@ -21,10 +23,7 @@
     "prepack": "vite build"
   },
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3.700.0",
-    "@aws-sdk/lib-dynamodb": "^3.700.0",
     "@tanstack/react-router": "^1.170.46",
-    "firebase-admin": "^13.0.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "recharts": "^3.10.1"
@@ -52,5 +51,15 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "exports": {
+    "./handler": "./handler.mjs",
+    "./lambda": "./lambda.mjs",
+    "./package.json": "./package.json"
+  },
+  "optionalDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.700.0",
+    "@aws-sdk/lib-dynamodb": "^3.700.0",
+    "firebase-admin": "^13.0.1"
   }
 }

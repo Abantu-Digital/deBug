@@ -17,6 +17,8 @@ export interface DebugkitConfig {
   createdAt: string;
   /** Raw-event retention chosen at init (the dashboard's Settings page can change it per app). */
   retentionDays?: number;
+  /** The hosted dashboard, when init or deploy-dashboard put it online. */
+  hosted?: { url: string; region: string; functionName: string; site?: string; deployedAt: string };
   /** Set when this is one of several environments (npx debugkit init --env preview). */
   environment?: string;
 }
@@ -84,7 +86,7 @@ export function writeConfig(cwd: string, cfg: DebugkitConfig) {
   const out: ConfigFile = current ? { ...f, environments: { ...f.environments, [current]: { ...cfg, environment: current } } } : { ...cfg, ...(f.environments ? { environments: f.environments } : {}) };
   writeFileSync(config, JSON.stringify(out, null, 2) + "\n");
   // Dashboard env files hold a session secret and a password hash: keep them out of git.
-  writeFileSync(join(dir, ".gitignore"), "dashboard*.env\nfirebase*/functions/node_modules/\nfirebase*/functions/.env.*\nfirebase*/.firebase/\n*.log\n");
+  writeFileSync(join(dir, ".gitignore"), "dashboard*.env\nfirebase*/functions/node_modules/\nfirebase*/functions/.env.*\nfirebase*/dashboard/node_modules/\nfirebase*/dashboard/.env.*\nfirebase*/dashboard/*.tgz\nfirebase*/hosting-public/\nfirebase*/.firebase/\n*.log\n");
 }
 
 /** Write KEY=value lines, replacing keys that are already there. */
