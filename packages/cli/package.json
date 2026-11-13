@@ -1,6 +1,6 @@
 {
   "name": "@debugkit/cli",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Set up deBug in your app: npx @debugkit/cli init (or npx debugkit init once @debugkit/sdk is installed). Deploys ingest to your own cloud, wires the SDK and walks you through the dashboard.",
   "type": "module",
   "bin": {
