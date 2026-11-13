@@ -4,8 +4,8 @@ import { capture, interactive, openUrl, which } from "../exec";
 import FIRESTORE_INDEXES from "../../../adapters/firestore.indexes.json" with { type: "json" };
 import { VERSION } from "../dashboard";
 import { mergeKeys } from "../keys";
-import { cmdFor, environment, paths } from "../state";
-import { ask, bail, bold, choose, code, dim, next, p, yes } from "../ui";
+import { cmdFor, environment, firebaseProjectUsedBy, paths } from "../state";
+import { ask, bail, bold, choose, code, dim, flags, next, p, yes } from "../ui";
 import { adminEnv, type ProviderResult, type SetupContext } from "./types";
 
 /** Firestore locations offered, with the Cloud Functions region that sits closest to each. */
@@ -83,20 +83,33 @@ export async function setupFirebase(ctx: SetupContext): Promise<ProviderResult> 
     p.log.warn(`Couldn't read the project list: ${dim(list.stderr.slice(-300))}`);
   }
   const NEW = "__new__";
-  let projectId = await choose(
-    "Which Firebase project should deBug use?",
-    [
-      { value: NEW, label: "Create a new project", hint: "recommended: keeps deBug's data and bill separate" },
-      ...projects.map((x) => ({ value: x.projectId, label: x.displayName ? `${x.displayName}` : x.projectId, hint: x.projectId })),
-    ],
-    NEW,
-  );
+  // One Firebase project per environment: refuse one another environment of this app already uses.
+  const takenBy = (id: string) => firebaseProjectUsedBy(ctx.app.cwd, id);
+  let projectId: string;
+  for (;;) {
+    projectId = await choose(
+      "Which Firebase project should deBug use?",
+      [
+        { value: NEW, label: "Create a new project", hint: "recommended: keeps deBug's data and bill separate" },
+        ...projects.map((x) => {
+          const owner = takenBy(x.projectId);
+          return { value: x.projectId, label: x.displayName ? `${x.displayName}` : x.projectId, hint: owner ? `${x.projectId}, used by ${owner}` : x.projectId };
+        }),
+      ],
+      NEW,
+    );
+    const owner = projectId === NEW ? undefined : takenBy(projectId);
+    if (!owner) break;
+    p.log.warn(`${bold(projectId)} is already ${owner}'s project. Each environment needs its own Firebase project, so their data never mixes. Pick another project, or create one.`);
+    if (flags.yes) bail(`${projectId} is already ${owner}'s project. Each environment needs its own Firebase project.`);
+  }
   if (projectId === NEW) {
     const suggested = `${ctx.app.appId}-debug`.slice(0, 26).replace(/-+$/, "") + `-${Math.random().toString(36).slice(2, 6)}`;
     projectId = await ask("Project id (lowercase, globally unique)", {
       initial: suggested,
       validate: (v) => (/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(v) ? undefined : "6–30 characters: lowercase letters, digits and dashes"),
     });
+    if (takenBy(projectId)) bail(`${projectId} is already ${takenBy(projectId)}'s project. Each environment needs its own Firebase project.`);
     if ((await fbLive(["projects:create", projectId, "--display-name", `${ctx.app.name} deBug`.slice(0, 30), ...acct])) !== 0)
       bail(`Couldn't create ${projectId}. Pick an existing project or another id.`);
   }

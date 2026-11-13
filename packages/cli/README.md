@@ -74,7 +74,7 @@ npx debugkit init --env preview      # e.g. into your staging Firebase project
 npx debugkit init --env production   # into the production one
 ```
 
-Each environment gets its own provider, project, endpoint, ingest key and dashboard login. They're
+Each environment gets its own provider, project, endpoint, ingest key and dashboard login. `init` enforces it: picking a Firebase project (or a DynamoDB table in the same account and region) that another environment already uses is refused, and you pick again, so preview data never mixes with production. They're
 saved under `environments` in `.debugkit/config.json`, with `.debugkit/dashboard.<env>.env`.
 
 - **Expo apps with EAS:** for `development`, `preview` and `production`, the CLI offers to put

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { zipSync } from "fflate";
 import { interactive, which } from "../exec";
 import { keyEntry, mergeKeys } from "../keys";
-import { cmdFor, environment } from "../state";
+import { cmdFor, dynamoTableUsedBy, environment } from "../state";
 import { ask, bail, choose, code, dim, next, p, yes } from "../ui";
 import { adminEnv, type ProviderResult, type SetupContext } from "./types";
 
@@ -106,11 +106,18 @@ export async function setupAws(ctx: SetupContext): Promise<ProviderResult> {
   if (!identity.Account) bail("AWS didn't say which account these credentials belong to.");
   const account = identity.Account;
 
-  // One table per environment, so preview and production data never share a table.
+  // One table per environment, so preview and production data never share a table. Refuse one
+  // another environment of this app already uses (same account, or an older config without one).
+  const takenBy = (t: string) => dynamoTableUsedBy(ctx.app.cwd, t, region, account);
   const table = await ask("DynamoDB table name", {
     initial: environment.get() ? `debugkit-${environment.get()}` : "debugkit",
-    validate: (v) => (/^[A-Za-z0-9_.-]{3,40}$/.test(v) ? undefined : "3–40 characters: letters, digits, _ . -"),
+    validate: (v) => {
+      if (!/^[A-Za-z0-9_.-]{3,40}$/.test(v)) return "3–40 characters: letters, digits, _ . -";
+      const owner = takenBy(v);
+      return owner ? `${owner} already uses ${v} in ${region}. Each environment needs its own table.` : undefined;
+    },
   });
+  if (takenBy(table)) bail(`${table} in ${region} is already ${takenBy(table)}'s table. Each environment needs its own table.`);
   // One ingest function per table; any number of apps share it through their own keys.
   const functionName = `debugkit-ingest-${table}`.slice(0, 64);
   const roleName = `debugkit-ingest-${table}-${region}`.slice(0, 64);
@@ -308,7 +315,7 @@ export async function setupAws(ctx: SetupContext): Promise<ProviderResult> {
   }
 
   return {
-    config: { provider: "aws", endpoint: url.replace(/\/$/, ""), ingestKey: ctx.ingestKey, aws: { region, profile, table, functionName, roleName, readOnlyPolicyArn } },
+    config: { provider: "aws", endpoint: url.replace(/\/$/, ""), ingestKey: ctx.ingestKey, aws: { region, profile, table, functionName, roleName, readOnlyPolicyArn, account } },
     dashboardEnv: { DEBUG_STORE: "dynamodb", AWS_REGION: region, DEBUG_DYNAMO_TABLE: table, ...(profile ? { AWS_PROFILE: profile } : {}), ...adminEnv(url, ctx) },
     created: [
       `DynamoDB table ${code(table)} in ${region}${ownTable ? " (on-demand)" : " (your existing table)"}`,
