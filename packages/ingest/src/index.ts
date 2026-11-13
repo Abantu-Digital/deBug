@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
 import { Envelope, parseStack, releaseKey, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debugkit/schema";
 import type { IssueUpsert, UserMark, WriteStore } from "@debugkit/adapters";
-import { effectiveRetention } from "./admin";
+import { cachedSettings, effectiveRetention } from "./admin";
+import { sendAlerts } from "./alerts";
+import { countryOf } from "./country";
 import { culpritOf, fingerprint, titleOf } from "./fingerprint";
 
 export * from "./fingerprint";
-export { handleAdmin, effectiveRetention, type AdminOptions } from "./admin";
+export { handleAdmin, effectiveRetention, cachedSettings, type AdminOptions } from "./admin";
+export { countryOf } from "./country";
+export { sendAlerts, SLACK_WEBHOOK } from "./alerts";
 
 export interface IngestOptions {
   store: WriteStore;
@@ -100,6 +104,13 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
       continue;
     }
     scopes.add("app");
+    // Request timings: one compact event per endpoint per minute, only for the latency rollups.
+    if (event.type === "metric") {
+      rollups.push({ app, day, dimension: "requests", key: event.key, kind: "event", by: event.count });
+      if (event.errors) rollups.push({ app, day, dimension: "requests", key: event.key, kind: "error", by: event.errors });
+      event.buckets.forEach((n, i) => n && rollups.push({ app, day, dimension: "latency", key: `${event.key}|${i}`, kind: "event", by: n }));
+      continue;
+    }
     const kind = event.type === "error" ? "error" : "event";
     const inc = (dimension: RollupIncrement["dimension"], key: string | undefined) =>
       rollups.push({ app, day, dimension, key: key || "unknown", kind, by: 1 });
@@ -132,19 +143,28 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
     inc("os", `${context.os.name} ${context.os.version ?? ""}`.trim());
     inc("appVersion", context.app.version);
     inc("deviceModel", context.device.model);
-    if (event.type === "event" && event.outcome && event.flow) inc("flowOutcome", `${event.flow}|${event.outcome}`);
+    if (event.type === "event" && event.outcome && event.flow) {
+      inc("flowOutcome", `${event.flow}|${event.outcome}`);
+      if (event.step) inc("flowStep", `${event.flow}|${event.step}|${event.outcome}`);
+    }
+    if (event.type === "error") {
+      inc("network", context.network?.type);
+      inc("country", countryOf(context));
+    }
 
     stored.push({ app, day, fingerprint: fp, event, context, user: env.user, sessionId: env.session.id, receivedAt });
   }
 
   await opts.store.registerApp(app);
   const retentionDays = stored.length ? await effectiveRetention(opts.store, app, opts.retentionDays) : undefined;
-  await Promise.all([
+  const [, outcome] = await Promise.all([
     stored.length ? opts.store.writeEvents(stored, { retentionDays }) : undefined,
     opts.store.upsertIssues([...issues.values()]),
     opts.store.incrementRollups(rollups),
     markUsers(opts.store, app, env.user?.id ?? env.user?.anonymousId ?? env.session.id, scopes, dayOf(receivedAt)),
   ]);
+
+  if (outcome && (outcome.created.length || outcome.regressed.length)) await sendAlerts(app, outcome, issues, await cachedSettings(opts.store, app));
 
   return { status: 202, body: { ok: true, accepted: env.events.length } };
 }

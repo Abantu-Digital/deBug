@@ -2,7 +2,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { isRegression, type Issue, type RollupDimension, type RollupIncrement, type RollupRow, type StoredEvent } from "@debugkit/schema";
 import { coalesceRollups, rollupId } from "./rollups";
-import { HOURLY_ROLLUP_DAYS, type AppSettings, type IssueStatusChange, type IssueUpsert, type RestampResult, type Store, type UserMark } from "./index";
+import { HOURLY_ROLLUP_DAYS, type AppSettings, type IssueStatusChange, type IssueUpsert, type RestampResult, type Store, type UpsertOutcome, type UserMark } from "./index";
 
 /**
  * Firestore layout (all under one root collection so it's easy to find / secure / delete):
@@ -47,7 +47,8 @@ export class FirestoreStore implements Store {
     }
   }
 
-  async upsertIssues(updates: IssueUpsert[]) {
+  async upsertIssues(updates: IssueUpsert[]): Promise<UpsertOutcome> {
+    const outcome: UpsertOutcome = { created: [], regressed: [] };
     // A transaction per issue keeps firstSeen/lastSeen correct under concurrent ingest.
     await Promise.all(
       updates.map((u) =>
@@ -57,6 +58,11 @@ export class FirestoreStore implements Store {
           const cur = snap.data() as Issue | undefined;
           const newer = !cur || u.ts >= cur.lastSeen;
           const regressed = cur?.status === "resolved" && isRegression(cur.resolvedIn, u.version, cur.resolvedAt, u.ts);
+          // Transactions can retry: decide the outcome from the last attempt only.
+          outcome.created = outcome.created.filter((f) => f !== u.fingerprint);
+          outcome.regressed = outcome.regressed.filter((f) => f !== u.fingerprint);
+          if (!cur) outcome.created.push(u.fingerprint);
+          if (regressed) outcome.regressed.push(u.fingerprint);
           tx.set(
             ref,
             strip({
@@ -77,6 +83,7 @@ export class FirestoreStore implements Store {
         }),
       ),
     );
+    return outcome;
   }
 
   async incrementRollups(incs: RollupIncrement[]) {

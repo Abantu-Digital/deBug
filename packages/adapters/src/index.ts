@@ -34,7 +34,29 @@ export interface IssueStatusChange {
 export interface AppSettings {
   /** How long raw events (stack traces, breadcrumbs) are kept. Counts and issues are kept forever. */
   retentionDays?: number;
+  /** Flows that matter most (e.g. checkout.payment): their issues rank one severity level higher. */
+  criticalFlows?: string[];
+  alerts?: AlertSettings;
   updatedAt?: string;
+}
+
+export interface AlertSettings {
+  /** A Slack incoming-webhook URL (https://hooks.slack.com/services/…). */
+  slackWebhookUrl?: string;
+  /** Alert when an issue is seen for the first time. Default true. */
+  newIssues?: boolean;
+  /** Alert when a resolved issue comes back. Default true. */
+  regressions?: boolean;
+  /** Only alert for issues in critical flows. Default false. */
+  onlyCriticalFlows?: boolean;
+  /** The dashboard's URL, to link alerts to the issue. */
+  dashboardUrl?: string;
+}
+
+/** Which issues an upsert created or turned to regressed: what alerts are about. */
+export interface UpsertOutcome {
+  created: string[];
+  regressed: string[];
 }
 
 export const MIN_RETENTION_DAYS = 1;
@@ -53,7 +75,7 @@ export interface WriteStore {
   registerApp(app: string): Promise<void>;
   /** `retentionDays` sets each event's expiry; the adapter's own default applies when it's missing. */
   writeEvents(events: StoredEvent[], opts?: { retentionDays?: number }): Promise<void>;
-  upsertIssues(updates: IssueUpsert[]): Promise<void>;
+  upsertIssues(updates: IssueUpsert[]): Promise<UpsertOutcome | void>;
   incrementRollups(incs: RollupIncrement[]): Promise<void>;
   getSettings(app: string): Promise<AppSettings | null>;
   putSettings(app: string, settings: AppSettings): Promise<AppSettings>;

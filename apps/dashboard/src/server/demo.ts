@@ -85,7 +85,29 @@ export async function seedDemo(): Promise<MemoryStore> {
     },
   ];
 
-  const successFlows = ["auth.login", "checkout.payment", "feed.load", "profile.update"];
+  // The step each flow's success is logged under, matching the failing scenario's step.
+  const successFlows: [string, string][] = [
+    ["auth.login", "submit_otp"],
+    ["checkout.payment", "create_intent"],
+    ["feed.load", "parse"],
+    ["profile.update", "upload_avatar"],
+  ];
+  // Request timings the SDK would send each minute: [endpoint, typical ms, spread, failure rate].
+  const endpoints: [string, number, number, number][] = [
+    ["GET /v1/feed", 380, 900, 0.03],
+    ["POST /v2/auth/otp/verify", 420, 500, 0.01],
+    ["POST /v1/payments/intent", 1900, 9000, 0.06],
+    ["GET /v1/profile", 160, 250, 0.002],
+  ];
+  const EDGES = [50, 100, 200, 300, 500, 750, 1000, 1500, 2000, 3000, 5000, 10000];
+  // A second generator for timings and places, so the original story's random sequence is unchanged.
+  const rand2 = mulberry32(7);
+  const pick2 = <T,>(xs: readonly T[]) => xs[Math.floor(rand2() * xs.length)]!;
+  // Mostly South Africa, with a few travellers.
+  const places: [string, string][] = [
+    ["Africa/Johannesburg", "en-ZA"], ["Africa/Johannesburg", "en-ZA"], ["Africa/Johannesburg", "en-ZA"], ["Africa/Johannesburg", "en-US"],
+    ["Africa/Johannesburg", "en-ZA"], ["Europe/London", "en-GB"], ["Africa/Windhoek", "en-NA"], ["Africa/Gaborone", "en-BW"],
+  ];
 
   for (let dayAgo = 13; dayAgo >= 0; dayAgo--) {
     const version = dayAgo <= 3 ? pick(["2.4.0", "2.4.0", "2.4.0", "2.3.1"]) : pick(["2.3.1", "2.3.1", "2.3.0"]);
@@ -132,9 +154,22 @@ export async function seedDemo(): Promise<MemoryStore> {
           events.push({ type: "event", id: `evt_${(seq++).toString().padStart(10, "0")}`, ts, name: `${sc.flow}.${sc.step}`, flow: sc.flow, step: sc.step, outcome: "failure" });
         }
       }
-      for (const flow of successFlows) {
+      for (const [flow, step] of successFlows) {
         if (rand() < 0.55)
-          events.push({ type: "event", id: `evt_${(seq++).toString().padStart(10, "0")}`, ts, name: `${flow}.complete`, flow, outcome: "success" });
+          events.push({ type: "event", id: `evt_${(seq++).toString().padStart(10, "0")}`, ts, name: `${flow}.${step}`, flow, step, outcome: "success" });
+      }
+      for (const [key, typical, spread, failRate] of endpoints) {
+        if (rand2() < 0.4) continue;
+        const buckets = new Array(13).fill(0);
+        const count = 1 + Math.floor(rand2() * 6);
+        let errors = 0;
+        for (let k = 0; k < count; k++) {
+          const msTaken = typical * (0.5 + rand2()) + (rand2() < 0.1 ? rand2() * spread : 0);
+          const b = EDGES.findIndex((e) => msTaken <= e);
+          buckets[b === -1 ? 12 : b]++;
+          if (rand2() < failRate) errors++;
+        }
+        events.push({ type: "metric", id: id(), ts, name: "http", key, count, errors, buckets });
       }
       // Session markers, as the SDK sends them: started, then errored/crashed at most once.
       events.unshift({ type: "session", id: id(), ts, status: "started" });
@@ -148,8 +183,7 @@ export async function seedDemo(): Promise<MemoryStore> {
           ...dev,
           runtime: { name: "react-native", version: "0.79", engine: "hermes" },
           network: { type: pick(networks) },
-          locale: "en-ZA",
-          timezone: "Africa/Johannesburg",
+          ...(([timezone, locale]) => ({ timezone, locale }))(pick2(places)),
         },
         user: { id: userId, anonymousId: `anon_${userId}` },
         session: { id: `sess_${seq}`, startedAt: ts },

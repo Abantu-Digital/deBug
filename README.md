@@ -86,6 +86,10 @@ Then deploy `packages/adapters/firestore.indexes.json`. It includes the TTL poli
 - **Counts, issues and release health** are kept forever, so any date range works.
 - **Hourly counters** expire after 7 days, since they only feed the 24h and 48h views.
 
+**Alerts and critical flows.** On the Settings page you can:
+- **Mark flows as critical**, such as `checkout.payment`. Their issues rank one severity level higher.
+- **Add a Slack incoming webhook.** Your ingest function then posts when an issue first appears or regresses, at most once an hour per issue, optionally only for critical flows. Only `https://hooks.slack.com/services/…` URLs are accepted. "Send a test alert" checks the webhook.
+
 **Issue workflow.** On an issue's page you can:
 - **Resolve** it, saying which release has the fix. If it shows up again in that release or a later one, it's marked **Regressed**; occurrences from older builds don't count.
 - **Ignore** it, which drops it from the summary and counts, or **reopen** it.

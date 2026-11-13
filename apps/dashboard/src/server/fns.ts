@@ -3,7 +3,7 @@ import { redirect } from "@tanstack/react-router";
 import { checkCredentials, demoLoginEnabled, DEMO_USER, endSession, readSession, startSession } from "./auth";
 import { config } from "./config";
 import { buildIssueDetail, buildSummary } from "./queries";
-import { readSettings, restampStep, settingsWriter, validRetention, writeIssueStatus, writeRetention } from "./settings";
+import { readSettings, restampStep, settingsWriter, testAlert, validRetention, writeIssueStatus, writeRetention, writeSettings } from "./settings";
 import { getStore } from "./store";
 
 export const getSessionUser = createServerFn({ method: "GET" }).handler(async () => readSession());
@@ -88,6 +88,48 @@ export const saveRetention = createServerFn({ method: "POST" })
     requireUser();
     try {
       return { ok: true as const, settings: await writeRetention(data.app, data.retentionDays) };
+    } catch (err) {
+      return { ok: false as const, error: (err as Error).message };
+    }
+  });
+
+const FLOW = /^[a-z0-9_]+(\.[a-z0-9_]+)*$/;
+
+export const saveAppSettings = createServerFn({ method: "POST" })
+  .validator((d: { app: string; criticalFlows?: string[]; alerts?: { slackWebhookUrl?: string; newIssues?: boolean; regressions?: boolean; onlyCriticalFlows?: boolean; dashboardUrl?: string } }) => {
+    const flows = Array.isArray(d?.criticalFlows) ? d.criticalFlows.map((f) => String(f).trim().toLowerCase()).filter(Boolean) : undefined;
+    if (flows && (flows.length > 30 || !flows.every((f) => FLOW.test(f) && f.length <= 64))) throw new Error("Flows are dotted lowercase names like checkout.payment (up to 30).");
+    const a = d?.alerts;
+    return {
+      app: String(d?.app ?? ""),
+      criticalFlows: flows,
+      alerts: a
+        ? {
+            slackWebhookUrl: typeof a.slackWebhookUrl === "string" ? a.slackWebhookUrl.trim().slice(0, 300) : undefined,
+            newIssues: a.newIssues !== false,
+            regressions: a.regressions !== false,
+            onlyCriticalFlows: a.onlyCriticalFlows === true,
+            dashboardUrl: typeof a.dashboardUrl === "string" ? a.dashboardUrl.trim().slice(0, 300) || undefined : undefined,
+          }
+        : undefined,
+    };
+  })
+  .handler(async ({ data }) => {
+    requireUser();
+    try {
+      return { ok: true as const, settings: await writeSettings(data.app, { criticalFlows: data.criticalFlows, alerts: data.alerts }) };
+    } catch (err) {
+      return { ok: false as const, error: (err as Error).message };
+    }
+  });
+
+export const sendTestAlert = createServerFn({ method: "POST" })
+  .validator((d: { app: string }) => ({ app: String(d?.app ?? "") }))
+  .handler(async ({ data }) => {
+    requireUser();
+    try {
+      await testAlert(data.app);
+      return { ok: true as const };
     } catch (err) {
       return { ok: false as const, error: (err as Error).message };
     }

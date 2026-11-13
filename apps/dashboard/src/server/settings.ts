@@ -1,4 +1,4 @@
-import type { AppSettings, RestampResult } from "@debugkit/adapters";
+import type { AlertSettings, AppSettings, RestampResult } from "@debugkit/adapters";
 import { MAX_RETENTION_DAYS, MIN_RETENTION_DAYS } from "@debugkit/adapters";
 import { config } from "./config";
 import { getLocalWriteStore, getStore } from "./store";
@@ -33,6 +33,9 @@ async function admin<T>(method: "GET" | "PUT" | "POST", route: string, body?: un
 export interface SettingsView {
   app: string;
   retentionDays: number | null;
+  criticalFlows: string[];
+  /** The Slack webhook is shown masked ("https://hooks.slack.com/…abcd"). */
+  alerts: AlertSettings;
   source: "setting" | "default" | "unknown";
   updatedAt?: string;
   writer: SettingsWriter;
@@ -46,15 +49,26 @@ export async function readSettings(app: string): Promise<SettingsView> {
   if (writer === "admin") {
     try {
       const out = await admin<{ settings: AppSettings | null; retentionDays: number }>("GET", "/settings", undefined, { app });
-      return { app, retentionDays: out.retentionDays, source: out.settings?.retentionDays ? "setting" : "default", updatedAt: out.settings?.updatedAt, writer };
+      return {
+        app,
+        retentionDays: out.retentionDays,
+        criticalFlows: out.settings?.criticalFlows ?? [],
+        alerts: out.settings?.alerts ?? {},
+        source: out.settings?.retentionDays ? "setting" : "default",
+        updatedAt: out.settings?.updatedAt,
+        writer,
+      };
     } catch (err) {
-      return { app, retentionDays: c.retentionDays ?? null, source: c.retentionDays ? "default" : "unknown", writer, note: `Couldn't reach the ingest function: ${(err as Error).message}` };
+      return { app, retentionDays: c.retentionDays ?? null, criticalFlows: [], alerts: {}, source: c.retentionDays ? "default" : "unknown", writer, note: `Couldn't reach the ingest function: ${(err as Error).message}` };
     }
   }
   const s = await (await getStore()).getSettings(app).catch(() => null);
+  const hook = s?.alerts?.slackWebhookUrl;
   return {
     app,
     retentionDays: s?.retentionDays ?? c.retentionDays ?? (writer === "local" ? 30 : null),
+    criticalFlows: s?.criticalFlows ?? [],
+    alerts: { ...s?.alerts, slackWebhookUrl: hook ? `https://hooks.slack.com/…${hook.slice(-4)}` : undefined },
     source: s?.retentionDays ? "setting" : c.retentionDays || writer === "local" ? "default" : "unknown",
     updatedAt: s?.updatedAt,
     writer,
@@ -74,6 +88,27 @@ export async function writeRetention(app: string, days: number): Promise<Setting
   else if (writer === "local") await (await getLocalWriteStore())!.putSettings(app, { retentionDays: days });
   else throw new Error("Settings can't be changed from this dashboard: DEBUG_ADMIN_URL and DEBUG_ADMIN_TOKEN aren't set.");
   return readSettings(app);
+}
+
+/** Change critical flows and/or alert settings. Validation happens in the ingest function (or here, locally). */
+export async function writeSettings(app: string, patch: { criticalFlows?: string[]; alerts?: AlertSettings }): Promise<SettingsView> {
+  const writer = settingsWriter();
+  if (writer === "admin") await admin("PUT", "/settings", { app, ...patch });
+  else if (writer === "local") {
+    const store = (await getLocalWriteStore())!;
+    const cur = await store.getSettings(app);
+    const url = patch.alerts?.slackWebhookUrl;
+    if (patch.alerts && url && !url.includes("…") && !/^https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/_-]{10,200}$/.test(url))
+      throw new Error("Use a Slack incoming-webhook URL (https://hooks.slack.com/services/…).");
+    const alerts = patch.alerts ? { ...patch.alerts, slackWebhookUrl: url?.includes("…") ? cur?.alerts?.slackWebhookUrl : url || undefined } : undefined;
+    await store.putSettings(app, { ...(patch.criticalFlows ? { criticalFlows: patch.criticalFlows } : {}), ...(alerts ? { alerts } : {}) });
+  } else throw new Error("Settings can't be changed from this dashboard: DEBUG_ADMIN_URL and DEBUG_ADMIN_TOKEN aren't set.");
+  return readSettings(app);
+}
+
+export async function testAlert(app: string): Promise<void> {
+  if (settingsWriter() !== "admin") throw new Error("Test alerts are sent by your ingest function, so they need a cloud setup (not demo or local mode).");
+  await admin("POST", "/alert-test", { app });
 }
 
 /** Open, resolve (optionally "fixed in <version>") or ignore an issue. */

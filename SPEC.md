@@ -200,6 +200,13 @@ deBug hosts nothing.
   - Release markers on the trend: the first sessions of each release, with OTA updates as `version+update`. "New in X" labels.
   - Issue status (open, resolved in a version, ignored), with automatic Regressed detection.
   - Prefilled "Create Linear/GitHub issue" links.
+- **Where and how much (0.7):**
+  - Failure rate per `track()` step.
+  - Response times per endpoint. The SDK sends a per-minute histogram per endpoint, which becomes p50/p95.
+  - Errors by network type and by country (from timezone or locale, never IP).
+  - Slack alerts for new and regressed issues.
+  - Critical flows, ranked one severity level higher.
+  - Email alerts and crash-free-drop alerts aren't built yet.
 - **Next, automatic capture part 2:** freezes (JS thread stalls, long tasks,
   event-loop lag), performance (web vitals, cold start, slow screens), memory
   warnings, error spikes, rage clicks, and a Health page.

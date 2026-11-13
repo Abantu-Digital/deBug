@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
-import { MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, type AppSettings, type WriteStore } from "@debugkit/adapters";
+import { MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, type AlertSettings, type AppSettings, type WriteStore } from "@debugkit/adapters";
+import { SLACK_WEBHOOK } from "./alerts";
 
 /** Used when neither the app's settings nor the deployment set a retention period. */
 export const DEFAULT_RETENTION_DAYS = 30;
@@ -12,18 +13,61 @@ const cache = new Map<string, { at: number; settings: AppSettings | null }>();
  * are cached for a minute per function instance, so a change from the dashboard applies to new
  * events within about a minute, without a read on every request.
  */
-export async function effectiveRetention(store: WriteStore, app: string, fallback?: number): Promise<number> {
+export async function cachedSettings(store: WriteStore, app: string): Promise<AppSettings | null> {
   const hit = cache.get(app);
-  let settings = hit && Date.now() - hit.at < CACHE_MS ? hit.settings : undefined;
-  if (settings === undefined) {
-    try {
-      settings = await store.getSettings(app);
-    } catch {
-      settings = null; // never fail ingest because settings couldn't be read
-    }
-    cache.set(app, { at: Date.now(), settings });
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.settings;
+  let settings: AppSettings | null;
+  try {
+    settings = await store.getSettings(app);
+  } catch {
+    settings = null; // never fail ingest because settings couldn't be read
   }
-  return settings?.retentionDays ?? fallback ?? DEFAULT_RETENTION_DAYS;
+  cache.set(app, { at: Date.now(), settings });
+  return settings;
+}
+
+export async function effectiveRetention(store: WriteStore, app: string, fallback?: number): Promise<number> {
+  return (await cachedSettings(store, app))?.retentionDays ?? fallback ?? DEFAULT_RETENTION_DAYS;
+}
+
+/** Settings as the dashboard sees them: the Slack webhook is a secret, so only its end is shown. */
+function masked(s: AppSettings | null): AppSettings | null {
+  if (!s?.alerts?.slackWebhookUrl) return s;
+  return { ...s, alerts: { ...s.alerts, slackWebhookUrl: `https://hooks.slack.com/…${s.alerts.slackWebhookUrl.slice(-4)}` } };
+}
+
+const FLOW = /^[a-z0-9_]+(\.[a-z0-9_]+)*$/;
+
+/** Validate the fields a PUT /admin/settings may change. Returns the patch, or an error message. */
+function settingsPatch(body: Record<string, unknown>, current: AppSettings | null): AppSettings | string {
+  const patch: AppSettings = {};
+  if (body.retentionDays !== undefined) {
+    const days = Number(body.retentionDays);
+    if (!Number.isInteger(days) || days < MIN_RETENTION_DAYS || days > MAX_RETENTION_DAYS) return `retentionDays must be a whole number from ${MIN_RETENTION_DAYS} to ${MAX_RETENTION_DAYS}`;
+    patch.retentionDays = days;
+  }
+  if (body.criticalFlows !== undefined) {
+    if (!Array.isArray(body.criticalFlows) || body.criticalFlows.length > 30 || !body.criticalFlows.every((f) => typeof f === "string" && f.length <= 64 && FLOW.test(f)))
+      return "criticalFlows must be up to 30 dotted lowercase flow names, like checkout.payment";
+    patch.criticalFlows = [...new Set(body.criticalFlows as string[])];
+  }
+  if (body.alerts !== undefined) {
+    const a = body.alerts as Record<string, unknown>;
+    if (!a || typeof a !== "object") return "alerts must be an object";
+    const next: AlertSettings = {};
+    const url = a.slackWebhookUrl;
+    if (typeof url === "string" && url.includes("…")) next.slackWebhookUrl = current?.alerts?.slackWebhookUrl; // the masked value: keep it
+    else if (url === "" || url === null || url === undefined) next.slackWebhookUrl = undefined;
+    else if (typeof url === "string" && SLACK_WEBHOOK.test(url)) next.slackWebhookUrl = url;
+    else return "slackWebhookUrl must be a Slack incoming-webhook URL (https://hooks.slack.com/services/…)";
+    for (const k of ["newIssues", "regressions", "onlyCriticalFlows"] as const) if (typeof a[k] === "boolean") next[k] = a[k] as boolean;
+    if (typeof a.dashboardUrl === "string" && a.dashboardUrl) {
+      if (!/^https?:\/\/[^\s]{3,300}$/.test(a.dashboardUrl)) return "dashboardUrl must be an http(s) URL";
+      next.dashboardUrl = a.dashboardUrl;
+    }
+    patch.alerts = next;
+  }
+  return Object.keys(patch).length ? patch : "nothing to change";
 }
 
 export interface AdminOptions {
@@ -51,7 +95,8 @@ const APP_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
  * data. Mounted under /admin on the ingest function:
  *
  *   GET  /admin/settings?app=…              { settings, retentionDays }
- *   PUT  /admin/settings   { app, retentionDays }
+ *   PUT  /admin/settings   { app, retentionDays?, criticalFlows?, alerts? }
+ *   POST /admin/alert-test { app }           send a test message to the app's Slack webhook
  *   POST /admin/restamp    { app, cursor? }  re-stamp existing events' expiry, one page per call
  *   PUT  /admin/issue      { app, fingerprint, status: open|resolved|ignored, resolvedIn? }
  */
@@ -76,15 +121,22 @@ export async function handleAdmin(
 
   if (route === "/settings" && req.method === "GET") {
     const settings = await opts.store.getSettings(app);
-    return { status: 200, body: { ok: true, settings, retentionDays: settings?.retentionDays ?? opts.retentionDays ?? DEFAULT_RETENTION_DAYS } };
+    return { status: 200, body: { ok: true, settings: masked(settings), retentionDays: settings?.retentionDays ?? opts.retentionDays ?? DEFAULT_RETENTION_DAYS } };
   }
   if (route === "/settings" && (req.method === "PUT" || req.method === "POST")) {
-    const days = Number(body.retentionDays);
-    if (!Number.isInteger(days) || days < MIN_RETENTION_DAYS || days > MAX_RETENTION_DAYS)
-      return { status: 400, body: { ok: false, error: `retentionDays must be a whole number from ${MIN_RETENTION_DAYS} to ${MAX_RETENTION_DAYS}` } };
-    const settings = await opts.store.putSettings(app, { retentionDays: days });
+    const current = await opts.store.getSettings(app);
+    const patch = settingsPatch(body, current);
+    if (typeof patch === "string") return { status: 400, body: { ok: false, error: patch } };
+    const settings = await opts.store.putSettings(app, patch);
     cache.delete(app);
-    return { status: 200, body: { ok: true, settings, retentionDays: days } };
+    return { status: 200, body: { ok: true, settings: masked(settings), retentionDays: settings.retentionDays ?? opts.retentionDays ?? DEFAULT_RETENTION_DAYS } };
+  }
+  if (route === "/alert-test" && req.method === "POST") {
+    const url = (await opts.store.getSettings(app))?.alerts?.slackWebhookUrl;
+    if (!url || !SLACK_WEBHOOK.test(url)) return { status: 400, body: { ok: false, error: "No Slack webhook is set for this app" } };
+    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: `:white_check_mark: deBug alerts for *${app}* are working.` }), signal: AbortSignal.timeout(5000) }).catch((e: Error) => e);
+    if (res instanceof Error || !res.ok) return { status: 502, body: { ok: false, error: `Slack didn't accept it: ${res instanceof Error ? res.message : res.status}` } };
+    return { status: 200, body: { ok: true } };
   }
   if (route === "/restamp" && req.method === "POST") {
     const days = await effectiveRetention(opts.store, app, opts.retentionDays);

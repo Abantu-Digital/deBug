@@ -147,3 +147,36 @@ describe("who and when", () => {
     expect(none.links).toEqual({});
   });
 });
+
+describe("where and how much", () => {
+  const now = Date.parse("2026-11-13T12:00:00Z");
+  it("reports step failure rates, endpoint percentiles, network and country, and bumps critical flows", async () => {
+    const store = new MemoryStore();
+    const ts = "2026-11-13T09:00:00.000Z";
+    const buckets = new Array(13).fill(0);
+    buckets[1] = 9; // ≤100ms
+    buckets[8] = 1; // ≤2000ms
+    const events = [
+      { type: "event", id: "evt_000000001", ts, name: "checkout.payment.charge", flow: "checkout.payment", step: "charge", outcome: "failure" },
+      { type: "event", id: "evt_000000002", ts, name: "checkout.payment.charge", flow: "checkout.payment", step: "charge", outcome: "success" },
+      { type: "event", id: "evt_000000003", ts, name: "checkout.payment.charge", flow: "checkout.payment", step: "charge", outcome: "success" },
+      { type: "error", id: "evt_000000004", ts, flow: "checkout.payment", error: { name: "Error", message: "declined", stack: "Error\n    at charge (/app/src/pay.ts:1:1)" } },
+      { type: "metric", id: "evt_000000005", ts, name: "http", key: "POST /v1/pay", count: 10, errors: 1, buckets },
+    ];
+    const env = { sdk: { name: "t", version: "1" }, context: { app: { id: "a" }, os: { name: "ios" }, runtime: { name: "rn" }, network: { type: "cellular" }, timezone: "Africa/Johannesburg" }, session: { id: "s", startedAt: ts }, events };
+    await ingest(JSON.stringify(env), "k", { store, keys: { k: "a" }, now: () => new Date(ts) });
+
+    const plain = (await buildSummary(store, "a", DEFAULT_SEVERITY_THRESHOLDS, now, { range: { range: "7d" } }))!;
+    expect(plain.steps).toEqual([{ flow: "checkout.payment", step: "charge", successes: 2, failures: 1, abandoned: 0, failureRate: 1 / 3 }]);
+    expect(plain.timings).toEqual([{ endpoint: "POST /v1/pay", requests: 10, failed: 1, errorRate: 0.1, p50: 100, p95: 2000 }]);
+    expect(plain.breakdowns.network).toEqual([{ key: "cellular", errors: 1 }]);
+    expect(plain.breakdowns.country).toEqual([{ key: "ZA", errors: 1 }]);
+    expect(plain.issues[0]!.severity).toBe("low");
+
+    await store.putSettings("a", { criticalFlows: ["checkout.payment"] });
+    const bumped = (await buildSummary(store, "a", DEFAULT_SEVERITY_THRESHOLDS, now, { range: { range: "7d" } }))!;
+    expect(bumped.issues[0]!.severity).toBe("medium");
+    expect(bumped.flows[0]).toMatchObject({ flow: "checkout.payment", critical: true });
+    expect(bumped.narrative.join(" ")).toContain("checkout.payment (a critical flow)");
+  });
+});

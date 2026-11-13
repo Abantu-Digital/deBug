@@ -15,6 +15,7 @@ export type {
   ErrorEvent,
   CustomEvent,
   SessionEvent,
+  MetricEvent,
   Event,
   EventInput,
   Envelope,
@@ -46,6 +47,26 @@ export function compareVersions(a: string, b: string): number {
 export function releaseKey(app: { version?: string; update?: string }): string {
   const v = app.version || "unknown";
   return app.update ? `${v}+${app.update.slice(0, 12)}` : v;
+}
+
+/** Upper bounds (ms) of the request-timing histogram buckets; one more bucket holds anything slower. */
+export const LATENCY_BUCKETS_MS = [50, 100, 200, 300, 500, 750, 1000, 1500, 2000, 3000, 5000, 10000] as const;
+
+export function latencyBucket(ms: number): number {
+  const i = LATENCY_BUCKETS_MS.findIndex((edge) => ms <= edge);
+  return i === -1 ? LATENCY_BUCKETS_MS.length : i;
+}
+
+/** The p-th percentile (0–1) from bucket counts, as the bucket's upper bound (or ">10000"). */
+export function percentileMs(buckets: number[], p: number): number | null {
+  const total = buckets.reduce((a, b) => a + b, 0);
+  if (!total) return null;
+  let seen = 0;
+  for (let i = 0; i < buckets.length; i++) {
+    seen += buckets[i]!;
+    if (seen >= p * total) return i < LATENCY_BUCKETS_MS.length ? LATENCY_BUCKETS_MS[i]! : Infinity;
+  }
+  return Infinity;
 }
 
 /** Has an issue resolved in `resolvedIn` come back in `version`? */
