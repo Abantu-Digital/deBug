@@ -1,5 +1,11 @@
 # @debugkit/adapters
 
+## 0.7.0
+
+### Patch Changes
+
+- @debugkit/schema@0.7.0
+
 ## 0.6.1
 
 ### Patch Changes
