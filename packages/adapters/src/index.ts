@@ -64,6 +64,42 @@ export const MAX_RETENTION_DAYS = 3650;
 /** Hourly counters only feed the 24h/48h views, so they expire on their own. */
 export const HOURLY_ROLLUP_DAYS = 7;
 
+/** Who can do what on the dashboard. Owners and admins manage the team and settings; members view. */
+export type TeamRole = "owner" | "admin" | "member";
+export const TEAM_ROLES: readonly TeamRole[] = ["owner", "admin", "member"];
+
+/** A dashboard login stored in your database (the bootstrap login in the dashboard's env isn't). */
+export interface TeamMember {
+  /** Lowercase; the id. */
+  email: string;
+  name?: string;
+  role: TeamRole;
+  /** scrypt.<salt hex>.<hash hex>, made by the dashboard. Never returned by the admin routes. */
+  passwordHash: string;
+  /** Bumped on removal (and password changes), which signs out every session made before. */
+  sessionVersion: number;
+  createdAt: string;
+  updatedAt?: string;
+  invitedBy?: string;
+  /** Set when access was removed; the record stays so the removal is visible. */
+  removedAt?: string;
+}
+
+/** A single-use invite link. Only a SHA-256 of the token is stored. */
+export interface TeamInvite {
+  /** SHA-256 (hex) of the token in the link. */
+  id: string;
+  role: TeamRole;
+  /** When set, only this email can accept it. */
+  email?: string;
+  invitedBy: string;
+  createdAt: string;
+  expiresAt: string;
+  usedAt?: string;
+  usedBy?: string;
+  revokedAt?: string;
+}
+
 /** One page of re-stamping existing events with a new expiry. Pass `cursor` back until it's undefined. */
 export interface RestampResult {
   updated: number;
@@ -84,6 +120,12 @@ export interface WriteStore {
   setIssueStatus(app: string, fingerprint: string, change: IssueStatusChange): Promise<Issue | null>;
   /** Give already-stored events an expiry based on `retentionDays`, one page at a time. */
   restampExpiry(app: string, retentionDays: number, opts?: { cursor?: string; limit?: number }): Promise<RestampResult>;
+  getMember(email: string): Promise<TeamMember | null>;
+  putMember(member: TeamMember): Promise<void>;
+  getInvite(id: string): Promise<TeamInvite | null>;
+  putInvite(invite: TeamInvite): Promise<void>;
+  /** Mark an invite used, atomically: false if it was already used or revoked. */
+  claimInvite(id: string, by: string, at: string): Promise<boolean>;
 }
 
 /** Read side, used by the dashboard. */
@@ -92,6 +134,10 @@ export interface ReadStore {
   /** Distinct members of a scope seen on or after `sinceDay` (YYYY-MM-DD). */
   countUsers(app: string, scope: string, sinceDay: string): Promise<number>;
   listApps(): Promise<string[]>;
+  getMember(email: string): Promise<TeamMember | null>;
+  /** Everyone, removed members included (they carry removedAt). */
+  listMembers(): Promise<TeamMember[]>;
+  listInvites(): Promise<TeamInvite[]>;
   listIssues(app: string, opts?: { limit?: number }): Promise<Issue[]>;
   getIssue(app: string, fingerprint: string): Promise<Issue | null>;
   getRollups(app: string, dimension: RollupDimension, fromDay: string, toDay: string): Promise<RollupRow[]>;

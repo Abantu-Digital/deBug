@@ -10,6 +10,7 @@ export * from "./fingerprint";
 export { handleAdmin, effectiveRetention, cachedSettings, type AdminOptions } from "./admin";
 export { countryOf } from "./country";
 export { sendAlerts, SLACK_WEBHOOK } from "./alerts";
+export { teamAction, hashInviteToken, publicMember, INVITE_DAYS, type TeamResult } from "./team";
 
 export interface IngestOptions {
   store: WriteStore;

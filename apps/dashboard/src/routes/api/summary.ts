@@ -9,7 +9,7 @@ export const Route = createFileRoute("/api/summary")({
   server: {
     handlers: {
       GET: async ({ request }) => {
-        if (!authorizeApi(request)) return Response.json({ error: "unauthorized" }, { status: 401 });
+        if (!(await authorizeApi(request))) return Response.json({ error: "unauthorized" }, { status: 401 });
         const q = new URL(request.url).searchParams;
         const app = q.get("app") ?? undefined;
         const range = { range: q.get("range") ?? undefined, from: q.get("from") ?? undefined, to: q.get("to") ?? undefined };

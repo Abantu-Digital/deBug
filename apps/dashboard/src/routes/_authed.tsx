@@ -23,10 +23,11 @@ function Layout() {
             <nav className="flex items-center gap-3 text-sm" aria-label="Main">
               <Link to="/" search={{}} className="text-muted hover:text-ink" activeProps={{ className: "font-medium text-ink" }} activeOptions={{ exact: true }}>Overview</Link>
               <Link to="/settings" search={{}} className="text-muted hover:text-ink" activeProps={{ className: "font-medium text-ink" }}>Settings</Link>
+              <Link to="/team" className="text-muted hover:text-ink" activeProps={{ className: "font-medium text-ink" }}>Team</Link>
             </nav>
           </div>
           <div className="flex items-center gap-3 text-sm">
-            <span className="hidden text-muted sm:inline">{user.email}</span>
+            <span className="hidden text-muted sm:inline">{user.email} · {user.role}</span>
             <button
               className="rounded-md border border-line px-2.5 py-1 hover:bg-panel-2"
               onClick={async () => {
