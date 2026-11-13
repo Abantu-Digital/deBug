@@ -1,12 +1,13 @@
 import * as p from "@clack/prompts";
 import pc from "picocolors";
+import { cmdFor } from "./state";
 
 export { p, pc };
 
 /** Set by --yes: accept every default without asking. */
 export const flags = { yes: false, command: "init" };
 
-export function bail(message = flags.command === "init" ? "Setup cancelled. Run npx debugkit init again whenever you're ready." : "Stopped."): never {
+export function bail(message = flags.command === "init" ? `Setup cancelled. Run ${cmdFor("init")} again whenever you're ready.` : "Stopped."): never {
   p.cancel(message);
   process.exit(0);
 }
@@ -41,7 +42,7 @@ export async function next(message = "Continue") {
     must(await p.select({ message, options: [{ value: "next", label: "Next" }] }));
     return;
   }
-  must<boolean>(await p.confirm({ message, active: "Next", inactive: "Stop here", initialValue: true })) || bail("Stopped the walkthrough. Run npx debugkit guide to pick it up again.");
+  must<boolean>(await p.confirm({ message, active: "Next", inactive: "Stop here", initialValue: true })) || bail(`Stopped the walkthrough. Run ${cmdFor("guide")} to pick it up again.`);
 }
 
 export const code = (s: string) => pc.cyan(s);

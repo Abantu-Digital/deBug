@@ -25,7 +25,7 @@ export function hostedEnv(local: Record<string, string>, url: string, extra: Rec
   const plain: Record<string, string> = { DEBUG_DASHBOARD_URL: url, ...extra };
   const secret: Record<string, string> = {};
   for (const k of SHARED) if (local[k]) (SECRET.has(k) ? secret : plain)[k] = local[k]!;
-  if (!secret.DEBUG_SESSION_SECRET || !secret.DEBUG_DASHBOARD_USERS) throw new Error("The dashboard login isn't set up yet. Run npx debugkit init (or npx debugkit password) first.");
+  if (!secret.DEBUG_SESSION_SECRET || !secret.DEBUG_DASHBOARD_USERS) throw new Error(`The dashboard login isn't set up yet. Run ${cmdFor("init")} (or ${cmdFor("password")}) first.`);
   return { plain, secret };
 }
 
@@ -163,7 +163,7 @@ async function listSites(fb: (a: string[]) => Promise<{ code: number; stdout: st
 async function readOnlyServiceAccount(projectId: string): Promise<string | undefined> {
   const email = `${SA_NAME}@${projectId}.iam.gserviceaccount.com`;
   if (!which("gcloud")) {
-    p.log.warn(`gcloud isn't installed, so the dashboard runs as the project's default service account (which can write). Install gcloud and run ${code("npx debugkit deploy-dashboard")} again to lock it to read-only.`);
+    p.log.warn(`gcloud isn't installed, so the dashboard runs as the project's default service account (which can write). Install gcloud and run ${code(cmdFor("deploy-dashboard"))} again to lock it to read-only.`);
     return undefined;
   }
   const g = (args: string[]) => capture("gcloud", [...args, "--project", projectId, "--quiet"]);
@@ -237,7 +237,7 @@ export function writeHostingConfig(dir: string, site: string, region: string) {
 }
 
 async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<string, string>, opts: HostOptions) {
-  const fbc = cfg.firebase ?? fail(opts, "This setup has no Firebase project saved. Run npx debugkit init again.");
+  const fbc = cfg.firebase ?? fail(opts, `This setup has no Firebase project saved. Run ${cmdFor("init")} again.`);
   const [fbCmd, fbPre] = await firebaseCli();
   const account = local.DEBUGKIT_FIREBASE_ACCOUNT || fbc.account;
   const acct = account ? ["--account", account] : [];
@@ -245,7 +245,7 @@ async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<stri
   const fb = (args: string[], o: { cwd?: string } = {}) => capture(fbCmd, [...fbPre, ...args], o);
   const fbLive = (args: string[], o: { cwd?: string } = {}) => interactive(fbCmd, [...fbPre, ...args], o);
   const dir = paths(cwd).firebase;
-  if (!existsSync(join(dir, "firebase.json"))) fail(opts, `${dir} is missing. Run npx debugkit init again to recreate it.`);
+  if (!existsSync(join(dir, "firebase.json"))) fail(opts, `${dir} is missing. Run ${cmdFor("init")} again to recreate it.`);
   const s = p.spinner();
 
   /* 1. A Hosting site of its own, so the project's own website is untouched */
@@ -307,7 +307,7 @@ async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<stri
     ].join("\n"),
     "About to host the dashboard",
   );
-  if (!opts.confirmed && !(await yes(`Host the dashboard in ${fbc.projectId}?`))) return skipOrStop(opts, "Skipped hosting: the dashboard still runs locally with npx debugkit dashboard.");
+  if (!opts.confirmed && !(await yes(`Host the dashboard in ${fbc.projectId}?`))) return skipOrStop(opts, `Skipped hosting: the dashboard still runs locally with ${cmdFor("dashboard")}.`);
 
   // A newer dashboard can query with indexes an older setup never added. Add deBug's current
   // ones; never with --force, which would delete indexes the project has that aren't in the file.
@@ -379,8 +379,8 @@ export async function dashboardZip(): Promise<Uint8Array> {
 }
 
 async function hostAws(cfg: DebugkitConfig, local: Record<string, string>, opts: HostOptions) {
-  const aws = cfg.aws ?? fail(opts, "This setup has no AWS details saved. Run npx debugkit init again.");
-  if (!aws.readOnlyPolicyArn) fail(opts, "The read-only policy for the dashboard is missing. Run npx debugkit init again (it adds it), then npx debugkit deploy-dashboard.");
+  const aws = cfg.aws ?? fail(opts, `This setup has no AWS details saved. Run ${cmdFor("init")} again.`);
+  if (!aws.readOnlyPolicyArn) fail(opts, `The read-only policy for the dashboard is missing. Run ${cmdFor("init")} again (it adds it), then ${cmdFor("deploy-dashboard")}.`);
   const { fromNodeProviderChain } = await import("@aws-sdk/credential-providers");
   const [iamMod, lambdaMod] = await Promise.all([import("@aws-sdk/client-iam"), import("@aws-sdk/client-lambda")]);
   const base = { region: aws.region, credentials: fromNodeProviderChain(aws.profile ? { profile: aws.profile } : {}) };
@@ -400,7 +400,7 @@ async function hostAws(cfg: DebugkitConfig, local: Record<string, string>, opts:
     ].join("\n"),
     "About to host the dashboard",
   );
-  if (!opts.confirmed && !(await yes("Host the dashboard in AWS?"))) return skipOrStop(opts, "Skipped hosting: the dashboard still runs locally with npx debugkit dashboard.");
+  if (!opts.confirmed && !(await yes("Host the dashboard in AWS?"))) return skipOrStop(opts, `Skipped hosting: the dashboard still runs locally with ${cmdFor("dashboard")}.`);
 
   const s = p.spinner();
   s.start("Packaging the dashboard");

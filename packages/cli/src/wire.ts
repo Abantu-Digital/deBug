@@ -3,7 +3,7 @@ import { dirname, join, relative } from "node:path";
 import type { AppInfo } from "./detect";
 import { installCommand } from "./detect";
 import { capture, interactive, which } from "./exec";
-import { ensureGitignored, environment, upsertEnv } from "./state";
+import { cmdFor, ensureGitignored, environment, upsertEnv } from "./state";
 import { bold, code, dim, p, yes } from "./ui";
 
 export interface Connection {
@@ -25,7 +25,7 @@ export async function installSdk(app: AppInfo) {
       if (r.code !== 0) {
         s.error("Install failed");
         p.log.error(r.stderr.slice(-800));
-        throw new Error("Couldn't install @debugkit/sdk. Install it yourself and run npx debugkit init again.");
+        throw new Error(`Couldn't install @debugkit/sdk. Install it yourself and run ${cmdFor("init")} again.`);
       }
       s.stop(`Installed @debugkit/sdk`);
       app.hasSdk = true;

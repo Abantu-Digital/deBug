@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { zipSync } from "fflate";
 import { interactive, which } from "../exec";
 import { keyEntry, mergeKeys } from "../keys";
-import { environment } from "../state";
+import { cmdFor, environment } from "../state";
 import { ask, bail, choose, code, dim, next, p, yes } from "../ui";
 import { adminEnv, type ProviderResult, type SetupContext } from "./types";
 
@@ -162,7 +162,7 @@ export async function setupAws(ctx: SetupContext): Promise<ProviderResult> {
       active = (await ddb.send(new ddbMod.DescribeTableCommand({ TableName: table }))).Table?.TableStatus === "ACTIVE";
       if (!active) await sleep(2000);
     }
-    if (!active) throw new Error(`Table ${table} didn't become active within 3 minutes. Check it in the AWS console, then run npx debugkit init again.`);
+    if (!active) throw new Error(`Table ${table} didn't become active within 3 minutes. Check it in the AWS console, then run ${cmdFor("init")} again.`);
   }
   if (!tableArn) throw new Error(`AWS didn't return the ARN for table ${table}.`);
 

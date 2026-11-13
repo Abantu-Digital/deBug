@@ -144,7 +144,7 @@ async function init(cwd: string, preset?: ProviderId) {
     result = provider === "firebase" ? await setupFirebase(ctx) : provider === "aws" ? await setupAws(ctx) : await setupLocal(ctx);
   } catch (err) {
     p.log.error((err as Error).message);
-    bail("Setup stopped. Nothing else was changed in your app. Fix the error above and run npx debugkit init again.");
+    bail(`Setup stopped. Nothing else was changed in your app. Fix the error above and run ${cmdFor("init")} again.`);
   }
   const cfg: DebugkitConfig = { ...result.config, ...(existing?.provider === provider && existing.hosted ? { hosted: existing.hosted } : {}), appId: app.appId, dashboardPort, retentionDays, createdAt: new Date().toISOString() };
   writeConfig(cwd, cfg);
@@ -161,7 +161,7 @@ async function init(cwd: string, preset?: ProviderId) {
       [
         `deBug can host the dashboard in your ${provider === "aws" ? "AWS account" : "Firebase project"} too, reading the same data,`,
         "at a link you can share with your team. It signs in with the same login, and you can still run it locally.",
-        "Skip it and setup carries on; host it later with npx debugkit deploy-dashboard.",
+        `Skip it and setup carries on; host it later with ${cmdFor("deploy-dashboard")}.`,
       ].join("\n"),
       "Host the dashboard",
     );
