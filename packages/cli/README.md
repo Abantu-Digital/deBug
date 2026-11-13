@@ -26,6 +26,24 @@ Run it from your app's folder. It walks you through these steps:
    - a test event, sent through the real ingest so you watch it arrive;
    - what the SDK records on its own;
    - what you add in your own try/catches.
+8. **Offers to host the dashboard** in the same Firebase project or AWS account, at a link you can share with your team. Say no and do it later with `npx debugkit deploy-dashboard`.
+
+## Hosting the dashboard for your team
+
+`npx debugkit deploy-dashboard` puts the dashboard online, next to your data, and prints the link.
+It uses the same login as your local dashboard, and you can keep running it locally too.
+
+| | Firebase | AWS |
+|---|---|---|
+| Address | `https://<project>-debug.web.app`, a Hosting site of its own (your app's site is untouched) | the Lambda's Function URL |
+| Runs as | a 2nd-gen Cloud Function `debugkitDashboard`, behind Firebase Hosting | a Lambda `debugkit-dashboard-<table>` |
+| Reads data as | a service account `debugkit-dashboard` with Cloud Datastore Viewer only (needs `gcloud`; without it, the project's default account) | an IAM role with the read-only policy `init` created |
+| Secrets | `.debugkit/firebase/dashboard/.env.<project>`, gitignored | the Lambda's environment |
+
+- Run it again after upgrading deBug, or after `npx debugkit password`, to update the hosted copy.
+- Slack alerts link to the hosted dashboard once it exists.
+- Anyone with the link sees the sign-in page; only people with a login get in.
+- If Firebase Hosting can't reach a function in your database's region, the CLI offers to retry with the function in `us-central1`.
 
 ## Several environments (preview, production…)
 
@@ -58,7 +76,8 @@ Every command below also works as `npx @debugkit/cli <command>`.
 | Command | What it does |
 |---|---|
 | `npx debugkit init` | The full setup above |
-| `npx debugkit dashboard` | Runs the dashboard against your data. On "just this machine", it also receives your app's events |
+| `npx debugkit dashboard` | Runs the dashboard on this machine against your data. On "just this machine", it also receives your app's events |
+| `npx debugkit deploy-dashboard` | Hosts the dashboard in your Firebase project or AWS account, at a link to share |
 | `npx debugkit test` | Sends test events and checks they're accepted |
 | `npx debugkit guide` | Replays the walkthrough |
 
@@ -70,6 +89,7 @@ Options: `--provider firebase|aws|local` skips the provider question, `--cwd <di
 |---|---|
 | Just this machine | Run end to end: the empty dashboard, then test events arriving |
 | Firebase | Run end to end against a real project: function deployed, indexes added without touching existing ones, test events read back on the dashboard |
+| Hosting the dashboard | The handler and the Lambda package run locally, sign-in included. Not yet deployed to a real project |
 | AWS | Unit-tested (profile parsing, the "not found" handling, key merging) and the bundled Lambda run locally. Not yet run against a real account |
 | Environments (`--env`) | Run end to end with "just this machine" in an Expo-style app: separate config and login, `.env` untouched, `debug.ts` with the on/off switch. `eas env:set` is checked against EAS's help but not yet run against a real EAS project |
 | Platforms | Vite and React run for real. The Expo, React Native, Next.js, TanStack Start and Node templates are unit-tested |
@@ -88,6 +108,7 @@ Options: `--provider firebase|aws|local` skips the provider question, `--cwd <di
 |---|---|---|
 | `.debugkit/config.json` | provider, endpoint, ingest key, resource names | yes |
 | `.debugkit/firebase/` | the ingest function source (Firebase), so you can redeploy it | yes |
+| `.debugkit/firebase/dashboard/` | the hosted dashboard's function source (Firebase). Its `.env.<project>` holds secrets and is gitignored | yes, except `.env.*` |
 | `.debugkit/dashboard.env` | the dashboard login (a password hash), session secret, API token | no, it's gitignored |
 | `debug.ts` (or `src/debug.ts`) | `init()` for your platform | yes |
 | `.env` | the endpoint and ingest key | added to `.gitignore` |

@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
-import { freePort, prepareDashboardEnv, resetLogin, startDashboard, VERSION } from "./dashboard";
+import { hostDashboard } from "./hosting";
+import { freePort, loginHint, prepareDashboardEnv, resetLogin, startDashboard, VERSION } from "./dashboard";
 import { detectApp, PLATFORM_LABEL, type AppInfo } from "./detect";
 import { sendTestEvents, walkthrough } from "./guide";
 import { setupAws } from "./providers/aws";
@@ -16,7 +17,8 @@ const HELP = `${bold("debugkit")} ${VERSION}: set up deBug in your app
 ${dim("Run as npx debugkit <command> once @debugkit/sdk is installed, or npx @debugkit/cli <command> anywhere.")}
 
   ${code("npx debugkit init")}        choose a cloud, deploy ingest to your account, wire the SDK, walk through the dashboard
-  ${code("npx debugkit dashboard")}   run the dashboard against your data
+  ${code("npx debugkit dashboard")}   run the dashboard against your data, on this machine
+  ${code("npx debugkit deploy-dashboard")}  host the dashboard in your Firebase or AWS account, at a link you can share
   ${code("npx debugkit test")}        send test events and check they arrive
   ${code("npx debugkit guide")}       replay the walkthrough
   ${code("npx debugkit password")}    reset the dashboard login
@@ -144,7 +146,7 @@ async function init(cwd: string, preset?: ProviderId) {
     p.log.error((err as Error).message);
     bail("Setup stopped. Nothing else was changed in your app. Fix the error above and run npx debugkit init again.");
   }
-  const cfg: DebugkitConfig = { ...result.config, appId: app.appId, dashboardPort, retentionDays, createdAt: new Date().toISOString() };
+  const cfg: DebugkitConfig = { ...result.config, ...(existing?.provider === provider && existing.hosted ? { hosted: existing.hosted } : {}), appId: app.appId, dashboardPort, retentionDays, createdAt: new Date().toISOString() };
   writeConfig(cwd, cfg);
   p.note(result.created.map((l) => `• ${l}`).join("\n"), "Created");
 
@@ -170,16 +172,46 @@ async function init(cwd: string, preset?: ProviderId) {
     return;
   }
   dash.stop();
+
+  /* 5. Optionally, the dashboard online, for the team */
+  let hostedUrl = cfg.hosted?.url;
+  p.note(
+    [
+      `The dashboard ran on this machine. deBug can also host it in your ${provider === "aws" ? "AWS account" : "Firebase project"}, reading the same data,`,
+      "at a link you can share with your team. It signs in with the same login. You can still run it locally.",
+    ].join("\n"),
+    "Host the dashboard?",
+  );
+  if (await yes(hostedUrl ? `Update the hosted dashboard at ${hostedUrl}?` : "Host the dashboard online too?", !hostedUrl)) {
+    try {
+      hostedUrl = (await hostDashboard(cwd, readConfig(cwd) ?? cfg)).url;
+    } catch (err) {
+      p.log.error((err as Error).message);
+      p.log.info(`deBug itself is set up. Try hosting again with ${code(cmdFor("deploy-dashboard"))}.`);
+    }
+  } else p.log.info(dim(`Any time later: ${cmdFor("deploy-dashboard")}`));
+
   const others = listEnvironments(cwd).filter((e) => e !== environment.get());
   p.outro(
-    `deBug is set up${envLabel()}. Open the dashboard any time with ${code(cmdFor("dashboard"))}.` +
+    `deBug is set up${envLabel()}. ${hostedUrl ? `Share the dashboard: ${code(hostedUrl)}. ` : ""}Open it locally any time with ${code(cmdFor("dashboard"))}.` +
       (environment.get() && !others.length ? `\n   Set up the next environment the same way, e.g. ${code("npx debugkit init --env production")}.` : ""),
   );
+}
+
+async function deployDashboard(cwd: string) {
+  const cfg = requireConfig(cwd);
+  p.intro(`${pc.bgRed(pc.white(" deBug "))} host the dashboard${envLabel()}`);
+  if (cfg.provider === "local") bail(`This setup keeps data on this machine, so there's nothing to host. Run ${code(cmdFor("init"))} with Firebase or AWS first.`);
+  const { url } = await hostDashboard(cwd, cfg);
+  const { openUrl } = await import("./exec");
+  openUrl(url);
+  p.outro(`Share ${code(url)} with your team. ${loginHint(cwd)}`);
 }
 
 async function dashboard(cwd: string) {
   const cfg = requireConfig(cwd);
   p.intro(`${pc.bgRed(pc.white(" deBug "))} dashboard${envLabel()}`);
+  if (cfg.hosted) p.log.info(`Also online at ${code(cfg.hosted.url)}`);
   const dash = await startDashboard(cwd);
   p.log.info(`${code(dash.url)} · reading ${cfg.provider === "local" ? "in-memory data (and accepting events)" : cfg.provider} · Ctrl-C to stop`);
   const { openUrl } = await import("./exec");
@@ -220,9 +252,10 @@ async function guide(cwd: string) {
 }
 
 async function password(cwd: string) {
-  requireConfig(cwd);
   p.intro(`${pc.bgRed(pc.white(" deBug "))} reset the dashboard login`);
+  const cfg = requireConfig(cwd);
   await resetLogin(cwd);
+  if (cfg.hosted) p.log.info(`The hosted dashboard (${cfg.hosted.url}) still has the old login until you run ${code(cmdFor("deploy-dashboard"))}.`);
   p.outro(`Saved. Restart the dashboard (${code(cmdFor("dashboard"))}) and sign in with the new password.`);
 }
 
@@ -245,6 +278,8 @@ async function main() {
       return init(args.cwd, args.provider);
     case "dashboard":
       return dashboard(args.cwd);
+    case "deploy-dashboard":
+      return deployDashboard(args.cwd);
     case "test":
       return test(args.cwd);
     case "guide":

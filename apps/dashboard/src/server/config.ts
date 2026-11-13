@@ -56,5 +56,7 @@ export function config() {
       dashboardUrl: env.DEBUG_DASHBOARD_URL || undefined,
     },
     secureCookies: env.NODE_ENV === "production" && env.DEBUG_INSECURE_COOKIES !== "1",
+    /** Firebase Hosting only forwards a cookie named __session to the function behind it. */
+    cookieName: /^[A-Za-z0-9_]{1,40}$/.test(env.DEBUG_COOKIE_NAME ?? "") ? env.DEBUG_COOKIE_NAME! : "debug_session",
   };
 }

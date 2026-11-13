@@ -2,7 +2,7 @@ import { createHmac, scryptSync, timingSafeEqual } from "node:crypto";
 import { deleteCookie, getCookie, getRequestHeader, setCookie } from "@tanstack/react-start/server";
 import { config } from "./config";
 
-const COOKIE = "debug_session";
+const cookie = () => config().cookieName;
 const MAX_AGE_S = 60 * 60 * 12; // 12h
 
 export const DEMO_USER = { email: "demo@debug.local", password: "demo-debug" };
@@ -46,7 +46,7 @@ const sign = (payload: string) => createHmac("sha256", config().sessionSecret).u
 
 export function startSession(user: SessionUser) {
   const payload = Buffer.from(JSON.stringify({ email: user.email, exp: Date.now() + MAX_AGE_S * 1000 })).toString("base64url");
-  setCookie(COOKIE, `${payload}.${sign(payload)}`, {
+  setCookie(cookie(), `${payload}.${sign(payload)}`, {
     httpOnly: true,
     sameSite: "lax",
     secure: config().secureCookies,
@@ -56,11 +56,11 @@ export function startSession(user: SessionUser) {
 }
 
 export function endSession() {
-  deleteCookie(COOKIE, { path: "/" });
+  deleteCookie(cookie(), { path: "/" });
 }
 
 export function readSession(): SessionUser | null {
-  const raw = getCookie(COOKIE);
+  const raw = getCookie(cookie());
   if (!raw) return null;
   const [payload, sig] = raw.split(".");
   if (!payload || !sig) return null;
