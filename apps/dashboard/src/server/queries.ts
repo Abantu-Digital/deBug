@@ -304,7 +304,7 @@ function narrate(s: Summary): string[] {
   const i = s.issues[0];
   if (i && i.count24h > 0) {
     const isNew = Date.parse(s.generatedAt) - Date.parse(i.firstSeen) < 3 * DAY;
-    out.push(`Top issue: "${i.title}"${i.culprit ? ` in ${i.culprit}` : ""} — ${i.count24h} times in 24h${isNew ? `, first seen ${relDays(s.generatedAt, i.firstSeen)}` : ""}.`);
+    out.push(`Top issue: "${i.title}"${i.culprit ? ` in ${i.culprit}` : ""} — ${i.count24h} time${i.count24h === 1 ? "" : "s"} in 24h${isNew ? `, first seen ${relDays(s.generatedAt, i.firstSeen)}` : ""}.`);
   }
   const h = s.health;
   const latest = h.releases[0];
@@ -314,7 +314,7 @@ function narrate(s: Summary): string[] {
     out.push(`${latest.version} is ${pctOne(latest.crashFreeRate)} crash-free across ${latest.sessions.toLocaleString()} sessions${vs}.`);
   }
   const ep = h.endpoints[0];
-  if (ep && ep.failures24h > 0) out.push(`${ep.endpoint} is the most failing endpoint: ${ep.failures24h} failed requests today.`);
+  if (ep && ep.failures24h > 0) out.push(`${ep.endpoint} is the most failing endpoint: ${ep.failures24h} failed request${ep.failures24h === 1 ? "" : "s"} today.`);
   const os = s.breakdowns.os;
   const osTotal = os.reduce((a, b) => a + b.errors, 0);
   if (os[0] && osTotal > 20 && os[0].errors / osTotal > 0.6) out.push(`${pct(os[0].errors / osTotal)} of errors in the last 14 days come from ${os[0].key}.`);

@@ -16,7 +16,7 @@ export const Route = createFileRoute("/api/ingest")({
         const store = await getLocalWriteStore();
         if (!store) {
           return Response.json(
-            { ok: false, error: "Local ingest is only available when DEBUG_STORE=demo. Send events to your cloud ingest function." },
+            { ok: false, error: "Local ingest is only available when DEBUG_STORE is demo or memory. Send events to your cloud ingest function." },
             { status: 404, headers: CORS_HEADERS },
           );
         }

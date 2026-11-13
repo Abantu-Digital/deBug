@@ -1,23 +1,29 @@
 {
   "name": "@debugkit/dashboard",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.2.0",
+  "description": "The self-hosted deBug dashboard. Run it with npx debugkit dashboard, or npx @debugkit/dashboard with your own settings.",
   "type": "module",
+  "bin": {
+    "debugkit-dashboard": "./server.mjs"
+  },
+  "files": [
+    "dist",
+    "server.mjs",
+    "scripts",
+    ".env.example"
+  ],
   "scripts": {
     "dev": "vite dev --port 4400",
     "build": "vite build",
     "start": "node server.mjs",
     "typecheck": "tsc -p .",
-    "hash-password": "node scripts/hash-password.mjs"
+    "hash-password": "node scripts/hash-password.mjs",
+    "prepack": "vite build"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.700.0",
     "@aws-sdk/lib-dynamodb": "^3.700.0",
-    "@debugkit/adapters": "workspace:*",
-    "@debugkit/ingest": "workspace:*",
-    "@debugkit/schema": "workspace:*",
     "@tanstack/react-router": "^1.170.46",
-    "@tanstack/react-start": "^1.169.5",
     "firebase-admin": "^13.0.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -29,6 +35,22 @@
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.3.0",
     "tailwindcss": "^4.3.5",
-    "vite": "^8.3.7"
+    "vite": "^8.3.7",
+    "@debugkit/adapters": "workspace:*",
+    "@debugkit/ingest": "workspace:*",
+    "@debugkit/schema": "workspace:*",
+    "@tanstack/react-start": "^1.169.5"
+  },
+  "engines": {
+    "node": ">=20.12"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Abantu-Digital/deBug.git",
+    "directory": "apps/dashboard"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -42,7 +42,7 @@ function LoginPage() {
         <h1 className="mt-6 text-xl font-semibold">Sign in</h1>
         <p className="mt-1 text-sm text-muted">
           This dashboard runs on your infrastructure and reads from your{" "}
-          {info.store === "demo" ? "demo dataset" : info.store === "firestore" ? "Firestore" : "DynamoDB"}.
+          {info.store === "demo" ? "demo dataset" : info.store === "memory" ? "in-memory store on this machine" : info.store === "firestore" ? "Firestore" : "DynamoDB"}.
         </p>
         {info.demo && (
           <p className="mt-4 rounded-md bg-accent-soft px-3 py-2 text-xs text-ink">

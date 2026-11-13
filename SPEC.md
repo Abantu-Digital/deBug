@@ -196,6 +196,7 @@ packages/schema     event schema (zod) + /core: types, severity, stack parsing (
 packages/sdk        the npm package apps install: core + /react /react-native /expo
                     /expo-router /node entry points (~6 KB gzipped core)
 packages/ingest     validate, fingerprint and roll up events; /firebase and /lambda handlers
+packages/cli        debugkit: npx debugkit init (provision Firebase/AWS, wire the app, guided dashboard tour)
 packages/adapters   storage adapters: memory, firestore, dynamodb (cloud SDKs are optional peers)
 apps/dashboard      self-hosted TanStack Start dashboard (Recharts); demo mode accepts local ingest
 examples/           vite-react, tanstack-start, expo-app, bare-react-native, installed from packed tarballs

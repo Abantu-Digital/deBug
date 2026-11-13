@@ -14,6 +14,16 @@ pnpm --filter @debugkit/dashboard dev     # http://localhost:4400
 
 Sign in with `demo@debug.local` / `demo-debug`.
 
+## Set it up with one command
+
+```bash
+npx debugkit init
+```
+
+Run it in your app's folder. It sets up Firebase or AWS in your own account, wires the SDK into your app, opens your (still empty) dashboard, sends a test event so you can watch it arrive, and walks you through what deBug records on its own and what you add. See [packages/cli](packages/cli/README.md).
+
+The rest of this page describes the same setup done by hand.
+
 ## 1. Instrument the app
 
 ```bash
@@ -84,6 +94,8 @@ export const handler = lambdaHandler({ store: new DynamoStore(doc, { table: proc
 `DEBUG_INGEST_KEYS="pk_live_megaton:megaton-native"`: each key can only write to its own app.
 
 ## 3. Run the dashboard against your data
+
+`npx debugkit dashboard` runs it with the settings `init` saved. To run it yourself:
 
 ```bash
 cp apps/dashboard/.env.example apps/dashboard/.env   # set DEBUG_STORE, credentials, secret
