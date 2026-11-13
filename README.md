@@ -121,7 +121,11 @@ The four packages (`@debugkit/schema`, `@debugkit/sdk`, `@debugkit/ingest`, `@de
 versioned together with [changesets](.changeset/README.md):
 
 1. Create the `@debugkit` organisation on npmjs.com (or confirm you own it).
-2. Add an npm automation token as the `NPM_TOKEN` secret in the GitHub repo.
+2. On npmjs.com, open each package's **Settings → Trusted publishing**, choose **GitHub Actions**,
+   and enter organisation `Abantu-Digital`, repository `deBug` and workflow `release.yml`
+   (no environment). CI publishes with a short-lived OIDC token, so no `NPM_TOKEN` secret is
+   needed. A brand-new package has to be published once by hand (`pnpm release`) before it
+   can be configured.
 3. Add a changeset to each change (`pnpm changeset`). On merge to `main`, the Release workflow
    opens a "Version packages" PR. Merging that PR publishes to npm, with provenance.
 
