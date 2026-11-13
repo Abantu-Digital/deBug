@@ -8,7 +8,10 @@ import { mergeKeys } from "./keys";
 import { awsProfiles, lookup } from "./providers/aws";
 import { functionRegion, writeFunctionSource } from "./providers/firebase";
 import { readEnv, upsertEnv } from "./state";
-import { initFile, writeAppEnv } from "./wire";
+import { envValues, initFile, wireApp, writeAppEnv } from "./wire";
+import { environment, listEnvironments, paths, readConfig, writeConfig, type DebugkitConfig } from "./state";
+import { flags } from "./ui";
+import { existsSync } from "node:fs";
 import { scryptSync } from "node:crypto";
 
 function app(pkg: object, files: Record<string, string> = {}) {
@@ -57,7 +60,8 @@ describe("wiring", () => {
     const f = initFile(a, conn);
     expect(f.path).toBe(join(dir, "debug.ts"));
     expect(f.contents).toContain(`from "@debugkit/sdk/expo"`);
-    expect(f.contents).toContain("process.env.EXPO_PUBLIC_DEBUG_ENDPOINT!");
+    expect(f.contents).toContain("const endpoint = process.env.EXPO_PUBLIC_DEBUG_ENDPOINT;");
+    expect(f.contents).toContain("enabled: !!endpoint,"); // single environment: on whenever there's an endpoint
     expect(f.then.join("\n")).toContain("useDebugExpoRouter");
   });
 
@@ -69,10 +73,10 @@ describe("wiring", () => {
 
   it("uses import.meta.env for Vite and guards the server for TanStack Start", () => {
     const vite = initFile(detectApp(app({ name: "w", version: "1.2.0", dependencies: { react: "19", vite: "8" } })), conn);
-    expect(vite.contents).toContain("import.meta.env.VITE_DEBUG_ENDPOINT");
+    expect(vite.contents).toContain("const endpoint = import.meta.env.VITE_DEBUG_ENDPOINT;");
     expect(vite.contents).toContain('version: "1.2.0"');
     const start = initFile(detectApp(app({ name: "s", dependencies: { "@tanstack/react-start": "1", react: "19" } })), conn);
-    expect(start.contents).toContain('if (typeof window !== "undefined") deBug.init');
+    expect(start.contents).toContain('enabled: typeof window !== "undefined" && !!endpoint,');
   });
 
   it("upserts env files without touching other lines", () => {
@@ -145,5 +149,62 @@ describe("safety on re-runs", () => {
   it("only installs the Expo modules that are missing", () => {
     expect(detectApp(app({ name: "e", dependencies: { expo: "58", "expo-device": "8" } })).missingExpoModules).toEqual(["expo-application"]);
     expect(detectApp(app({ name: "w", dependencies: { react: "19" } })).missingExpoModules).toEqual([]);
+  });
+});
+
+describe("environments", () => {
+  const cfg = (provider: DebugkitConfig["provider"], endpoint: string): DebugkitConfig => ({ provider, appId: "megatron-native", endpoint, ingestKey: "pk", dashboardPort: 4400, createdAt: "t" });
+
+  it("keeps each environment's config, login file and function source apart", () => {
+    const dir = app({ name: "megatron-native", dependencies: { expo: "58" } });
+    try {
+      environment.set("preview");
+      writeConfig(dir, cfg("firebase", "https://staging"));
+      expect(paths(dir).dashboardEnv.endsWith("dashboard.preview.env")).toBe(true);
+      expect(paths(dir).firebase.endsWith("firebase-preview")).toBe(true);
+      environment.set("production");
+      writeConfig(dir, cfg("firebase", "https://prod"));
+      expect(readConfig(dir)?.endpoint).toBe("https://prod");
+      environment.set("preview");
+      expect(readConfig(dir)?.endpoint).toBe("https://staging");
+      expect(readConfig(dir)?.environment).toBe("preview");
+      environment.set(undefined);
+      expect(readConfig(dir)).toBeUndefined(); // no single setup alongside the environments
+      expect(listEnvironments(dir)).toEqual(["preview", "production"]);
+      expect(readFileSync(join(dir, ".debugkit", ".gitignore"), "utf8")).toContain("dashboard*.env");
+    } finally {
+      environment.set(undefined);
+    }
+  });
+
+  it("rejects environment names that aren't simple", () => {
+    expect(() => environment.set("Prod Env")).toThrow();
+    expect(() => environment.set("../x")).toThrow();
+    environment.set(undefined);
+  });
+
+  it("generates a debug.ts that is off in development builds when there are environments", () => {
+    const a = detectApp(app({ name: "megatron-native", dependencies: { expo: "58" } }, { "tsconfig.json": "{}" }));
+    const f = initFile(a, conn, true);
+    expect(f.contents).toContain("enabled: !__DEV__ && !!endpoint,");
+    expect(f.contents).toContain('environment: process.env.EXPO_PUBLIC_DEBUG_ENVIRONMENT ?? (__DEV__ ? "development" : "production")');
+    const web = initFile(detectApp(app({ name: "w", dependencies: { react: "19", vite: "8" } })), conn, true);
+    expect(web.contents).toContain("enabled: import.meta.env.PROD && !!endpoint,");
+    expect(envValues(a, conn, "preview")).toEqual({ EXPO_PUBLIC_DEBUG_ENDPOINT: conn.endpoint, EXPO_PUBLIC_DEBUG_KEY: conn.ingestKey, EXPO_PUBLIC_DEBUG_ENVIRONMENT: "preview" });
+  });
+
+  it("with --env, writes debug.ts but leaves .env alone", async () => {
+    const dir = app({ name: "megatron-native", dependencies: { expo: "58" } }, { ".env": "EXPO_PUBLIC_BASE_URL=https://api\n" });
+    flags.yes = true;
+    environment.set("preview");
+    try {
+      const steps = await wireApp(detectApp(dir), conn);
+      expect(readFileSync(join(dir, ".env"), "utf8")).toBe("EXPO_PUBLIC_BASE_URL=https://api\n");
+      expect(existsSync(join(dir, "debug.js"))).toBe(true);
+      expect(steps[0]).toContain("preview");
+    } finally {
+      flags.yes = false;
+      environment.set(undefined);
+    }
   });
 });

@@ -86,6 +86,29 @@ deBug.init({
 
 Requests to your ingest endpoint and to the Metro and Expo dev servers are never recorded.
 
+## Turning it off for some builds
+
+Pass `enabled: false` and deBug stays inert:
+- nothing is patched (fetch, XHR, console, crash handlers);
+- nothing is recorded or sent;
+- every call (`error`, `event`, `breadcrumb`) quietly does nothing;
+- `track()` still runs your function, and returns or throws exactly as it would.
+
+So app code never needs an `if` around deBug.
+
+```ts
+initExpo({
+  enabled: !__DEV__ && !!process.env.EXPO_PUBLIC_DEBUG_ENDPOINT, // off in development, on where an endpoint is set
+  endpoint: process.env.EXPO_PUBLIC_DEBUG_ENDPOINT ?? "",
+  ingestKey: process.env.EXPO_PUBLIC_DEBUG_KEY ?? "",
+  app: { id: "your-app", environment: process.env.EXPO_PUBLIC_DEBUG_ENVIRONMENT },
+});
+```
+
+Compute `enabled` however your app tells its builds apart. In Expo, `__DEV__` catches Metro and
+dev-client runs. A variant from `app.config` (EAS build profile) catches development builds made in
+release mode. `deBug.enabled` tells you which way it went.
+
 ## Expo
 
 ```tsx

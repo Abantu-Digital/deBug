@@ -7,7 +7,7 @@ import { setupAws } from "./providers/aws";
 import { setupFirebase } from "./providers/firebase";
 import { setupLocal } from "./providers/local";
 import type { ProviderResult } from "./providers/types";
-import { readConfig, writeConfig, type DebugkitConfig, type ProviderId } from "./state";
+import { cmdFor, environment, listEnvironments, readConfig, writeConfig, type DebugkitConfig, type ProviderId } from "./state";
 import { bail, bold, choose, code, dim, flags, p, pc, yes } from "./ui";
 import { initFile, installSdk, wireApp } from "./wire";
 
@@ -22,17 +22,21 @@ ${dim("Run as npx debugkit <command> once @debugkit/sdk is installed, or npx @de
   ${code("npx debugkit password")}    reset the dashboard login
 
 Options
+  --env <name>                      one of several environments, like preview or production. Each has
+                                    its own provider, project, endpoint and dashboard login
   --provider <firebase|aws|local>   skip the provider question
   --cwd <dir>                       the app's folder (default: current folder)
   --yes                             accept defaults (for scripts)
 `;
 
 function parseArgs(argv: string[]) {
-  const out: { cmd?: string; provider?: ProviderId; cwd: string; yes: boolean; help: boolean } = { cwd: process.cwd(), yes: false, help: false };
+  const out: { cmd?: string; provider?: ProviderId; env?: string; cwd: string; yes: boolean; help: boolean } = { cwd: process.cwd(), yes: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--provider") out.provider = argv[++i] as ProviderId;
     else if (a.startsWith("--provider=")) out.provider = a.split("=")[1] as ProviderId;
+    else if (a === "--env") out.env = argv[++i];
+    else if (a.startsWith("--env=")) out.env = a.split("=")[1];
     else if (a === "--cwd") out.cwd = resolve(argv[++i] ?? ".");
     else if (a === "--yes" || a === "-y") out.yes = true;
     else if (a === "--help" || a === "-h") out.help = true;
@@ -41,14 +45,24 @@ function parseArgs(argv: string[]) {
   return out;
 }
 
+/** " (preview)" when working on a named environment. */
+const envLabel = () => (environment.get() ? ` (${environment.get()})` : "");
+
 function requireConfig(cwd: string): DebugkitConfig {
-  const cfg = readConfig(cwd);
-  if (!cfg) bail(`deBug isn't set up in ${cwd} yet. Run ${code("npx debugkit init")} first.`);
+  let cfg = readConfig(cwd);
+  if (!cfg && !environment.get()) {
+    // No single setup, but environments: use the only one, or ask which.
+    const envs = listEnvironments(cwd);
+    if (envs.length === 1) environment.set(envs[0]);
+    else if (envs.length > 1) bail(`This app has several environments: ${envs.join(", ")}. Pick one with --env, for example ${code(`npx debugkit ${flags.command} --env ${envs[0]}`)}.`);
+    cfg = readConfig(cwd);
+  }
+  if (!cfg) bail(`deBug isn't set up${envLabel()} in ${cwd} yet. Run ${code(cmdFor("init"))} first.`);
   return cfg;
 }
 
 async function init(cwd: string, preset?: ProviderId) {
-  p.intro(`${pc.bgRed(pc.white(" deBug "))} ${dim("observability you own")}`);
+  p.intro(`${pc.bgRed(pc.white(" deBug "))} ${dim("observability you own")}${environment.get() ? ` · ${bold(environment.get()!)} environment` : ""}`);
 
   /* 1. The app */
   let app: AppInfo;
@@ -59,8 +73,8 @@ async function init(cwd: string, preset?: ProviderId) {
   }
   p.log.info(`Found ${bold(app.name)}: ${PLATFORM_LABEL[app.platform]}${app.expoRouter ? " with Expo Router" : ""}, using ${app.packageManager}. App id ${code(app.appId)}.`);
   const existing = readConfig(cwd);
-  if (existing && !(await yes(`deBug is already set up here (${existing.provider}, ${existing.endpoint}). Set it up again?`, false))) {
-    p.outro(`Nothing changed. Try ${code("npx debugkit dashboard")} or ${code("npx debugkit guide")}.`);
+  if (existing && !(await yes(`deBug is already set up${envLabel()} here (${existing.provider}, ${existing.endpoint}). Set it up again?`, false))) {
+    p.outro(`Nothing changed. Try ${code(cmdFor("dashboard"))} or ${code(cmdFor("guide"))}.`);
     return;
   }
   await installSdk(app);
@@ -113,7 +127,7 @@ async function init(cwd: string, preset?: ProviderId) {
     dash = await startDashboard(cwd);
   } catch (err) {
     p.log.error((err as Error).message);
-    p.outro(`deBug is set up, but the dashboard didn't start. Try ${code("npx debugkit dashboard")}.`);
+    p.outro(`deBug is set up, but the dashboard didn't start. Try ${code(cmdFor("dashboard"))}.`);
     return;
   }
   await walkthrough({ cwd, app, cfg, dashboardUrl: dash.url, remaining });
@@ -125,12 +139,16 @@ async function init(cwd: string, preset?: ProviderId) {
     return;
   }
   dash.stop();
-  p.outro(`deBug is set up. Open the dashboard any time with ${code("npx debugkit dashboard")}.`);
+  const others = listEnvironments(cwd).filter((e) => e !== environment.get());
+  p.outro(
+    `deBug is set up${envLabel()}. Open the dashboard any time with ${code(cmdFor("dashboard"))}.` +
+      (environment.get() && !others.length ? `\n   Set up the next environment the same way, e.g. ${code("npx debugkit init --env production")}.` : ""),
+  );
 }
 
 async function dashboard(cwd: string) {
   const cfg = requireConfig(cwd);
-  p.intro(`${pc.bgRed(pc.white(" deBug "))} dashboard`);
+  p.intro(`${pc.bgRed(pc.white(" deBug "))} dashboard${envLabel()}`);
   const dash = await startDashboard(cwd);
   p.log.info(`${code(dash.url)} · reading ${cfg.provider === "local" ? "in-memory data (and accepting events)" : cfg.provider} · Ctrl-C to stop`);
   const { openUrl } = await import("./exec");
@@ -148,11 +166,11 @@ async function test(cwd: string) {
   if (r.error) {
     s.error(`Not accepted: ${r.error}`);
     process.exitCode = 1;
-    if (cfg.provider === "local") p.log.info(`On this setup the dashboard is the ingest: start it with ${code("npx debugkit dashboard")} first.`);
+    if (cfg.provider === "local") p.log.info(`On this setup the dashboard is the ingest: start it with ${code(cmdFor("dashboard"))} first.`);
     return;
   }
   s.stop("Accepted by your ingest");
-  p.outro(`Open the dashboard (${code("npx debugkit dashboard")}) to see them under the ${code("onboarding.test")} flow.`);
+  p.outro(`Open the dashboard (${code(cmdFor("dashboard"))}) to see them under the ${code("onboarding.test")} flow.`);
 }
 
 async function guide(cwd: string) {
@@ -174,7 +192,7 @@ async function password(cwd: string) {
   requireConfig(cwd);
   p.intro(`${pc.bgRed(pc.white(" deBug "))} reset the dashboard login`);
   await resetLogin(cwd);
-  p.outro(`Saved. Restart the dashboard (${code("npx debugkit dashboard")}) and sign in with the new password.`);
+  p.outro(`Saved. Restart the dashboard (${code(cmdFor("dashboard"))}) and sign in with the new password.`);
 }
 
 async function main() {
@@ -184,6 +202,11 @@ async function main() {
   if (args.help || !args.cmd) {
     console.log(HELP);
     return;
+  }
+  try {
+    environment.set(args.env);
+  } catch (err) {
+    bail((err as Error).message);
   }
   if (args.provider && !["firebase", "aws", "local"].includes(args.provider)) bail(`Unknown provider ${args.provider}. Use firebase, aws or local.`);
   switch (args.cmd) {

@@ -81,6 +81,7 @@ export function initReactNative(options: ReactNativeInitOptions, client: DebugCl
     app: { ...(base.app as object), ...rest.app },
     context: mergeContext(base, rest.context ?? {}),
   });
+  if (!client.enabled) return client; // enabled: false — no listeners, no rejection tracking
 
   // Sessions end after 30 minutes in the background; coming back after that starts a new one.
   let backgroundedAt = 0;

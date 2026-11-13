@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { zipSync } from "fflate";
 import { interactive, which } from "../exec";
 import { keyEntry, mergeKeys } from "../keys";
+import { environment } from "../state";
 import { ask, bail, choose, code, dim, next, p, yes } from "../ui";
 import type { ProviderResult, SetupContext } from "./types";
 
@@ -105,8 +106,9 @@ export async function setupAws(ctx: SetupContext): Promise<ProviderResult> {
   if (!identity.Account) bail("AWS didn't say which account these credentials belong to.");
   const account = identity.Account;
 
+  // One table per environment, so preview and production data never share a table.
   const table = await ask("DynamoDB table name", {
-    initial: "debugkit",
+    initial: environment.get() ? `debugkit-${environment.get()}` : "debugkit",
     validate: (v) => (/^[A-Za-z0-9_.-]{3,40}$/.test(v) ? undefined : "3–40 characters: letters, digits, _ . -"),
   });
   // One ingest function per table; any number of apps share it through their own keys.

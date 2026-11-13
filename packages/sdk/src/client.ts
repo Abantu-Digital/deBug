@@ -23,6 +23,12 @@ export interface QueueStorage {
 }
 
 export interface InitOptions {
+  /**
+   * Turn deBug off for this build: nothing is patched, recorded or sent, and every call
+   * (error, track, event...) quietly does nothing. track() still runs and returns your function.
+   * Typically `enabled: !__DEV__` or a check of your app's environment. Default true.
+   */
+  enabled?: boolean;
   /** URL of the ingest function deployed in your cloud. */
   endpoint: string;
   /** Public, write-only key. Safe to ship in the app. */
@@ -126,6 +132,13 @@ export class DebugClient {
     if (this.timer) clearInterval(this.timer);
     this.uninstrument();
     this.opts = { flushIntervalMs: 5000, maxBatch: 50, maxBreadcrumbs: 30, ...options };
+    if (options.enabled === false) {
+      // Switched off: stay inert. Handlers from an earlier init() check `ready` and do nothing.
+      this.ready = false;
+      this.queue = [];
+      this.log("disabled for this build (enabled: false)");
+      return this;
+    }
     if (!this.opts.context && typeof window !== "undefined") this.opts.context = browserContext();
     this.auto = resolveAuto(options);
     this.rawFetch = typeof globalThis.fetch === "function" ? (((globalThis.fetch as { __raw?: typeof fetch }).__raw ?? globalThis.fetch) as typeof fetch) : undefined;
@@ -166,6 +179,11 @@ export class DebugClient {
   }
 
   get initialized() {
+    return this.ready;
+  }
+
+  /** False when init() was called with `enabled: false` (or not called yet). */
+  get enabled(): boolean {
     return this.ready;
   }
 

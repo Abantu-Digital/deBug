@@ -1,5 +1,6 @@
 import { networkInterfaces } from "node:os";
 import { keyEntry } from "../keys";
+import { cmdFor } from "../state";
 import { code, p } from "../ui";
 import type { ProviderResult, SetupContext } from "./types";
 
@@ -29,7 +30,7 @@ export async function setupLocal(ctx: SetupContext): Promise<ProviderResult> {
     },
     created: [
       `Nothing in the cloud: the dashboard stores events in memory while it runs`,
-      `Ingest endpoint: ${code(endpoint)} (only while ${code("npx debugkit dashboard")} is running)`,
+      `Ingest endpoint: ${code(endpoint)} (only while ${code(cmdFor("dashboard"))} is running)`,
     ],
   };
 }

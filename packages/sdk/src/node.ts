@@ -31,6 +31,7 @@ export function initNode(options: NodeInitOptions, client: DebugClient = deBug):
   const auto = rest.autoCapture === false ? false : { console: false, ...(typeof rest.autoCapture === "object" ? rest.autoCapture : {}) };
   // Process-level hooks below replace the browser-style global handlers.
   client.init({ ...rest, autoCapture: auto === false ? false : { ...auto, errors: false }, context: mergeContext(nodeContext(), rest.context ?? {}) });
+  if (!client.enabled) return client; // enabled: false — leave process hooks and http alone
   if (client.autoCapture.network) instrumentNodeHttp(client, rest.captureServerErrors ?? true);
   if (!captureProcessErrors || installed) return client;
   installed = true;

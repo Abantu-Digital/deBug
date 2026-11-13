@@ -15,29 +15,74 @@ export interface DebugkitConfig {
   /** Port the dashboard runs on. */
   dashboardPort: number;
   createdAt: string;
+  /** Set when this is one of several environments (npx debugkit init --env preview). */
+  environment?: string;
+}
+
+/** .debugkit/config.json: one setup at the top level, and/or named environments. */
+interface ConfigFile extends Partial<DebugkitConfig> {
+  environments?: Record<string, DebugkitConfig>;
 }
 
 export const DIR = ".debugkit";
 
+/** Lowercase name such as "preview" or "production". */
+export const ENV_NAME = /^[a-z][a-z0-9-]{0,30}$/;
+
+/**
+ * The environment this run works on (--env), or undefined for a single-environment app. One
+ * per process, so every command reads and writes that environment's files.
+ */
+let current: string | undefined;
+export const environment = {
+  get: () => current,
+  set(name: string | undefined) {
+    if (name !== undefined && !ENV_NAME.test(name)) throw new Error(`"${name}" isn't a valid environment name: use lowercase letters, digits and dashes, like preview.`);
+    current = name;
+  },
+};
+
+/** The command with this run's --env, for hints like "npx debugkit dashboard --env preview". */
+export const cmdFor = (sub: string) => `npx debugkit ${sub}${current ? ` --env ${current}` : ""}`;
+
 export function paths(cwd: string) {
   const dir = join(cwd, DIR);
-  return { dir, config: join(dir, "config.json"), dashboardEnv: join(dir, "dashboard.env"), firebase: join(dir, "firebase") };
+  return {
+    dir,
+    config: join(dir, "config.json"),
+    dashboardEnv: join(dir, current ? `dashboard.${current}.env` : "dashboard.env"),
+    firebase: join(dir, current ? `firebase-${current}` : "firebase"),
+  };
 }
 
-export function readConfig(cwd: string): DebugkitConfig | undefined {
+function readFile(cwd: string): ConfigFile | undefined {
   try {
-    return JSON.parse(readFileSync(paths(cwd).config, "utf8")) as DebugkitConfig;
+    return JSON.parse(readFileSync(paths(cwd).config, "utf8")) as ConfigFile;
   } catch {
     return undefined;
   }
 }
 
+export function readConfig(cwd: string): DebugkitConfig | undefined {
+  const f = readFile(cwd);
+  if (!f) return undefined;
+  if (current) return f.environments?.[current];
+  return f.provider ? (f as DebugkitConfig) : undefined;
+}
+
+/** Names of the environments set up so far. */
+export function listEnvironments(cwd: string): string[] {
+  return Object.keys(readFile(cwd)?.environments ?? {});
+}
+
 export function writeConfig(cwd: string, cfg: DebugkitConfig) {
   const { dir, config } = paths(cwd);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(config, JSON.stringify(cfg, null, 2) + "\n");
-  // The dashboard env holds a session secret and a password hash: keep it out of git.
-  writeFileSync(join(dir, ".gitignore"), "dashboard.env\nfirebase/functions/node_modules/\nfirebase/.firebase/\n*.log\n");
+  const f = readFile(cwd) ?? {};
+  const out: ConfigFile = current ? { ...f, environments: { ...f.environments, [current]: { ...cfg, environment: current } } } : { ...cfg, ...(f.environments ? { environments: f.environments } : {}) };
+  writeFileSync(config, JSON.stringify(out, null, 2) + "\n");
+  // Dashboard env files hold a session secret and a password hash: keep them out of git.
+  writeFileSync(join(dir, ".gitignore"), "dashboard*.env\nfirebase*/functions/node_modules/\nfirebase*/.firebase/\n*.log\n");
 }
 
 /** Write KEY=value lines, replacing keys that are already there. */

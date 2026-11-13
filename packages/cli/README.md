@@ -26,6 +26,30 @@ Run it from your app's folder. It walks you through these steps:
    - what the SDK records on its own;
    - what you add in your own try/catches.
 
+## Several environments (preview, production…)
+
+When each environment has its own backend, such as separate Firebase projects or AWS accounts, set
+deBug up once per environment:
+
+```bash
+npx debugkit init --env preview      # e.g. into your staging Firebase project
+npx debugkit init --env production   # into the production one
+```
+
+Each environment gets its own provider, project, endpoint, ingest key and dashboard login. They're
+saved under `environments` in `.debugkit/config.json`, with `.debugkit/dashboard.<env>.env`.
+
+- **Expo apps with EAS:** for `development`, `preview` and `production`, the CLI offers to put
+  `EXPO_PUBLIC_DEBUG_ENDPOINT`, `EXPO_PUBLIC_DEBUG_KEY` and `EXPO_PUBLIC_DEBUG_ENVIRONMENT` into
+  that EAS environment (`eas env:set`). `eas build` and `eas env:pull` then pick them up.
+- **Other apps:** it prints the three values to set wherever that environment's builds get their
+  config. With `--env` it never writes `.env`, which would point every build at one environment.
+- **`debug.ts` is the same for every environment:** it's on in release builds that have an
+  endpoint, and off in development builds and local runs (`enabled: !__DEV__ && !!endpoint`). To
+  leave an environment out, such as development, don't set it up.
+- **Later commands take `--env` too:** `npx debugkit dashboard --env production`, `test`, `guide`
+  and `password`.
+
 ## Commands
 
 Every command below also works as `npx @debugkit/cli <command>`.
