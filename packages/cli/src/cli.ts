@@ -173,19 +173,28 @@ async function init(cwd: string, preset?: ProviderId) {
       ],
       "host",
     );
-    if (choice === "host") {
+    // Retry or skip, never stop: setup always goes on to wire the app.
+    for (let attempt = choice === "host"; attempt; ) {
       try {
-        const out = await hostDashboard(cwd, readConfig(cwd) ?? cfg, { optional: true });
+        const out = await hostDashboard(cwd, readConfig(cwd) ?? cfg, { onProblem: "skip", confirmed: true });
         if (out) [hostedUrl, hostedLive] = [out.url, out.live];
+        attempt = false;
       } catch (err) {
         p.log.error((err as Error).message);
-        p.log.info(`Setup carries on without it. Host it later with ${code(cmdFor("deploy-dashboard"))}.`);
+        attempt =
+          (await choose("Hosting didn't finish. What now?", [
+            { value: "retry", label: "Retry" },
+            { value: "skip", label: "Skip hosting for now", hint: "setup carries on" },
+          ], "retry")) === "retry";
+        if (!attempt) p.log.info(`Setup carries on. Host it later with ${code(cmdFor("deploy-dashboard"))}.`);
       }
-    } else p.log.info(dim(`Skipped. Any time later: ${cmdFor("deploy-dashboard")}`));
+    }
+    if (choice === "skip") p.log.info(dim(`Skipped. Any time later: ${cmdFor("deploy-dashboard")}`));
   }
+  const setup = readConfig(cwd) ?? cfg;
 
   /* 4. The app's code */
-  const remaining = await wireApp(app, readConfig(cwd) ?? cfg);
+  const remaining = await wireApp(app, setup);
 
   /* 5. The dashboard, empty, then the walkthrough: on the hosted one when it's up */
   let dash: Awaited<ReturnType<typeof startDashboard>> | undefined;
@@ -198,7 +207,7 @@ async function init(cwd: string, preset?: ProviderId) {
       return;
     }
   }
-  await walkthrough({ cwd, app, cfg: readConfig(cwd) ?? cfg, dashboardUrl: dash?.url ?? hostedUrl!, remaining });
+  await walkthrough({ cwd, app, cfg: setup, dashboardUrl: dash?.url ?? hostedUrl!, remaining });
 
   if (provider === "local" && dash) {
     const running = dash;
