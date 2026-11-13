@@ -159,7 +159,9 @@ export { deBug };
 
 /** Put one environment's values in EAS, so `eas build` and `eas env:pull` pick them up. */
 async function writeEasEnv(app: AppInfo, values: Record<string, string>, env: string): Promise<boolean> {
-  const [cmd, pre] = which("eas") ? ["eas", [] as string[]] : ["npx", ["-y", "eas-cli@latest"]];
+  // An older global eas (like 20.x) has no env:set: use the latest through npx then.
+  const globalOk = !!which("eas") && (await capture("eas", ["env:set", "--help"], { cwd: app.cwd })).code === 0;
+  const [cmd, pre] = globalOk ? ["eas", [] as string[]] : ["npx", ["-y", "eas-cli@latest"]];
   const s = p.spinner();
   s.start(`Setting ${Object.keys(values).length} variables in EAS's ${env} environment`);
   for (const [name, value] of Object.entries(values)) {
@@ -185,7 +187,7 @@ export async function wireApp(app: AppInfo, conn: Connection): Promise<string[]>
     let done = Object.keys(values).length === 0;
     if (!done && usesEas && EAS_ENVIRONMENTS.includes(env) && (await yes(`Set the endpoint and key in EAS's ${env} environment (eas env:set)?`))) done = await writeEasEnv(app, values, env);
     if (!done) {
-      p.note(Object.entries(values).map(([k, v]) => `${k}=${v}`).join("\n"), `Set these for your ${env} builds`);
+      printValues(`Set these for your ${env} builds:`, values);
       extra.push(usesEas ? `Set the variables above in EAS's ${code(env)} environment (${code(`eas env:set --environment ${env}`)})` : `Set the variables above wherever your ${code(env)} builds get their environment`);
     }
   } else {
@@ -213,4 +215,14 @@ export async function wireApp(app: AppInfo, conn: Connection): Promise<string[]>
     p.log.info(`Kept your ${rel}. The generated version is:\n${dim(f.contents)}`);
   }
   return [...extra, ...f.then];
+}
+
+/**
+ * Values people copy (endpoints, keys), printed as plain lines: inside a box the border
+ * characters come along when they're copied from the terminal.
+ */
+export function printValues(title: string, values: Record<string, string>) {
+  p.log.info(title);
+  for (const [k, v] of Object.entries(values)) console.log(`${k}=${v}`);
+  console.log("");
 }

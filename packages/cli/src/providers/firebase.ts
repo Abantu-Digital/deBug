@@ -193,8 +193,9 @@ export async function setupFirebase(ctx: SetupContext): Promise<ProviderResult> 
   await ensureDashboardAccess(projectId);
 
   return {
-    config: { provider: "firebase", endpoint, ingestKey: ctx.ingestKey, firebase: { projectId, region, account, location } },
-    dashboardEnv: { DEBUG_STORE: "firestore", GOOGLE_CLOUD_PROJECT: projectId, GCLOUD_PROJECT: projectId, ...adminEnv(endpoint, ctx) },
+    // The Google account is personal: it goes in the gitignored dashboard env, not config.json.
+    config: { provider: "firebase", endpoint, ingestKey: ctx.ingestKey, firebase: { projectId, region, location } },
+    dashboardEnv: { DEBUG_STORE: "firestore", GOOGLE_CLOUD_PROJECT: projectId, GCLOUD_PROJECT: projectId, DEBUGKIT_FIREBASE_ACCOUNT: account, ...adminEnv(endpoint, ctx) },
     created: [
       `Firestore database in ${code(projectId)} (${location}), with indexes and 30-day expiry on raw events`,
       `Cloud Function ${code(FUNCTION_NAME)} in ${region}: ${code(endpoint)}`,

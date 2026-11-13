@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
 import { defineConfig } from "tsup";
+
+const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string };
 
 export default defineConfig({
   entry: {
@@ -19,4 +22,5 @@ export default defineConfig({
   // Everything the app already has stays external; the schema core is inlined so the SDK has no runtime deps on zod.
   external: ["react", "react-native", "expo-device", "expo-application", "expo-router", "node:os"],
   noExternal: ["@debugkit/schema"],
+  define: { __DEBUGKIT_SDK_VERSION__: JSON.stringify(version) },
 });

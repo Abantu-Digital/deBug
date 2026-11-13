@@ -8,7 +8,7 @@ import { DASHBOARD_VERSION } from "./dashboard";
 import { capture, interactive, which } from "./exec";
 import { lookup } from "./providers/aws";
 import { asArray, firebaseCli, writeFirebaseJson } from "./providers/firebase";
-import { environment, paths, readEnv, writeConfig, type DebugkitConfig } from "./state";
+import { environment, paths, readEnv, upsertEnv, writeConfig, type DebugkitConfig } from "./state";
 import { bail, bold, choose, code, dim, p, yes } from "./ui";
 
 export const DASHBOARD_FUNCTION = "debugkitDashboard";
@@ -99,6 +99,12 @@ export interface HostResult {
 export async function hostDashboard(cwd: string, cfg: DebugkitConfig): Promise<HostResult> {
   const local = readEnv(paths(cwd).dashboardEnv);
   const out = cfg.provider === "firebase" ? await hostFirebase(cwd, cfg, local) : cfg.provider === "aws" ? await hostAws(cfg, local) : bail("The dashboard can only be hosted on Firebase or AWS. On this setup, run it locally.");
+  // Configs from before 0.6.1 kept the Google account in config.json: move it to the gitignored env.
+  if (cfg.firebase?.account) {
+    if (!local.DEBUGKIT_FIREBASE_ACCOUNT) upsertEnv(paths(cwd).dashboardEnv, { DEBUGKIT_FIREBASE_ACCOUNT: cfg.firebase.account });
+    const { account: _a, ...firebase } = cfg.firebase;
+    cfg = { ...cfg, firebase };
+  }
   writeConfig(cwd, { ...cfg, hosted: out.hosted });
   await linkAlerts(local, cfg.appId, out.hosted.url);
   const s = p.spinner();
@@ -202,7 +208,8 @@ export function writeHostingConfig(dir: string, site: string, region: string) {
 async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<string, string>) {
   const fbc = cfg.firebase ?? bail("This setup has no Firebase project saved. Run npx debugkit init again.");
   const [fbCmd, fbPre] = await firebaseCli();
-  const acct = fbc.account ? ["--account", fbc.account] : [];
+  const account = local.DEBUGKIT_FIREBASE_ACCOUNT || fbc.account;
+  const acct = account ? ["--account", account] : [];
   const proj = ["--project", fbc.projectId, ...acct];
   const fb = (args: string[], o: { cwd?: string } = {}) => capture(fbCmd, [...fbPre, ...args], o);
   const fbLive = (args: string[], o: { cwd?: string } = {}) => interactive(fbCmd, [...fbPre, ...args], o);
@@ -285,11 +292,12 @@ async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<stri
     const choice = await choose(
       "The deploy didn't finish (see the error above). What now?",
       [
-        { value: "retry", label: "Retry" },
-        ...(region !== "us-central1" ? [{ value: "us", label: "Retry with the function in us-central1", hint: "if Hosting can't reach the function's region" }] : []),
+        // Hosting can't reach functions in some regions (africa-south1, for one): a plain retry fails the same way.
+        ...(region !== "us-central1" ? [{ value: "us", label: "Retry with the function in us-central1", hint: "the usual fix when Hosting can't reach the function's region" }] : []),
+        { value: "retry", label: "Retry as it is" },
         { value: "stop", label: "Stop here" },
       ],
-      "retry",
+      region !== "us-central1" ? "us" : "retry",
     );
     if (choice === "stop") bail(`Fix the error above, then run ${code("npx debugkit deploy-dashboard")}.`);
     if (choice === "us") {

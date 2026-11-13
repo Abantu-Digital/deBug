@@ -10,7 +10,7 @@ import { setupLocal } from "./providers/local";
 import type { ProviderResult } from "./providers/types";
 import { cmdFor, environment, listEnvironments, paths, readConfig, readEnv, writeConfig, type DebugkitConfig, type ProviderId } from "./state";
 import { ask, bail, bold, choose, code, dim, flags, p, pc, yes } from "./ui";
-import { initFile, installSdk, wireApp } from "./wire";
+import { initFile, installSdk, printValues, wireApp } from "./wire";
 
 
 const HELP = `${bold("debugkit")} ${VERSION}: set up deBug in your app
@@ -149,6 +149,8 @@ async function init(cwd: string, preset?: ProviderId) {
   const cfg: DebugkitConfig = { ...result.config, ...(existing?.provider === provider && existing.hosted ? { hosted: existing.hosted } : {}), appId: app.appId, dashboardPort, retentionDays, createdAt: new Date().toISOString() };
   writeConfig(cwd, cfg);
   p.note(result.created.map((l) => `• ${l}`).join("\n"), "Created");
+  // The two values people copy, outside the box so no border characters come along.
+  printValues("Your ingest endpoint and key (the key is public: it ships in your app):", { endpoint: cfg.endpoint, key: cfg.ingestKey });
 
   /* 3. The app's code */
   const remaining = await wireApp(app, cfg);
