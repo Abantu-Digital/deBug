@@ -33,6 +33,8 @@ export const AppInfo = z.object({
   id: z.string().min(1), // e.g. "megaton-native"
   version: z.string().optional(),
   build: z.string().optional(),
+  /** Over-the-air update on top of the store version (hot-updater bundle id, expo-updates id). */
+  update: z.string().max(100).optional(),
   environment: z.string().default("production"),
 });
 
@@ -174,7 +176,18 @@ export interface Issue {
   lastSeen: string;
   count: number;
   lastEvent: StoredEvent;
+  /** open (default), resolved, ignored, or regressed (it came back in a version at or after resolvedIn). */
+  status?: IssueStatus;
+  /** The release that contains the fix. Events from older releases don't count as a regression. */
+  resolvedIn?: string;
+  resolvedAt?: string;
+  regressedAt?: string;
+  /** App versions of the first and most recent occurrence. */
+  firstVersion?: string;
+  lastVersion?: string;
 }
+
+export type IssueStatus = "open" | "resolved" | "ignored" | "regressed";
 
 /** Dimensions pre-aggregated at write time so the dashboard never scans raw events. */
 export type RollupDimension =
@@ -190,7 +203,9 @@ export type RollupDimension =
   /** Session health: key "<appVersion>|started|errored|crashed", counted in `events`. */
   | "session"
   /** Failed HTTP requests captured by the SDK: key "<METHOD> <path>", counted in `errors`. */
-  | "endpoint";
+  | "endpoint"
+  /** Sessions per release (version, plus OTA update when there is one): key "<version>[+<update>]", counted in `events`. */
+  | "release";
 
 export interface RollupIncrement {
   app: string;

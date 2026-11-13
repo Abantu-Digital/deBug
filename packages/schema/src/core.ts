@@ -21,12 +21,38 @@ export type {
   EnvelopeInput,
   StoredEvent,
   Issue,
+  IssueStatus,
   RollupDimension,
   RollupIncrement,
   RollupRow,
 } from "./index";
 
 export const SCHEMA_VERSION = 1;
+
+/** "2.10.0" sorts after "2.9.1"; pre-release and build suffixes compare as text. */
+export function compareVersions(a: string, b: string): number {
+  const pa = a.split(/[.+-]/);
+  const pb = b.split(/[.+-]/);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] ?? "";
+    const y = pb[i] ?? "";
+    const d = /^\d+$/.test(x) && /^\d+$/.test(y) ? Number(x) - Number(y) : x.localeCompare(y);
+    if (d) return d;
+  }
+  return 0;
+}
+
+/** How a release is labelled: the store version, plus the OTA update when there is one ("2.4.0+a1b2c3d"). */
+export function releaseKey(app: { version?: string; update?: string }): string {
+  const v = app.version || "unknown";
+  return app.update ? `${v}+${app.update.slice(0, 12)}` : v;
+}
+
+/** Has an issue resolved in `resolvedIn` come back in `version`? */
+export function isRegression(resolvedIn: string | undefined, version: string | undefined, resolvedAt: string | undefined, ts: string): boolean {
+  if (resolvedIn && version) return compareVersions(version, resolvedIn) >= 0;
+  return !!resolvedAt && ts > resolvedAt;
+}
 
 /* ---------- Severity (shared by ingest + dashboard) ---------- */
 

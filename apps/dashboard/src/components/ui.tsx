@@ -109,3 +109,16 @@ export function timeAgo(iso: string, now = Date.now()) {
   if (s < 86400) return `${Math.round(s / 3600)}h ago`;
   return `${Math.round(s / 86400)}d ago`;
 }
+
+/** Small labels under an issue: regressed, new in the latest release, resolved, ignored. */
+export function IssueLabels({ issue }: { issue: { status: string; resolvedIn?: string; firstVersion?: string; newInLatest: boolean } }) {
+  const chip = "mt-1 mr-1 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide";
+  return (
+    <>
+      {issue.status === "regressed" && <span className={`${chip} bg-sev-critical text-white`}>Regressed{issue.resolvedIn ? ` after ${issue.resolvedIn}` : ""}</span>}
+      {issue.newInLatest && <span className={`${chip} bg-accent-soft text-accent`}>New in {issue.firstVersion}</span>}
+      {issue.status === "resolved" && <span className={`${chip} border border-line text-muted`}>Resolved{issue.resolvedIn ? ` in ${issue.resolvedIn}` : ""}</span>}
+      {issue.status === "ignored" && <span className={`${chip} border border-line text-muted`}>Ignored</span>}
+    </>
+  );
+}

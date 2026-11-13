@@ -48,6 +48,13 @@ export function config() {
     adminToken: env.DEBUG_ADMIN_TOKEN,
     /** The deployment's default retention (what ingest uses before an app has a setting). */
     retentionDays: num(env.DEBUG_RETENTION_DAYS, 0) || undefined,
+    /** "Create issue" buttons on the issue page. */
+    trackers: {
+      linear: env.DEBUG_LINEAR === "1" || !!env.DEBUG_LINEAR_TEAM,
+      linearTeam: env.DEBUG_LINEAR_TEAM || undefined,
+      githubRepo: env.DEBUG_GITHUB_REPO || undefined,
+      dashboardUrl: env.DEBUG_DASHBOARD_URL || undefined,
+    },
     secureCookies: env.NODE_ENV === "production" && env.DEBUG_INSECURE_COOKIES !== "1",
   };
 }

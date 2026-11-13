@@ -1,4 +1,4 @@
-import type { Issue, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debugkit/schema";
+import type { Issue, IssueStatus, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debugkit/schema";
 
 export interface IssueUpsert {
   app: string;
@@ -10,6 +10,24 @@ export interface IssueUpsert {
   firstTs: string; // event time of the oldest occurrence in this batch
   by: number;
   lastEvent: StoredEvent;
+  /** App version of the newest occurrence in this batch: drives firstVersion/lastVersion and regressions. */
+  version?: string;
+}
+
+/**
+ * "This member was active in this scope on this day". Members are hashes of user or install ids,
+ * never the ids themselves. Scopes: "app" (everyone), "crash" (users who crashed), "issue:<fp>".
+ */
+export interface UserMark {
+  scope: string;
+  member: string;
+  day: string;
+}
+
+export interface IssueStatusChange {
+  status: Exclude<IssueStatus, "regressed">;
+  /** For "resolved": the release with the fix. */
+  resolvedIn?: string;
 }
 
 /** Per-app settings, stored in the customer's own database and changed from the dashboard. */
@@ -39,6 +57,9 @@ export interface WriteStore {
   incrementRollups(incs: RollupIncrement[]): Promise<void>;
   getSettings(app: string): Promise<AppSettings | null>;
   putSettings(app: string, settings: AppSettings): Promise<AppSettings>;
+  /** Record active users per scope (one row per scope and member, holding the last day seen). */
+  markUsers(app: string, marks: UserMark[]): Promise<void>;
+  setIssueStatus(app: string, fingerprint: string, change: IssueStatusChange): Promise<Issue | null>;
   /** Give already-stored events an expiry based on `retentionDays`, one page at a time. */
   restampExpiry(app: string, retentionDays: number, opts?: { cursor?: string; limit?: number }): Promise<RestampResult>;
 }
@@ -46,6 +67,8 @@ export interface WriteStore {
 /** Read side, used by the dashboard. */
 export interface ReadStore {
   getSettings(app: string): Promise<AppSettings | null>;
+  /** Distinct members of a scope seen on or after `sinceDay` (YYYY-MM-DD). */
+  countUsers(app: string, scope: string, sinceDay: string): Promise<number>;
   listApps(): Promise<string[]>;
   listIssues(app: string, opts?: { limit?: number }): Promise<Issue[]>;
   getIssue(app: string, fingerprint: string): Promise<Issue | null>;

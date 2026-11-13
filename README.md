@@ -86,6 +86,11 @@ Then deploy `packages/adapters/firestore.indexes.json`. It includes the TTL poli
 - **Counts, issues and release health** are kept forever, so any date range works.
 - **Hourly counters** expire after 7 days, since they only feed the 24h and 48h views.
 
+**Issue workflow.** On an issue's page you can:
+- **Resolve** it, saying which release has the fix. If it shows up again in that release or a later one, it's marked **Regressed**; occurrences from older builds don't count.
+- **Ignore** it, which drops it from the summary and counts, or **reopen** it.
+- **Create a ticket:** set `DEBUG_LINEAR_TEAM` (a team key such as `ABA`) or `DEBUG_LINEAR=1`, and/or `DEBUG_GITHUB_REPO` (`owner/name`), to get "Create Linear issue" and "Create GitHub issue" buttons. They open the tracker with the issue's story filled in. `DEBUG_DASHBOARD_URL` adds a link back. No tokens are needed.
+
 To let the dashboard change settings while its database credentials stay read-only, set `DEBUG_ADMIN_TOKEN` (16+ characters) on the ingest function, plus `DEBUG_ADMIN_URL` (the ingest URL followed by `/admin`) and the same token in the dashboard's environment. `npx debugkit init` does all of this.
 
 **AWS:** a DynamoDB table with `pk`/`sk` string keys and TTL on `ttl`, plus a Lambda:

@@ -1,6 +1,6 @@
-import type { Issue, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debugkit/schema";
+import { isRegression, type Issue, type RollupDimension, type RollupIncrement, type RollupRow, type StoredEvent } from "@debugkit/schema";
 import { coalesceRollups, rollupId } from "./rollups";
-import type { AppSettings, IssueUpsert, RestampResult, Store } from "./index";
+import type { AppSettings, IssueStatusChange, IssueUpsert, RestampResult, Store, UserMark } from "./index";
 
 /** In-process store for tests and the dashboard's demo mode. */
 export class MemoryStore implements Store {
@@ -9,6 +9,8 @@ export class MemoryStore implements Store {
   issues = new Map<string, Issue>();
   rollups = new Map<string, RollupRow>();
   settings = new Map<string, AppSettings>();
+  /** `${app}/${scope}/${member}` → last day seen */
+  users = new Map<string, string>();
   /** Expiry per event id (ms), mirroring what a real store would stamp. */
   expiry = new Map<string, number>();
   retentionDays = 30;
@@ -20,6 +22,26 @@ export class MemoryStore implements Store {
     const days = opts.retentionDays ?? this.retentionDays;
     for (const e of events) this.expiry.set(e.event.id, Date.parse(e.receivedAt) + days * 86_400_000);
     this.events.push(...events);
+  }
+  async markUsers(app: string, marks: UserMark[]) {
+    for (const m of marks) {
+      const k = `${app}/${m.scope}/${m.member}`;
+      const cur = this.users.get(k);
+      if (!cur || m.day > cur) this.users.set(k, m.day);
+    }
+  }
+  async countUsers(app: string, scope: string, sinceDay: string) {
+    const prefix = `${app}/${scope}/`;
+    let n = 0;
+    for (const [k, day] of this.users) if (k.startsWith(prefix) && day >= sinceDay) n++;
+    return n;
+  }
+  async setIssueStatus(app: string, fp: string, change: IssueStatusChange) {
+    const cur = this.issues.get(`${app}/${fp}`);
+    if (!cur) return null;
+    const next = { ...cur, status: change.status, resolvedIn: change.status === "resolved" ? change.resolvedIn : undefined, resolvedAt: change.status === "resolved" ? new Date().toISOString() : undefined, regressedAt: undefined };
+    this.issues.set(`${app}/${fp}`, next);
+    return next;
   }
   async getSettings(app: string) {
     return this.settings.get(app) ?? null;
@@ -41,7 +63,13 @@ export class MemoryStore implements Store {
     for (const u of updates) {
       const k = `${u.app}/${u.fingerprint}`;
       const cur = this.issues.get(k);
+      const regressed = cur?.status === "resolved" && isRegression(cur.resolvedIn, u.version, cur.resolvedAt, u.ts);
+      const newer = !cur || u.ts >= cur.lastSeen;
       this.issues.set(k, {
+        ...cur,
+        ...(regressed ? { status: "regressed" as const, regressedAt: u.ts } : {}),
+        firstVersion: cur?.firstVersion ?? u.version,
+        lastVersion: newer ? (u.version ?? cur?.lastVersion) : cur?.lastVersion,
         app: u.app,
         fingerprint: u.fingerprint,
         title: u.title,

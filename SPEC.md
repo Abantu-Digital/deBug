@@ -195,6 +195,11 @@ deBug hosts nothing.
   - Retention for raw events is chosen at `init` (default 60 days) and changed per app on the dashboard's Settings page. The setting lives in the customer's own database and is written through the ingest function's `/admin` routes, so the dashboard stays read-only.
   - Every view takes a date range: 24h (hourly), 7/14/30/90 days (daily), or custom (weekly past 90 days), compared with the previous period. The range is in the URL and in `/api/summary`.
   - Hourly counters expire after 7 days.
+- **Who and when (0.6):**
+  - Users affected per issue, and crash-free users. Hashed per-scope user marks (`app`, `crash`, `issue:<fp>`) are written at most once per user per day per function instance.
+  - Release markers on the trend: the first sessions of each release, with OTA updates as `version+update`. "New in X" labels.
+  - Issue status (open, resolved in a version, ignored), with automatic Regressed detection.
+  - Prefilled "Create Linear/GitHub issue" links.
 - **Next, automatic capture part 2:** freezes (JS thread stalls, long tasks,
   event-loop lag), performance (web vitals, cold start, slow screens), memory
   warnings, error spikes, rage clicks, and a Health page.

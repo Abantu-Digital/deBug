@@ -53,6 +53,7 @@ const APP_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
  *   GET  /admin/settings?app=…              { settings, retentionDays }
  *   PUT  /admin/settings   { app, retentionDays }
  *   POST /admin/restamp    { app, cursor? }  re-stamp existing events' expiry, one page per call
+ *   PUT  /admin/issue      { app, fingerprint, status: open|resolved|ignored, resolvedIn? }
  */
 export async function handleAdmin(
   req: { method: string; path: string; query?: Record<string, string | undefined>; body: string; authorization?: string },
@@ -89,6 +90,16 @@ export async function handleAdmin(
     const days = await effectiveRetention(opts.store, app, opts.retentionDays);
     const out = await opts.store.restampExpiry(app, days, { cursor: typeof body.cursor === "string" ? body.cursor : undefined });
     return { status: 200, body: { ok: true, retentionDays: days, ...out } };
+  }
+  if (route === "/issue" && (req.method === "PUT" || req.method === "POST")) {
+    const fingerprint = String(body.fingerprint ?? "");
+    const status = String(body.status ?? "");
+    if (!/^[a-f0-9]{8,64}$/.test(fingerprint)) return { status: 400, body: { ok: false, error: "fingerprint is required" } };
+    if (status !== "open" && status !== "resolved" && status !== "ignored") return { status: 400, body: { ok: false, error: "status must be open, resolved or ignored" } };
+    const resolvedIn = typeof body.resolvedIn === "string" && body.resolvedIn.trim() ? body.resolvedIn.trim().slice(0, 100) : undefined;
+    const issue = await opts.store.setIssueStatus(app, fingerprint, { status, resolvedIn: status === "resolved" ? resolvedIn : undefined });
+    if (!issue) return { status: 404, body: { ok: false, error: "no such issue" } };
+    return { status: 200, body: { ok: true, status: issue.status, resolvedIn: issue.resolvedIn ?? null } };
   }
   return { status: 404, body: { ok: false, error: "not found" } };
 }

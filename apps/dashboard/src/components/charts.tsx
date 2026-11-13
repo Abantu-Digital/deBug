@@ -6,6 +6,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -34,9 +35,18 @@ function ClientOnly({ height, children }: { height: number; children: React.Reac
   return <div style={{ height }}>{ready ? children : null}</div>;
 }
 
-const shortDay = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+/** "13 Nov" for a day, "14:00" for an hour bucket ("YYYY-MM-DDTHH"). */
+const shortDay = (d: string) =>
+  d.length === 13
+    ? `${d.slice(11)}:00`
+    : new Date(`${d}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 
-export function TrendChart({ data }: { data: { day: string; errors: number }[] }) {
+export function TrendChart({ data, markers = [] }: { data: { day: string; errors: number }[]; markers?: { day: string; label: string }[] }) {
+  // Snap each marker to the point it falls in (weekly charts are labelled by week start).
+  const days = data.map((d) => d.day);
+  const snapped = markers
+    .map((m) => ({ ...m, x: [...days].reverse().find((d) => d <= m.day) }))
+    .filter((m): m is { day: string; label: string; x: string } => !!m.x);
   return (
     <ClientOnly height={220}>
       <ResponsiveContainer width="100%" height="100%">
@@ -52,6 +62,15 @@ export function TrendChart({ data }: { data: { day: string; errors: number }[] }
           <YAxis allowDecimals={false} {...axis} />
           <Tooltip {...tooltipStyle} labelFormatter={(d) => shortDay(String(d))} />
           <Area type="monotone" dataKey="errors" name="Errors" stroke="var(--chart-errors)" strokeWidth={2} fill="url(#errFill)" />
+          {snapped.map((m) => (
+            <ReferenceLine
+              key={`${m.label}${m.day}`}
+              x={m.x}
+              stroke="var(--chart-events)"
+              strokeDasharray="3 3"
+              label={{ value: m.label, position: "insideTopLeft", fontSize: 10, fill: "var(--chart-events)" }}
+            />
+          ))}
         </AreaChart>
       </ResponsiveContainer>
     </ClientOnly>

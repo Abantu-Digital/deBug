@@ -3,7 +3,7 @@ import { redirect } from "@tanstack/react-router";
 import { checkCredentials, demoLoginEnabled, DEMO_USER, endSession, readSession, startSession } from "./auth";
 import { config } from "./config";
 import { buildIssueDetail, buildSummary } from "./queries";
-import { readSettings, restampStep, validRetention, writeRetention } from "./settings";
+import { readSettings, restampStep, settingsWriter, validRetention, writeIssueStatus, writeRetention } from "./settings";
 import { getStore } from "./store";
 
 export const getSessionUser = createServerFn({ method: "GET" }).handler(async () => readSession());
@@ -54,7 +54,23 @@ export const getIssueDetail = createServerFn({ method: "GET" })
   .validator((d: { app: string; fingerprint: string } & RangeInput) => ({ app: String(d.app), fingerprint: String(d.fingerprint), ...rangeOf(d) }))
   .handler(async ({ data }) => {
     requireUser();
-    return buildIssueDetail(await getStore(), data.app, data.fingerprint, config().severity, Date.now(), { range: data, retentionDays: config().retentionDays });
+    const detail = await buildIssueDetail(await getStore(), data.app, data.fingerprint, config().severity, Date.now(), { range: data, retentionDays: config().retentionDays, trackers: config().trackers });
+    return detail ? { ...detail, canChangeStatus: settingsWriter() !== "none" } : null;
+  });
+
+export const updateIssueStatus = createServerFn({ method: "POST" })
+  .validator((d: { app: string; fingerprint: string; status: string; resolvedIn?: string }) => {
+    const status = d?.status;
+    if (status !== "open" && status !== "resolved" && status !== "ignored") throw new Error("status must be open, resolved or ignored");
+    return { app: String(d.app ?? ""), fingerprint: String(d.fingerprint ?? ""), status: status as "open" | "resolved" | "ignored", resolvedIn: typeof d.resolvedIn === "string" ? d.resolvedIn.trim().slice(0, 100) || undefined : undefined };
+  })
+  .handler(async ({ data }) => {
+    requireUser();
+    try {
+      return { ok: true as const, ...(await writeIssueStatus(data.app, data.fingerprint, data.status, data.resolvedIn)) };
+    } catch (err) {
+      return { ok: false as const, error: (err as Error).message };
+    }
   });
 
 export const getSettings = createServerFn({ method: "GET" })
