@@ -13,6 +13,19 @@ import {
 } from "@debugkit/schema";
 import { daysBetween, resolveRange, weekOf, type DateRange } from "./range";
 
+/**
+ * Distinct users, or 0 when the count can't be made (for example a Firestore index added in a
+ * newer release isn't deployed yet). The rest of the page still loads.
+ */
+async function countUsersSafe(store: ReadStore, app: string, scope: string, since: string): Promise<number> {
+  try {
+    return await store.countUsers(app, scope, since);
+  } catch (err) {
+    console.warn(`deBug: couldn't count users (${scope}): ${(err as Error).message.split("\n")[0]}`);
+    return 0;
+  }
+}
+
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 const dayKey = (t: number) => new Date(t).toISOString().slice(0, 10);
@@ -246,7 +259,7 @@ export async function buildSummary(
   const criticalFlows = appSettings?.criticalFlows ?? [];
   const critical = new Set(criticalFlows);
   const usersSince = hourly ? dayKey(now - DAY) : from;
-  const [users, crashedUsers] = await Promise.all([store.countUsers(app, "app", usersSince), store.countUsers(app, "crash", usersSince)]);
+  const [users, crashedUsers] = await Promise.all([countUsersSafe(store, app, "app", usersSince), countUsersSafe(store, app, "crash", usersSince)]);
 
   const last24 = new Set(h24);
   let errors24h = 0;
@@ -293,7 +306,7 @@ export async function buildSummary(
     .sort(bySeverityThenCount);
   // Users affected: one count per issue, so only for the issues people look at first.
   const active = issueRows.filter((i) => i.status !== "ignored" && i.status !== "resolved");
-  await Promise.all(active.slice(0, 10).map(async (i) => (i.users = await store.countUsers(app, `issue:${i.fingerprint}`, usersSince))));
+  await Promise.all(active.slice(0, 10).map(async (i) => (i.users = await countUsersSafe(store, app, `issue:${i.fingerprint}`, usersSince))));
 
   const firstDay = new Map<string, { day: string; sessions: number }>();
   for (const r of releaseRows) {
@@ -597,7 +610,7 @@ export async function buildIssueDetail(
     runtime: split((e) => [e.context.runtime.name, e.context.runtime.engine].filter(Boolean).join(" / ")),
   };
   const usersSince = range.preset === "24h" ? dayKey(now - DAY) : range.from;
-  const counted = await store.countUsers(app, `issue:${fingerprint}`, usersSince);
+  const counted = await countUsersSafe(store, app, `issue:${fingerprint}`, usersSince);
   // Data from before 0.6 has no user marks: fall back to the users in recent events.
   const affectedUsers = counted || new Set(events.map((e) => e.user?.id ?? e.user?.anonymousId ?? e.sessionId)).size;
 
