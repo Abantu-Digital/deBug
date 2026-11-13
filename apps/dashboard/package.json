@@ -1,6 +1,6 @@
 {
   "name": "@debugkit/dashboard",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "The self-hosted deBug dashboard. Run it with npx debugkit dashboard, or npx @debugkit/dashboard with your own settings.",
   "type": "module",
   "bin": {
