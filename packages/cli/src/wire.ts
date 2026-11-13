@@ -4,7 +4,7 @@ import type { AppInfo } from "./detect";
 import { installCommand } from "./detect";
 import { capture, interactive, which } from "./exec";
 import { ensureGitignored, environment, upsertEnv } from "./state";
-import { code, dim, p, yes } from "./ui";
+import { bold, code, dim, p, yes } from "./ui";
 
 export interface Connection {
   endpoint: string;
@@ -31,9 +31,28 @@ export async function installSdk(app: AppInfo) {
       app.hasSdk = true;
     }
   }
-  if (app.platform === "expo" && app.missingExpoModules.length) {
-    const exit = await interactive("npx", ["expo", "install", ...app.missingExpoModules], { cwd: app.cwd });
-    if (exit !== 0) p.log.warn("Couldn't install expo-device and expo-application. Run: npx expo install expo-device expo-application");
+  const missing = app.missingNativeModules;
+  if (!missing.length) return;
+  p.note(
+    [
+      `deBug reads the device's model, memory, screen, network and storage with ${missing.map(code).join(", ")}.`,
+      "They're native modules, so they go in your app's own dependencies (React Native only links those),",
+      `and the app needs a ${bold("new native build")} before they work: an over-the-air update can't add them.`,
+      "Until then deBug still works, with fewer device details.",
+    ].join("\n"),
+    "Device details",
+  );
+  if (!(await yes(`Install ${missing.join(", ")}?`))) {
+    p.log.info(dim(`Later: ${app.platform === "expo" ? `npx expo install ${missing.join(" ")}` : installCommand(app.packageManager, missing).flat().join(" ")}`));
+    return;
+  }
+  // Expo picks versions that match the SDK; bare React Native uses the app's package manager.
+  const [cmd, args] = app.platform === "expo" ? ["npx", ["expo", "install", ...missing]] : installCommand(app.packageManager, missing);
+  const exit = await interactive(cmd, args, { cwd: app.cwd });
+  if (exit !== 0) p.log.warn(`Couldn't install ${missing.join(", ")}. Run: ${cmd} ${args.join(" ")}`);
+  else {
+    app.missingNativeModules = [];
+    p.log.success(`Installed ${missing.join(", ")}. Rebuild the app${app.platform === "react-native" ? " (cd ios && pod install first)" : " (eas build, or npx expo run:android / run:ios)"} to link them.`);
   }
 }
 
@@ -96,7 +115,8 @@ export const deBug = initExpo({
       return {
         path,
         contents: `${header}import { initReactNative } from "@debugkit/sdk/react-native";
-// Optional, for model and app version: npm install react-native-device-info, then pass deviceInfo: DeviceInfo.
+// Device details (model, memory, screen, network, storage) are read automatically with
+// react-native-device-info. Add your own with tags: { … } or deBug.setTags({ … }).
 
 export const deBug = initReactNative({
   enabled: ${multiEnv ? "!__DEV__ // release builds only" : "true"},

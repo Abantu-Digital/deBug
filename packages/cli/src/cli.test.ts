@@ -150,8 +150,8 @@ describe("safety on re-runs", () => {
   });
 
   it("only installs the Expo modules that are missing", () => {
-    expect(detectApp(app({ name: "e", dependencies: { expo: "58", "expo-device": "8" } })).missingExpoModules).toEqual(["expo-application"]);
-    expect(detectApp(app({ name: "w", dependencies: { react: "19" } })).missingExpoModules).toEqual([]);
+    expect(detectApp(app({ name: "e", dependencies: { expo: "58", "expo-device": "8" } })).missingNativeModules).toEqual(["expo-application", "react-native-device-info"]);
+    expect(detectApp(app({ name: "w", dependencies: { react: "19" } })).missingNativeModules).toEqual([]);
   });
 });
 

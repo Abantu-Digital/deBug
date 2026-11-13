@@ -15,8 +15,11 @@ export interface AppInfo {
   reactNavigation: boolean;
   packageManager: PackageManager;
   hasSdk: boolean;
-  /** Expo modules the SDK reads device and app details from, when they aren't installed yet. */
-  missingExpoModules: string[];
+  /**
+   * Native modules the SDK reads device and app details from, when the app doesn't have them yet.
+   * They must be the app's own dependencies: React Native only links native code the app lists.
+   */
+  missingNativeModules: string[];
   /** Where the generated debug.ts goes: "src" when the app has one, otherwise the project root. */
   sourceDir: string;
   /** Prefix that exposes env vars to client code, or undefined when the platform has none. */
@@ -75,7 +78,7 @@ export function detectApp(cwd: string): AppInfo {
           ? "bun"
           : "npm",
     hasSdk: has("@debugkit/sdk"),
-    missingExpoModules: platform === "expo" ? ["expo-device", "expo-application"].filter((m) => !has(m)) : [],
+    missingNativeModules: (platform === "expo" ? ["expo-device", "expo-application", "react-native-device-info"] : platform === "react-native" ? ["react-native-device-info"] : []).filter((m) => !has(m)),
     sourceDir: existsSync(join(cwd, "src")) ? "src" : ".",
     envPrefix,
     typescript: existsSync(join(cwd, "tsconfig.json")) || has("typescript"),
