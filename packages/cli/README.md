@@ -39,6 +39,15 @@ Every command below also works as `npx @debugkit/cli <command>`.
 
 Options: `--provider firebase|aws|local` skips the provider question, `--cwd <dir>` points at another folder, and `--yes` accepts the defaults (for scripts; set `DEBUGKIT_DASHBOARD_PASSWORD`).
 
+## What's been verified
+
+| Path | Status |
+|---|---|
+| Just this machine | Run end to end: the empty dashboard, then test events arriving |
+| Firebase | Run end to end against a real project: function deployed, indexes added without touching existing ones, test events read back on the dashboard |
+| AWS | Unit-tested (profile parsing, the "not found" handling, key merging) and the bundled Lambda run locally. Not yet run against a real account |
+| Platforms | Vite and React run for real. The Expo, React Native, Next.js, TanStack Start and Node templates are unit-tested |
+
 ## What it needs
 
 - Node 20.12 or later.

@@ -129,13 +129,19 @@ cd examples/<app> && npm install
 
 ## Publishing
 
-The four packages (`@debugkit/schema`, `@debugkit/sdk`, `@debugkit/ingest`, `@debugkit/adapters`) are
-versioned together with [changesets](.changeset/README.md):
+Six packages are versioned together with [changesets](.changeset/README.md): `@debugkit/schema`,
+`@debugkit/sdk`, `@debugkit/ingest`, `@debugkit/adapters`, `@debugkit/cli` and `@debugkit/dashboard`.
 
-1. Create the `@debugkit` organisation on npmjs.com (or confirm you own it).
-2. Add an npm automation token as the `NPM_TOKEN` secret in the GitHub repo.
-3. Add a changeset to each change (`pnpm changeset`). On merge to `main`, the Release workflow
-   opens a "Version packages" PR. Merging that PR publishes to npm, with provenance.
+1. Add a changeset to each change (`pnpm changeset`).
+2. To release:
+   ```bash
+   pnpm changeset version   # bump versions, write changelogs
+   pnpm release             # build everything, then publish what isn't on npm yet
+   ```
+   npm asks you to approve each publish in the browser. `pnpm release` also creates git tags;
+   push them with `git push origin --tags`.
+3. The Release workflow (`.github/workflows/release.yml`) automates this from GitHub once
+   Actions runs on the organisation. It currently doesn't, because of a GitHub billing block.
 
 In the repo, each package resolves to its TypeScript source. On publish, `publishConfig`
 switches the entry points to the built `dist/` files (ESM, CommonJS and `.d.ts`).
