@@ -5,7 +5,7 @@ import FIRESTORE_INDEXES from "../../../adapters/firestore.indexes.json" with { 
 import { VERSION } from "../dashboard";
 import { mergeKeys } from "../keys";
 import { cmdFor, environment, firebaseProjectUsedBy, paths } from "../state";
-import { ask, bail, bold, choose, code, dim, flags, next, p, yes } from "../ui";
+import { ask, bail, bold, choose, code, dim, next, p, yes } from "../ui";
 import { adminEnv, type ProviderResult, type SetupContext } from "./types";
 
 /** Firestore locations offered, with the Cloud Functions region that sits closest to each. */
@@ -101,15 +101,17 @@ export async function setupFirebase(ctx: SetupContext): Promise<ProviderResult> 
     const owner = projectId === NEW ? undefined : takenBy(projectId);
     if (!owner) break;
     p.log.warn(`${bold(projectId)} is already ${owner}'s project. Each environment needs its own Firebase project, so their data never mixes. Pick another project, or create one.`);
-    if (flags.yes) bail(`${projectId} is already ${owner}'s project. Each environment needs its own Firebase project.`);
   }
   if (projectId === NEW) {
     const suggested = `${ctx.app.appId}-debug`.slice(0, 26).replace(/-+$/, "") + `-${Math.random().toString(36).slice(2, 6)}`;
     projectId = await ask("Project id (lowercase, globally unique)", {
       initial: suggested,
-      validate: (v) => (/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(v) ? undefined : "6–30 characters: lowercase letters, digits and dashes"),
+      validate: (v) => {
+        if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(v)) return "6–30 characters: lowercase letters, digits and dashes";
+        const owner = takenBy(v);
+        return owner ? `${owner} already uses ${v}. Each environment needs its own Firebase project.` : undefined;
+      },
     });
-    if (takenBy(projectId)) bail(`${projectId} is already ${takenBy(projectId)}'s project. Each environment needs its own Firebase project.`);
     if ((await fbLive(["projects:create", projectId, "--display-name", `${ctx.app.name} deBug`.slice(0, 30), ...acct])) !== 0)
       bail(`Couldn't create ${projectId}. Pick an existing project or another id.`);
   }

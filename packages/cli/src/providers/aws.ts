@@ -117,7 +117,9 @@ export async function setupAws(ctx: SetupContext): Promise<ProviderResult> {
       return owner ? `${owner} already uses ${v} in ${region}. Each environment needs its own table.` : undefined;
     },
   });
-  if (takenBy(table)) bail(`${table} in ${region} is already ${takenBy(table)}'s table. Each environment needs its own table.`);
+  // With --yes the default name isn't validated, so check it here (there's nobody to ask again).
+  const tableOwner = takenBy(table);
+  if (tableOwner) bail(`${table} in ${region} is already ${tableOwner}'s table. Each environment needs its own table: run again without --yes and pick another name.`);
   // One ingest function per table; any number of apps share it through their own keys.
   const functionName = `debugkit-ingest-${table}`.slice(0, 64);
   const roleName = `debugkit-ingest-${table}-${region}`.slice(0, 64);
