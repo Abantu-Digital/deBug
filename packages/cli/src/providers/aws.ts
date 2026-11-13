@@ -4,7 +4,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { zipSync } from "fflate";
 import { interactive, which } from "../exec";
-import { ask, bail, choose, code, dim, next, p } from "../ui";
+import { keyEntry, mergeKeys } from "../keys";
+import { ask, bail, choose, code, dim, next, p, yes } from "../ui";
 import type { ProviderResult, SetupContext } from "./types";
 
 const REGIONS = [
@@ -101,28 +102,44 @@ export async function setupAws(ctx: SetupContext): Promise<ProviderResult> {
   }
   p.log.success(`Signed in to AWS account ${code(identity.Account ?? "?")} ${dim(identity.Arn ?? "")}`);
 
-  const table = await ask("DynamoDB table name", { initial: "debugkit" });
-  const functionName = "debugkit-ingest";
-  const roleName = `debugkit-ingest-${region}`;
+  if (!identity.Account) bail("AWS didn't say which account these credentials belong to.");
+  const account = identity.Account;
+
+  const table = await ask("DynamoDB table name", {
+    initial: "debugkit",
+    validate: (v) => (/^[A-Za-z0-9_.-]{3,40}$/.test(v) ? undefined : "3–40 characters: letters, digits, _ . -"),
+  });
+  // One ingest function per table; any number of apps share it through their own keys.
+  const functionName = `debugkit-ingest-${table}`.slice(0, 64);
+  const roleName = `debugkit-ingest-${table}-${region}`.slice(0, 64);
   await next(`Create the table, role and function in ${region}`);
 
   const s = p.spinner();
-  const [{ DynamoDBClient, CreateTableCommand, DescribeTableCommand, UpdateTimeToLiveCommand }, iamMod, lambdaMod] = await Promise.all([
-    import("@aws-sdk/client-dynamodb"),
-    import("@aws-sdk/client-iam"),
-    import("@aws-sdk/client-lambda"),
-  ]);
+  const [ddbMod, iamMod, lambdaMod] = await Promise.all([import("@aws-sdk/client-dynamodb"), import("@aws-sdk/client-iam"), import("@aws-sdk/client-lambda")]);
 
   /* ---------- 2. DynamoDB ---------- */
-  const ddb = new DynamoDBClient(base);
-  s.start(`Creating DynamoDB table ${table}`);
+  const ddb = new ddbMod.DynamoDBClient(base);
+  s.start(`Checking DynamoDB table ${table}`);
   let tableArn: string | undefined;
-  try {
-    tableArn = (await ddb.send(new DescribeTableCommand({ TableName: table }))).Table?.TableArn;
-    s.message(`Table ${table} already exists, reusing it`);
-  } catch {
+  let ownTable = false;
+  const found = await lookup(() => ddb.send(new ddbMod.DescribeTableCommand({ TableName: table })));
+  if (found) {
+    tableArn = found.Table?.TableArn;
+    const tags = await ddb.send(new ddbMod.ListTagsOfResourceCommand({ ResourceArn: tableArn }));
+    ownTable = !!tags.Tags?.some((t) => t.Key === CREATED_BY && t.Value === "debugkit");
+    const keys = Object.fromEntries((found.Table?.KeySchema ?? []).map((k) => [k.KeyType, k.AttributeName]));
+    const types = Object.fromEntries((found.Table?.AttributeDefinitions ?? []).map((a) => [a.AttributeName, a.AttributeType]));
+    if (keys.HASH !== "pk" || keys.RANGE !== "sk" || types.pk !== "S" || types.sk !== "S") {
+      s.error(`Table ${table} exists with a different key schema`);
+      bail(`${table} isn't a deBug table (it needs string keys pk and sk). Run again and choose another table name.`);
+    }
+    s.stop(ownTable ? `Reusing deBug's table ${table}` : `Table ${table} exists and wasn't created by deBug`);
+    if (!ownTable && !(await yes(`Store deBug's data in your existing table ${table}? deBug only adds its own items (pk APPS and APP#…).`, false)))
+      bail("Run again and choose a new table name.");
+  } else {
+    s.message(`Creating DynamoDB table ${table}`);
     const out = await ddb.send(
-      new CreateTableCommand({
+      new ddbMod.CreateTableCommand({
         TableName: table,
         BillingMode: "PAY_PER_REQUEST",
         AttributeDefinitions: [
@@ -133,41 +150,53 @@ export async function setupAws(ctx: SetupContext): Promise<ProviderResult> {
           { AttributeName: "pk", KeyType: "HASH" },
           { AttributeName: "sk", KeyType: "RANGE" },
         ],
-        Tags: [{ Key: "created-by", Value: "debugkit" }],
+        Tags: [{ Key: CREATED_BY, Value: "debugkit" }],
       }),
     );
     tableArn = out.TableDescription?.TableArn;
-    for (let i = 0; i < 60; i++) {
-      const st = (await ddb.send(new DescribeTableCommand({ TableName: table }))).Table?.TableStatus;
-      if (st === "ACTIVE") break;
-      await sleep(2000);
+    ownTable = true;
+    let active = false;
+    for (let i = 0; i < 90 && !active; i++) {
+      active = (await ddb.send(new ddbMod.DescribeTableCommand({ TableName: table }))).Table?.TableStatus === "ACTIVE";
+      if (!active) await sleep(2000);
     }
+    if (!active) throw new Error(`Table ${table} didn't become active within 3 minutes. Check it in the AWS console, then run npx debugkit init again.`);
   }
-  try {
-    await ddb.send(new UpdateTimeToLiveCommand({ TableName: table, TimeToLiveSpecification: { AttributeName: "ttl", Enabled: true } }));
-  } catch (err) {
-    if (!/already enabled|TimeToLive is already/i.test((err as Error).message)) throw err;
+  if (!tableArn) throw new Error(`AWS didn't return the ARN for table ${table}.`);
+
+  // Raw events carry an expiry in `ttl`. Only switch TTL on if it's off; never change another setting.
+  const ttl = (await ddb.send(new ddbMod.DescribeTimeToLiveCommand({ TableName: table }))).TimeToLiveDescription;
+  const ttlOn = ttl?.TimeToLiveStatus === "ENABLED" || ttl?.TimeToLiveStatus === "ENABLING";
+  if (ttlOn && ttl?.AttributeName !== "ttl") {
+    p.log.warn(`${table} already expires items on "${ttl?.AttributeName}", so deBug's raw events won't expire on their own. Clean them up yourself, or use a separate table.`);
+  } else if (!ttlOn) {
+    await ddb.send(new ddbMod.UpdateTimeToLiveCommand({ TableName: table, TimeToLiveSpecification: { AttributeName: "ttl", Enabled: true } }));
   }
-  s.stop(`DynamoDB table ${table} is ready (on-demand billing, 30-day expiry on raw events)`);
+  p.log.success(`DynamoDB table ${table} is ready (30-day expiry on raw events)`);
 
   /* ---------- 3. IAM role for the function: write to this table, and logs ---------- */
   const iam = new iamMod.IAMClient(base);
-  s.start(`Creating IAM role ${roleName}`);
+  s.start(`Setting up IAM role ${roleName}`);
   let roleArn: string;
   let newRole = false;
-  try {
-    roleArn = (await iam.send(new iamMod.GetRoleCommand({ RoleName: roleName }))).Role!.Arn!;
-  } catch {
+  const role = await lookup(() => iam.send(new iamMod.GetRoleCommand({ RoleName: roleName })));
+  if (role) {
+    if (!role.Role?.Tags?.some((t) => t.Key === CREATED_BY && t.Value === "debugkit")) {
+      s.error(`Role ${roleName} exists and wasn't created by deBug`);
+      bail(`deBug won't change a role it didn't create. Delete or rename ${roleName}, or choose another table name.`);
+    }
+    roleArn = role.Role.Arn!;
+  } else {
     roleArn = (
       await iam.send(
         new iamMod.CreateRoleCommand({
           RoleName: roleName,
-          Description: "deBug ingest Lambda: writes to the deBug DynamoDB table",
+          Description: `deBug ingest Lambda: writes to the DynamoDB table ${table}`.slice(0, 1000),
           AssumeRolePolicyDocument: JSON.stringify({
             Version: "2012-10-17",
-            Statement: [{ Effect: "Allow", Principal: { Service: "lambda.amazonaws.com" }, Action: "sts:AssumeRole" }],
+            Statement: [{ Effect: "Allow", Principal: { Service: "lambda.amazonaws.com" }, Action: "sts:AssumeRole", Condition: { StringEquals: { "aws:SourceAccount": account } } }],
           }),
-          Tags: [{ Key: "created-by", Value: "debugkit" }],
+          Tags: [{ Key: CREATED_BY, Value: "debugkit" }],
         }),
       )
     ).Role!.Arn!;
@@ -188,20 +217,27 @@ export async function setupAws(ctx: SetupContext): Promise<ProviderResult> {
 
   /* ---------- 4. Lambda + Function URL ---------- */
   const lambda = new lambdaMod.LambdaClient(base);
-  const env = { Variables: { DEBUG_TABLE: table, DEBUG_INGEST_KEYS: `${ctx.ingestKey}:${ctx.app.appId}` } };
   const zip = lambdaZip();
   s.start(`Deploying Lambda ${functionName}`);
-  let exists = true;
-  try {
-    await lambda.send(new lambdaMod.GetFunctionCommand({ FunctionName: functionName }));
-  } catch {
-    exists = false;
-  }
-  if (exists) {
+  const fn = await lookup(() => lambda.send(new lambdaMod.GetFunctionCommand({ FunctionName: functionName })));
+  if (fn) {
+    if (fn.Tags?.[CREATED_BY] !== "debugkit") {
+      s.error(`Function ${functionName} exists and wasn't created by deBug`);
+      bail(`deBug won't overwrite a function it didn't create. Rename ${functionName}, or choose another table name.`);
+    }
+    // Keep every key the function already accepts: other apps, and builds of this one, use them.
+    const keys = mergeKeys(fn.Configuration?.Environment?.Variables?.DEBUG_INGEST_KEYS, ctx.ingestKey, ctx.app.appId);
     await lambda.send(new lambdaMod.UpdateFunctionCodeCommand({ FunctionName: functionName, ZipFile: zip }));
     await waitUpdated(lambda, lambdaMod, functionName);
-    await lambda.send(new lambdaMod.UpdateFunctionConfigurationCommand({ FunctionName: functionName, Environment: env, Role: roleArn }));
+    await lambda.send(
+      new lambdaMod.UpdateFunctionConfigurationCommand({
+        FunctionName: functionName,
+        Role: roleArn,
+        Environment: { Variables: { ...fn.Configuration?.Environment?.Variables, DEBUG_TABLE: table, DEBUG_INGEST_KEYS: keys } },
+      }),
+    );
   } else {
+    const env = { Variables: { DEBUG_TABLE: table, DEBUG_INGEST_KEYS: keyEntry(ctx.ingestKey, ctx.app.appId) } };
     // A new role takes a few seconds before Lambda can assume it.
     for (let attempt = 0; ; attempt++) {
       try {
@@ -217,7 +253,7 @@ export async function setupAws(ctx: SetupContext): Promise<ProviderResult> {
             Timeout: 10,
             Environment: env,
             Description: "deBug ingest: receives SDK events and writes them to DynamoDB",
-            Tags: { "created-by": "debugkit" },
+            Tags: { [CREATED_BY]: "debugkit" },
           }),
         );
         break;
@@ -231,12 +267,9 @@ export async function setupAws(ctx: SetupContext): Promise<ProviderResult> {
   }
   await waitUpdated(lambda, lambdaMod, functionName);
 
-  let url: string;
-  try {
-    url = (await lambda.send(new lambdaMod.GetFunctionUrlConfigCommand({ FunctionName: functionName }))).FunctionUrl!;
-  } catch {
-    url = (await lambda.send(new lambdaMod.CreateFunctionUrlConfigCommand({ FunctionName: functionName, AuthType: "NONE" }))).FunctionUrl!;
-  }
+  const urlCfg = await lookup(() => lambda.send(new lambdaMod.GetFunctionUrlConfigCommand({ FunctionName: functionName })));
+  const url = urlCfg?.FunctionUrl ?? (await lambda.send(new lambdaMod.CreateFunctionUrlConfigCommand({ FunctionName: functionName, AuthType: "NONE" }))).FunctionUrl;
+  if (!url) throw new Error(`AWS didn't return a URL for ${functionName}.`);
   // A public Function URL needs both permissions. The ingest key checks every request.
   for (const [sid, input] of [
     ["debugkit-public-url", { Action: "lambda:InvokeFunctionUrl", FunctionUrlAuthType: "NONE" }],
@@ -245,25 +278,26 @@ export async function setupAws(ctx: SetupContext): Promise<ProviderResult> {
     try {
       await lambda.send(new lambdaMod.AddPermissionCommand({ FunctionName: functionName, StatementId: sid, Principal: "*", ...input } as never));
     } catch (err) {
-      if (!/already exists/i.test((err as Error).message)) p.log.warn(`Couldn't add ${sid}: ${(err as Error).message}`);
+      if ((err as { name?: string }).name !== "ResourceConflictException") p.log.warn(`Couldn't add ${sid}: ${(err as Error).message}`);
     }
   }
   s.stop(`Lambda ${functionName} is live at ${url}`);
 
   /* ---------- 5. A read-only policy for hosting the dashboard later ---------- */
-  let readOnlyPolicyArn: string | undefined;
+  let readOnlyPolicyArn: string | undefined = `arn:aws:iam::${account}:policy/debugkit-dashboard-readonly-${table}`.slice(0, 2048);
   try {
-    const policyName = `debugkit-dashboard-readonly-${table}`;
-    const doc = JSON.stringify({
-      Version: "2012-10-17",
-      Statement: [{ Effect: "Allow", Action: ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:DescribeTable"], Resource: tableArn }],
-    });
-    readOnlyPolicyArn = `arn:aws:iam::${identity.Account}:policy/${policyName}`;
-    try {
-      await iam.send(new iamMod.GetPolicyCommand({ PolicyArn: readOnlyPolicyArn }));
-    } catch {
-      await iam.send(new iamMod.CreatePolicyCommand({ PolicyName: policyName, PolicyDocument: doc, Description: "Read-only access to the deBug table, for the dashboard" }));
-    }
+    if (!(await lookup(() => iam.send(new iamMod.GetPolicyCommand({ PolicyArn: readOnlyPolicyArn })))))
+      await iam.send(
+        new iamMod.CreatePolicyCommand({
+          PolicyName: `debugkit-dashboard-readonly-${table}`.slice(0, 128),
+          PolicyDocument: JSON.stringify({
+            Version: "2012-10-17",
+            Statement: [{ Effect: "Allow", Action: ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:DescribeTable"], Resource: tableArn }],
+          }),
+          Description: `Read-only access to the deBug table ${table}, for hosting the dashboard`,
+          Tags: [{ Key: CREATED_BY, Value: "debugkit" }],
+        }),
+      );
   } catch (err) {
     p.log.warn(`Skipped the read-only dashboard policy: ${(err as Error).message}`);
     readOnlyPolicyArn = undefined;
@@ -273,12 +307,28 @@ export async function setupAws(ctx: SetupContext): Promise<ProviderResult> {
     config: { provider: "aws", endpoint: url.replace(/\/$/, ""), ingestKey: ctx.ingestKey, aws: { region, profile, table, functionName, roleName, readOnlyPolicyArn } },
     dashboardEnv: { DEBUG_STORE: "dynamodb", AWS_REGION: region, DEBUG_DYNAMO_TABLE: table, ...(profile ? { AWS_PROFILE: profile } : {}) },
     created: [
-      `DynamoDB table ${code(table)} in ${region} (on-demand, TTL on ${code("ttl")})`,
+      `DynamoDB table ${code(table)} in ${region}${ownTable ? " (on-demand)" : " (your existing table)"}`,
       `Lambda ${code(functionName)} with a public URL: ${code(url)}`,
       `IAM role ${code(roleName)} that can only write to the table`,
       ...(readOnlyPolicyArn ? [`Read-only policy for hosting the dashboard: ${code(readOnlyPolicyArn)}`] : []),
     ],
   };
+}
+
+const CREATED_BY = "created-by";
+
+/**
+ * Run an AWS "describe" call. Returns undefined only when the resource doesn't exist; any other
+ * error (access denied, throttling, a wrong region) is thrown so it isn't mistaken for "missing".
+ */
+export async function lookup<T>(fn: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await fn();
+  } catch (err) {
+    const name = (err as { name?: string }).name ?? "";
+    if (name === "ResourceNotFoundException" || name === "NoSuchEntityException" || name === "NoSuchEntity") return undefined;
+    throw err;
+  }
 }
 
 async function waitUpdated(lambda: { send(c: unknown): Promise<any> }, mod: typeof import("@aws-sdk/client-lambda"), name: string) {
@@ -289,4 +339,3 @@ async function waitUpdated(lambda: { send(c: unknown): Promise<any> }, mod: type
   }
 }
 
-/** Is the AWS CLI around? Only SSO sign-in needs it. */

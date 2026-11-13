@@ -1,6 +1,8 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { capture, interactive, openUrl, which } from "../exec";
+import FIRESTORE_INDEXES from "../../../adapters/firestore.indexes.json" with { type: "json" };
+import { mergeKeys } from "../keys";
 import { paths } from "../state";
 import { ask, bail, choose, code, dim, next, p, yes } from "../ui";
 import type { ProviderResult, SetupContext } from "./types";
@@ -114,12 +116,11 @@ export async function setupFirebase(ctx: SetupContext): Promise<ProviderResult> 
   }
 
   /* ---------- 4. Firestore ---------- */
-  const dbs = await fb(["firestore:databases:list", "--json", ...proj]);
   let location: string;
-  if (/\(default\)/.test(dbs.stdout)) {
-    p.log.info(`Using the existing Firestore database in ${projectId}`);
-    const loc = /"locationId"\s*:\s*"([^"]+)"/.exec(dbs.stdout)?.[1];
-    location = loc ?? "nam5";
+  const existingDb = await defaultDatabase(fb, proj);
+  if (existingDb) {
+    location = existingDb.locationId;
+    p.log.info(`Using the existing Firestore database in ${projectId} (${location})`);
   } else {
     location = await choose("Where should the Firestore database live? This can't be changed later.", LOCATIONS.map(({ value, label }) => ({ value, label })), "africa-south1");
     s.start(`Creating the Firestore database in ${location}`);
@@ -131,7 +132,7 @@ export async function setupFirebase(ctx: SetupContext): Promise<ProviderResult> 
     }
     s.stop(`Created the Firestore database (${location})`);
   }
-  const region = LOCATIONS.find((l) => l.value === location)?.region ?? (/^[a-z]+-[a-z]+\d$/.test(location) ? location : "us-central1");
+  const region = functionRegion(location);
 
   /* ---------- 5. The ingest function ---------- */
   const dir = writeFunctionSource(ctx, region);
@@ -211,6 +212,31 @@ async function ensureDashboardAccess(projectId: string) {
   else await capture("gcloud", ["auth", "application-default", "set-quota-project", projectId]);
 }
 
+/** The (default) database and its location, read from the JSON (not guessed from the first match). */
+async function defaultDatabase(
+  fb: (args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>,
+  proj: string[],
+): Promise<{ locationId: string } | undefined> {
+  const r = await fb(["firestore:databases:get", "(default)", "--json", ...proj]);
+  if (r.code !== 0) return undefined;
+  try {
+    const db = JSON.parse(r.stdout).result as { name?: string; locationId?: string };
+    return db?.locationId ? { locationId: db.locationId } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The Cloud Functions region for a Firestore location: the same region, or the closest one for multi-regions. */
+export function functionRegion(location: string): string {
+  const known = LOCATIONS.find((l) => l.value === location)?.region;
+  if (known) return known;
+  if (location === "nam7") return "us-central1";
+  if (location.startsWith("eur")) return "europe-west1";
+  if (location.startsWith("nam")) return "us-central1";
+  return /^[a-z]+-[a-z]+\d+$/.test(location) ? location : "us-central1";
+}
+
 /** The Cloud Function the setup deploys, written to .debugkit/firebase in the app's repo. */
 export function writeFunctionSource(ctx: SetupContext, region: string): string {
   const dir = paths(ctx.app.cwd).firebase;
@@ -265,30 +291,10 @@ export const ${FUNCTION_NAME} = onRequest(
 );
 `,
   );
-  // Ingest keys are public (they ship in the app), so a .env file in the source is fine.
-  writeFileSync(join(dir, "functions", ".env"), `DEBUG_INGEST_KEYS=${ctx.ingestKey}:${ctx.app.appId}\n`);
+  // Ingest keys are public (they ship in the app), so a .env file in the source is fine. Keep the
+  // keys already there: builds in users' hands, and other apps sharing this function, use them.
+  const envFile = join(dir, "functions", ".env");
+  const current = existsSync(envFile) ? /^DEBUG_INGEST_KEYS=(.*)$/m.exec(readFileSync(envFile, "utf8"))?.[1] : undefined;
+  writeFileSync(envFile, `DEBUG_INGEST_KEYS=${mergeKeys(current, ctx.ingestKey, ctx.app.appId)}\n`);
   return dir;
 }
-
-/** Same as packages/adapters/firestore.indexes.json: rollup and event queries, plus TTL on raw events. */
-const FIRESTORE_INDEXES = {
-  indexes: [
-    {
-      collectionGroup: "rollups",
-      queryScope: "COLLECTION",
-      fields: [
-        { fieldPath: "dimension", order: "ASCENDING" },
-        { fieldPath: "day", order: "ASCENDING" },
-      ],
-    },
-    {
-      collectionGroup: "events",
-      queryScope: "COLLECTION",
-      fields: [
-        { fieldPath: "fingerprint", order: "ASCENDING" },
-        { fieldPath: "ts", order: "DESCENDING" },
-      ],
-    },
-  ],
-  fieldOverrides: [{ collectionGroup: "events", fieldPath: "expireAt", ttl: true, indexes: [] }],
-};

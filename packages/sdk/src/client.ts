@@ -169,6 +169,11 @@ export class DebugClient {
     return this.ready;
   }
 
+  /** Events waiting to be sent. */
+  get pending(): number {
+    return this.queue.length;
+  }
+
   /** Merge extra context (e.g. after an async device lookup). Applies to events sent from now on. */
   setContext(patch: ContextPatch) {
     if (this.opts) this.opts.context = mergeContext(this.opts.context ?? {}, patch);

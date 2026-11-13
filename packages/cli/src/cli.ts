@@ -88,7 +88,10 @@ async function init(cwd: string, preset?: ProviderId) {
     ));
 
   const dashboardPort = await freePort(4400);
-  const ctx = { app, ingestKey: `pk_${provider === "local" ? "local" : "live"}_${randomBytes(12).toString("hex")}`, dashboardPort };
+  // Re-running on the same provider keeps the key: builds already shipped carry it.
+  const ingestKey =
+    existing?.provider === provider && existing.ingestKey ? existing.ingestKey : `pk_${provider === "local" ? "local" : "live"}_${randomBytes(12).toString("hex")}`;
+  const ctx = { app, ingestKey, dashboardPort };
   let result: ProviderResult;
   try {
     result = provider === "firebase" ? await setupFirebase(ctx) : provider === "aws" ? await setupAws(ctx) : await setupLocal(ctx);

@@ -1,4 +1,5 @@
 import { networkInterfaces } from "node:os";
+import { keyEntry } from "../keys";
 import { code, p } from "../ui";
 import type { ProviderResult, SetupContext } from "./types";
 
@@ -23,7 +24,7 @@ export async function setupLocal(ctx: SetupContext): Promise<ProviderResult> {
     config: { provider: "local", endpoint, ingestKey: ctx.ingestKey, local: { port: ctx.dashboardPort } },
     dashboardEnv: {
       DEBUG_STORE: "memory",
-      DEBUG_LOCAL_INGEST_KEYS: `${ctx.ingestKey}:${ctx.app.appId}`,
+      DEBUG_LOCAL_INGEST_KEYS: keyEntry(ctx.ingestKey, ctx.app.appId),
       ...(mobile ? { HOST: "0.0.0.0", DEBUG_INSECURE_COOKIES: "1" } : {}),
     },
     created: [

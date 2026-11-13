@@ -64,8 +64,9 @@ deBug.setUser(user.id);`;
 
 /** Send a handful of realistic test events through the real ingest. */
 export async function sendTestEvents(cfg: DebugkitConfig, app: AppInfo): Promise<{ sent: number; error?: string }> {
-  let lastStatus = 0;
-  let lastBody = "";
+  // Every upload's outcome: one rejected batch is a failure even if a later one succeeds.
+  const failures: string[] = [];
+  let sent = 0;
   const client = new DebugClient().init({
     endpoint: cfg.endpoint,
     ingestKey: cfg.ingestKey,
@@ -74,9 +75,15 @@ export async function sendTestEvents(cfg: DebugkitConfig, app: AppInfo): Promise
     autoCapture: { sessions: true, errors: false, network: false, console: false, navigation: false, clicks: false, lifecycle: false },
     flushIntervalMs: 0,
     fetch: async (url, init) => {
-      const res = await fetch(url, init);
-      lastStatus = res.status;
-      if (!res.ok) lastBody = await res.clone().text().catch(() => "");
+      let res: Response;
+      try {
+        res = await fetch(url, init);
+      } catch (err) {
+        failures.push(`couldn't reach it (${(err as Error).message})`);
+        throw err;
+      }
+      if (res.ok) sent += (JSON.parse(String(init?.body ?? "{}")).events ?? []).length;
+      else failures.push(`it answered ${res.status}: ${(await res.clone().text().catch(() => "")).slice(0, 200)}`);
       return res;
     },
   });
@@ -100,11 +107,12 @@ export async function sendTestEvents(cfg: DebugkitConfig, app: AppInfo): Promise
   // track(): one success, one failure.
   await client.track("onboarding.test", "submit", async () => true);
   await client.track("onboarding.test", "submit", async () => Promise.reject(new Error("Test failure from deBug.track()")), { captureError: false }).catch(() => {});
-  // Drain the queue (a flush already in flight only sends its batch).
-  for (let i = 0; i < 5 && (client as unknown as { queue: unknown[] }).queue.length; i++) await client.flush();
+  // Drain the queue (a flush already in flight only sends its batch). Stop on a failure:
+  // the SDK backs off and would otherwise keep the queue.
+  for (let i = 0; i < 5 && client.pending && !failures.length; i++) await client.flush();
   await client.close();
-  const ok = lastStatus >= 200 && lastStatus < 300;
-  return { sent: 6, error: ok ? undefined : `ingest answered ${lastStatus || "nothing"}${lastBody ? `: ${lastBody.slice(0, 200)}` : ""}` };
+  if (!failures.length && client.pending) failures.push(`${client.pending} events weren't sent`);
+  return { sent, error: failures.length ? failures.join("; ") : undefined };
 }
 
 /** Wait until the dashboard shows the test events. */

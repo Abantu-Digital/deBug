@@ -31,8 +31,8 @@ export async function installSdk(app: AppInfo) {
       app.hasSdk = true;
     }
   }
-  if (app.platform === "expo") {
-    const exit = await interactive("npx", ["expo", "install", "expo-device", "expo-application"], { cwd: app.cwd });
+  if (app.platform === "expo" && app.missingExpoModules.length) {
+    const exit = await interactive("npx", ["expo", "install", ...app.missingExpoModules], { cwd: app.cwd });
     if (exit !== 0) p.log.warn("Couldn't install expo-device and expo-application. Run: npx expo install expo-device expo-application");
   }
 }

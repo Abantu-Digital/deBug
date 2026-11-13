@@ -4,8 +4,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { detectApp, toAppId } from "./detect";
 import { hashPassword } from "./dashboard";
-import { awsProfiles } from "./providers/aws";
-import { writeFunctionSource } from "./providers/firebase";
+import { mergeKeys } from "./keys";
+import { awsProfiles, lookup } from "./providers/aws";
+import { functionRegion, writeFunctionSource } from "./providers/firebase";
 import { readEnv, upsertEnv } from "./state";
 import { initFile, writeAppEnv } from "./wire";
 import { scryptSync } from "node:crypto";
@@ -107,5 +108,42 @@ describe("providers", () => {
   it("hashes dashboard passwords the way the dashboard checks them", () => {
     const [, salt, hash] = hashPassword("correct-horse-battery").split(".");
     expect(scryptSync("correct-horse-battery", Buffer.from(salt!, "hex"), 64).toString("hex")).toBe(hash);
+  });
+});
+
+describe("safety on re-runs", () => {
+  it("adds ingest keys without dropping the ones shipped builds use", () => {
+    expect(mergeKeys(undefined, "pk_a", "shop")).toBe("pk_a:shop");
+    expect(mergeKeys("pk_old:shop,pk_x:other", "pk_new", "shop")).toBe("pk_old:shop,pk_x:other,pk_new:shop");
+    expect(mergeKeys("pk_a:shop", "pk_a", "shop")).toBe("pk_a:shop");
+    expect(mergeKeys(" , bad, pk_a:shop", "pk_b", "shop")).toBe("pk_a:shop,pk_b:shop");
+  });
+
+  it("keeps existing keys in the Firebase function's .env when run again", () => {
+    const dir = app({ name: "megatron", dependencies: { expo: "58" } });
+    const a = detectApp(dir);
+    writeFunctionSource({ app: a, ingestKey: "pk_live_first", dashboardPort: 4400 }, "us-central1");
+    const out = writeFunctionSource({ app: a, ingestKey: "pk_live_second", dashboardPort: 4400 }, "us-central1");
+    expect(readFileSync(join(out, "functions", ".env"), "utf8")).toBe("DEBUG_INGEST_KEYS=pk_live_first:megatron,pk_live_second:megatron\n");
+  });
+
+  it("treats only 'not found' as missing, and rethrows access errors", async () => {
+    const fail = (name: string) => () => Promise.reject(Object.assign(new Error(name), { name }));
+    await expect(lookup(fail("ResourceNotFoundException"))).resolves.toBeUndefined();
+    await expect(lookup(fail("NoSuchEntityException"))).resolves.toBeUndefined();
+    await expect(lookup(fail("AccessDeniedException"))).rejects.toThrow("AccessDeniedException");
+    await expect(lookup(async () => 1)).resolves.toBe(1);
+  });
+
+  it("maps Firestore locations to a Cloud Functions region", () => {
+    expect(functionRegion("nam5")).toBe("us-central1");
+    expect(functionRegion("eur3")).toBe("europe-west1");
+    expect(functionRegion("africa-south1")).toBe("africa-south1");
+    expect(functionRegion("australia-southeast2")).toBe("australia-southeast2");
+  });
+
+  it("only installs the Expo modules that are missing", () => {
+    expect(detectApp(app({ name: "e", dependencies: { expo: "58", "expo-device": "8" } })).missingExpoModules).toEqual(["expo-application"]);
+    expect(detectApp(app({ name: "w", dependencies: { react: "19" } })).missingExpoModules).toEqual([]);
   });
 });
