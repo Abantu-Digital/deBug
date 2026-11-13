@@ -72,6 +72,13 @@ export interface InitOptions {
   flushIntervalMs?: number;
   maxBatch?: number;
   maxBreadcrumbs?: number;
+  /** Tags on every error and event, such as `{ plan: "prepaid" }`. Change them later with `deBug.setTags()`. */
+  tags?: Record<string, string>;
+  /**
+   * More tags for one error or event, worked out when it happens (say, the screen's feature
+   * flag). They add to deBug's own and the global tags; the event's own tags win.
+   */
+  enrich?: (e: EventInput) => Record<string, string> | undefined | void;
   /** Drop or edit events before they are sent (PII scrubbing). Return null to drop. */
   beforeSend?: (e: EventInput) => EventInput | null;
   fetch?: typeof fetch;
@@ -144,6 +151,9 @@ export class DebugClient {
   private user: { id?: string; anonymousId: string } = { anonymousId: uid() };
   private timer: ReturnType<typeof setInterval> | undefined;
   private flushing: Promise<void> | undefined;
+  /** Tags on every error and event: deBug's own sources (device facts), then the app's. */
+  private tagSources: (() => Record<string, string> | undefined)[] = [];
+  private globalTags: Record<string, string> = {};
   /** The batch being uploaded: still saved, so a crash mid-upload doesn't lose it. */
   private inflight: EventInput[] = [];
   /** Saved events from the last run, read once; saves wait for it so they don't overwrite them. */
@@ -164,6 +174,7 @@ export class DebugClient {
     if (this.timer) clearInterval(this.timer);
     this.uninstrument();
     this.opts = { flushIntervalMs: 5000, maxBatch: 50, maxBreadcrumbs: 30, ...options };
+    this.globalTags = { ...options.tags };
     if (options.enabled === false) {
       // Switched off: stay inert. Handlers from an earlier init() check `ready` and do nothing.
       this.ready = false;
@@ -228,6 +239,25 @@ export class DebugClient {
   /** Merge extra context (e.g. after an async device lookup). Applies to events sent from now on. */
   setContext(patch: ContextPatch) {
     if (this.opts) this.opts.context = mergeContext(this.opts.context ?? {}, patch);
+  }
+
+  /** Add or change tags on every later error and event. A value of undefined removes the tag. */
+  setTags(tags: Record<string, string | undefined>) {
+    for (const [k, v] of Object.entries(tags)) {
+      if (v === undefined) delete this.globalTags[k];
+      else this.globalTags[k] = String(v);
+    }
+  }
+
+  /**
+   * A function whose tags go on every error and event (the React Native entry adds device
+   * facts this way). Read when each event happens; a source that throws is skipped.
+   */
+  addTagSource(source: () => Record<string, string> | undefined) {
+    this.tagSources.push(source);
+    return () => {
+      this.tagSources = this.tagSources.filter((s) => s !== source);
+    };
   }
 
   setUser(id: string | undefined) {
@@ -404,10 +434,10 @@ export class DebugClient {
   /** Queue without sampling (sessions must be complete for crash-free rates to be right). */
   private push(e: EventInput) {
     if (!this.ready) return;
-    let out: EventInput | null | undefined = e;
+    let out: EventInput | null | undefined = e.type === "error" || e.type === "event" ? this.withTags(e) : e;
     if (this.opts.beforeSend) {
       try {
-        out = this.opts.beforeSend(e);
+        out = this.opts.beforeSend(out);
       } catch (err) {
         this.log("beforeSend threw; sending the event unchanged", err);
       }
@@ -417,6 +447,30 @@ export class DebugClient {
     if (this.queue.length > MAX_QUEUE) this.queue.splice(0, this.queue.length - MAX_QUEUE);
     if (out.type === "error" || this.queue.length >= this.opts.maxBatch) void this.flush();
     else void this.persist();
+  }
+
+  /** deBug's tag sources, then the app's global tags, then enrich(), then the event's own tags. */
+  private withTags(e: EventInput): EventInput {
+    const tags: Record<string, string> = {};
+    const add = (t: Record<string, string> | undefined | void) => {
+      if (!t) return;
+      for (const [k, v] of Object.entries(t)) if (v !== undefined && v !== null) tags[k.slice(0, 100)] = String(v).slice(0, 200);
+    };
+    for (const source of this.tagSources) {
+      try {
+        add(source());
+      } catch {}
+    }
+    add(this.globalTags);
+    if (this.opts.enrich) {
+      try {
+        add(this.opts.enrich(e));
+      } catch (err) {
+        this.log("enrich threw; skipped", err);
+      }
+    }
+    add(e.tags);
+    return Object.keys(tags).length ? { ...e, tags } : e;
   }
 
   private buildContext(): ContextInput {

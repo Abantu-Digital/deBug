@@ -23,9 +23,9 @@ hooks, and they all share the same `deBug` client.
 
 | You have | Import from | Also install |
 |---|---|---|
-| Expo | `@debugkit/sdk/expo` | `npx expo install expo-device expo-application` |
+| Expo | `@debugkit/sdk/expo` | `npx expo install expo-device expo-application react-native-device-info` (`npx debugkit init` does this) |
 | Expo Router | `@debugkit/sdk/expo-router`, plus the above | |
-| Bare React Native | `@debugkit/sdk/react-native` | `react-native-device-info` (optional, for model and app version) |
+| Bare React Native | `@debugkit/sdk/react-native` | `react-native-device-info` (`npx debugkit init` does this) |
 | React on the web (Vite and others) | `@debugkit/sdk/react` | |
 | TanStack Start / Router | `@debugkit/sdk/react` for the browser, `@debugkit/sdk/node` for the server | |
 | Next.js, Remix, Express, any Node server | `@debugkit/sdk/node` | |
@@ -170,20 +170,51 @@ export default function RootLayout() {
 In Expo Go, the app version reported is Expo Go's own. Development and production builds
 report yours.
 
+## Device details on React Native and Expo
+
+deBug reads these itself. There's nothing to pass: `react-native-device-info` is a native
+module, so it has to be in your app's own dependencies (`npx debugkit init` adds it), and the
+app needs a new native build once it's added.
+
+| Where | What | When |
+|---|---|---|
+| Device context | model, brand, manufacturer, emulator, memory, phone or tablet, screen size and pixel ratio | at start-up |
+| App context | version and build | at start-up |
+| Tag `device.fontScale` | the user's text-size setting, e.g. `1.3` | first event |
+| Tag `device.mobileServices` | `gms`, `hms` or `none` (Android) | first event |
+| Tags `device.lowRam`, `android.apiLevel` | Android's low-RAM flag and API level | first event |
+| Tag `device.freeDisk` | free storage as a band: `<500MB`, `500MB-2GB`, `2GB-8GB`, `8GB+` | first event |
+| Tags `network.carrier`, `app.installer` | mobile operator; where the app was installed from | first event |
+| Tag `network.airplaneMode` | airplane mode (Android; iOS can't read it) | every event |
+
+- **Never collected:** unique ids, Android id, serial number, MAC or IP address, device name.
+- **Without the native half** (Expo Go, or an app not rebuilt since it was added): deBug
+  keeps working with what React Native exposes on its own: OS, screen, font scale, and the
+  model and brand on Android. It never crashes the app over it.
+- **Leave facts out** with `collect`: `initExpo({ …, collect: { carrier: false, installer: false } })`.
+- **Add your own:**
+  - `tags: { plan: "prepaid" }` at init, or `deBug.setTags({ plan: "prepaid" })` later (`undefined` removes one);
+  - `enrich: (event) => ({ screen: currentScreen() })` for values worked out per event.
+
+  The event's own tags win over yours, and yours win over deBug's.
+- **Keep crashes across restarts:** pass storage. MMKV saves a crash before the app closes:
+
+  ```ts
+  import { MMKV } from "react-native-mmkv";
+  import { mmkvStorage } from "@debugkit/sdk/expo"; // or /react-native
+  initExpo({ …, storage: mmkvStorage(new MMKV({ id: "debugkit" })) });
+  ```
+
 ## Bare React Native
 
 ```tsx
-import DeviceInfo from "react-native-device-info";
 import { initReactNative, DebugErrorBoundary, trackReactNavigation } from "@debugkit/sdk/react-native";
 
-initReactNative({ endpoint, ingestKey, app: { id: "your-app" }, deviceInfo: DeviceInfo });
+initReactNative({ endpoint, ingestKey, app: { id: "your-app" } });
 
 const nav = useNavigationContainerRef();
 <NavigationContainer ref={nav} {...trackReactNavigation(nav)}>…</NavigationContainer>
 ```
-
-Without `react-native-device-info` you still get the OS, OS version and JS engine. On Android
-you also get the model and brand.
 
 React Native also gets:
 
@@ -191,8 +222,8 @@ React Native also gets:
 - **Unhandled promise rejections** (Hermes). In production only by default, so the yellow-box
   warning still works in development. Pass `captureUnhandledRejections: true` to capture them
   in development too.
-- **A flush when the app goes to the background.** Pass AsyncStorage as `storage` to keep
-  unsent events across restarts.
+- **A flush when the app goes to the background.** Pass `storage` (see above) to keep unsent
+  events and crashes across restarts.
 
 ## React (web)
 

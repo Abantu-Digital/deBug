@@ -25,7 +25,8 @@ export function expoContext(): ContextPatch {
       brand: Device.brand ?? undefined,
       isEmulator: !Device.isDevice,
       memoryMb: Device.totalMemory ? Math.round(Device.totalMemory / 1024 / 1024) : undefined,
-      type: DEVICE_TYPES[(Device.deviceType ?? 0) as keyof typeof DEVICE_TYPES] ?? "unknown",
+      // Undefined when expo-device can't tell, so react-native-device-info's answer stands.
+      type: DEVICE_TYPES[(Device.deviceType ?? 0) as keyof typeof DEVICE_TYPES],
     },
     app: {
       version: Application.nativeApplicationVersion ?? undefined,

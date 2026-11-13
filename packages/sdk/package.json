@@ -107,7 +107,8 @@
     "expo-device": "*",
     "expo-router": "*",
     "react": ">=17",
-    "react-native": ">=0.70"
+    "react-native": ">=0.70",
+    "react-native-device-info": ">=10"
   },
   "peerDependenciesMeta": {
     "react": {
@@ -123,6 +124,9 @@
       "optional": true
     },
     "expo-router": {
+      "optional": true
+    },
+    "react-native-device-info": {
       "optional": true
     }
   },

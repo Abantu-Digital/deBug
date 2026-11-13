@@ -150,8 +150,11 @@ describe("safety on re-runs", () => {
   });
 
   it("only installs the Expo modules that are missing", () => {
-    expect(detectApp(app({ name: "e", dependencies: { expo: "58", "expo-device": "8" } })).missingExpoModules).toEqual(["expo-application"]);
-    expect(detectApp(app({ name: "w", dependencies: { react: "19" } })).missingExpoModules).toEqual([]);
+    expect(detectApp(app({ name: "e", dependencies: { expo: "58", "expo-device": "8" } })).missingNativeModules).toEqual(["expo-application", "react-native-device-info"]);
+    expect(detectApp(app({ name: "w", dependencies: { react: "19" } })).missingNativeModules).toEqual([]);
+    // Bare React Native: device-info must be the app's own dependency, or it isn't linked.
+    expect(detectApp(app({ name: "rn", dependencies: { "react-native": "0.83" } })).missingNativeModules).toEqual(["react-native-device-info"]);
+    expect(detectApp(app({ name: "rn2", dependencies: { "react-native": "0.83", "react-native-device-info": "15" } })).missingNativeModules).toEqual([]);
   });
 });
 

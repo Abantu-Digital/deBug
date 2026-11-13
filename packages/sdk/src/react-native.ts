@@ -1,66 +1,43 @@
 import { AppState, Platform } from "react-native";
 import { deBug, type DebugClient, type InitOptions } from "./index";
 import { locale, mergeContext, timezone, type ContextPatch } from "./context";
+import { deviceContext, liveDeviceTags, loadDeviceInfo, staticDeviceTags, type CollectOptions, type DeviceInfoModule } from "./device";
 
 export * from "./react";
 
-/** The subset of react-native-device-info we read. Pass the module itself: `import DeviceInfo from "react-native-device-info"`. */
-export interface DeviceInfoModule {
-  getModel(): string;
-  getBrand(): string;
-  getVersion(): string;
-  getBuildNumber(): string;
-  isTablet(): boolean;
-  getManufacturerSync?(): string;
-  isEmulatorSync?(): boolean;
-  getTotalMemorySync?(): number;
-}
+export type { CollectOptions, DeviceInfoModule } from "./device";
+export { mmkvStorage, type MMKVLike } from "./storage";
 
 type RNConstants = {
   Release?: string;
-  Model?: string;
-  Brand?: string;
-  Manufacturer?: string;
-  Fingerprint?: string;
   reactNativeVersion?: { major: number; minor: number; patch: number };
 };
 
 /**
- * Context for bare React Native. Reads what `react-native` exposes on its own; pass
- * react-native-device-info for model, app version and memory on both platforms.
+ * Context for React Native: OS, runtime, locale and timezone, plus the device (model, brand,
+ * memory, screen) from react-native-device-info when it's installed, or from React Native alone.
  */
-export function nativeContext(opts: { deviceInfo?: DeviceInfoModule } = {}): ContextPatch {
+export function nativeContext(opts: { deviceInfo?: DeviceInfoModule; collect?: CollectOptions } = {}): ContextPatch {
   const c = (Platform.constants ?? {}) as RNConstants;
-  const di = opts.deviceInfo;
   const rn = c.reactNativeVersion;
   const hermes = typeof (globalThis as { HermesInternal?: unknown }).HermesInternal !== "undefined";
-  const call = <T,>(fn?: () => T) => {
-    try {
-      return fn?.();
-    } catch {
-      return undefined;
-    }
-  };
-  const totalMemory = call(di?.getTotalMemorySync?.bind(di));
   return {
     os: { name: Platform.OS, version: Platform.OS === "android" ? (c.Release ?? String(Platform.Version)) : String(Platform.Version) },
     runtime: { name: "react-native", version: rn ? `${rn.major}.${rn.minor}.${rn.patch}` : undefined, engine: hermes ? "hermes" : "jsc" },
-    device: {
-      model: call(di?.getModel?.bind(di)) ?? c.Model,
-      brand: call(di?.getBrand?.bind(di)) ?? c.Brand,
-      manufacturer: call(di?.getManufacturerSync?.bind(di)) ?? c.Manufacturer,
-      isEmulator: call(di?.isEmulatorSync?.bind(di)) ?? (c.Fingerprint ? /generic|emulator/i.test(c.Fingerprint) : undefined),
-      memoryMb: totalMemory ? Math.round(totalMemory / 1024 / 1024) : undefined,
-      type: di ? (call(di.isTablet?.bind(di)) ? "tablet" : "phone") : Platform.OS === "ios" && (Platform as { isPad?: boolean }).isPad ? "tablet" : "phone",
-    },
-    app: { version: call(di?.getVersion?.bind(di)), build: call(di?.getBuildNumber?.bind(di)) } as ContextPatch["app"],
+    ...deviceContext(opts.deviceInfo, opts.collect),
     locale: locale(),
     timezone: timezone(),
   };
 }
 
 export interface ReactNativeInitOptions extends InitOptions {
-  deviceInfo?: DeviceInfoModule;
+  /**
+   * Not needed: deBug loads react-native-device-info itself. Pass a module only to override it
+   * (in tests, say), or `null` to read nothing from it.
+   */
+  deviceInfo?: DeviceInfoModule | null;
+  /** Device facts to leave out, e.g. `{ carrier: false }`. Everything is collected by default. */
+  collect?: CollectOptions;
   /**
    * Report unhandled promise rejections (Hermes). Default "production": in development React
    * Native's own yellow-box warning keeps working. `true` captures in development too.
@@ -71,19 +48,28 @@ export interface ReactNativeInitOptions extends InitOptions {
 declare const __DEV__: boolean | undefined;
 
 const SESSION_TIMEOUT_MS = 30 * 60_000;
+let removeDeviceTags: (() => void) | undefined;
 
 /** Initialise deBug in a React Native app (bare or Expo). Fills in device context and flushes when the app is backgrounded. */
 export function initReactNative(options: ReactNativeInitOptions, client: DebugClient = deBug): DebugClient {
-  const { deviceInfo, captureUnhandledRejections = "production", ...rest } = options;
+  const { deviceInfo, collect, captureUnhandledRejections = "production", ...rest } = options;
+  removeDeviceTags?.();
+  removeDeviceTags = undefined;
   // Switched off: don't touch the device at all.
   if (rest.enabled === false) return client.init(rest);
-  const base = nativeContext({ deviceInfo });
+  const di = deviceInfo === null ? undefined : (deviceInfo ?? loadDeviceInfo());
+  const base = nativeContext({ deviceInfo: di, collect });
   client.init({
     ...rest,
     app: { ...(base.app as object), ...rest.app },
     context: mergeContext(base, rest.context ?? {}),
   });
   if (!client.enabled) return client; // enabled: false — no listeners, no rejection tracking
+  if (!di && deviceInfo !== null && rest.debug) console.log("[deBug] react-native-device-info isn't linked (Expo Go, or the app needs a rebuild): device details are limited");
+
+  // Device facts on every error and event: fixed ones read once, on the first event; live ones each time.
+  let fixed: Record<string, string> | undefined;
+  removeDeviceTags = client.addTagSource(() => ({ ...(fixed ??= staticDeviceTags(di, collect)), ...liveDeviceTags(di, collect) }));
 
   // Sessions end after 30 minutes in the background; coming back after that starts a new one.
   let backgroundedAt = 0;
