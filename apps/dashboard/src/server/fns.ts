@@ -1,10 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import { redirect } from "@tanstack/react-router";
-import { checkCredentials, demoLoginEnabled, DEMO_USER, endSession, readSession, startSession } from "./auth";
+import { canManage, checkCredentials, demoLoginEnabled, DEMO_USER, endSession, readSession, recordFailure, startSession, tooManyAttempts, type SessionUser } from "./auth";
 import { config } from "./config";
 import { buildIssueDetail, buildSummary } from "./queries";
 import { readSettings, restampStep, settingsWriter, testAlert, validRetention, writeIssueStatus, writeRetention, writeSettings } from "./settings";
 import { getStore } from "./store";
+import { acceptInvite, changeRole, createInvite, readTeam, removeMember, revokeInvite } from "./team";
+import { hashInviteToken } from "@debugkit/ingest";
+import { TEAM_ROLES, type TeamRole } from "@debugkit/adapters";
 
 export const getSessionUser = createServerFn({ method: "GET" }).handler(async () => readSession());
 
@@ -19,8 +22,11 @@ export const login = createServerFn({ method: "POST" })
     return { email: d.email.slice(0, 200), password: d.password.slice(0, 200) };
   })
   .handler(async ({ data }) => {
-    const user = checkCredentials(data.email, data.password);
+    const key = data.email.trim().toLowerCase();
+    if (tooManyAttempts(key)) return { ok: false as const, error: "Too many attempts. Wait 15 minutes, or ask an owner to reset your access." };
+    const user = await checkCredentials(data.email, data.password);
     if (!user) {
+      recordFailure(key);
       await new Promise((r) => setTimeout(r, 400)); // slow down guessing
       return { ok: false as const, error: "Incorrect email or password." };
     }
@@ -33,9 +39,16 @@ export const logout = createServerFn({ method: "POST" }).handler(async () => {
   return { ok: true };
 });
 
-function requireUser() {
-  const user = readSession();
+async function requireUser(): Promise<SessionUser> {
+  const user = await readSession();
   if (!user) throw redirect({ to: "/login" });
+  return user;
+}
+
+/** Settings and the team: owners and admins only. */
+async function requireManager(): Promise<SessionUser> {
+  const user = await requireUser();
+  if (!canManage(user)) throw new Error("Only owners and admins can change this.");
   return user;
 }
 
@@ -46,14 +59,14 @@ const rangeOf = (d: RangeInput | undefined): RangeInput => ({ range: str(d?.rang
 export const getOverview = createServerFn({ method: "GET" })
   .validator((d: { app?: string } & RangeInput) => ({ app: str(d?.app), ...rangeOf(d) }))
   .handler(async ({ data }) => {
-    requireUser();
+    await requireUser();
     return buildSummary(await getStore(), data.app, config().severity, Date.now(), { range: data, retentionDays: config().retentionDays });
   });
 
 export const getIssueDetail = createServerFn({ method: "GET" })
   .validator((d: { app: string; fingerprint: string } & RangeInput) => ({ app: String(d.app), fingerprint: String(d.fingerprint), ...rangeOf(d) }))
   .handler(async ({ data }) => {
-    requireUser();
+    await requireUser();
     const detail = await buildIssueDetail(await getStore(), data.app, data.fingerprint, config().severity, Date.now(), { range: data, retentionDays: config().retentionDays, trackers: config().trackers });
     return detail ? { ...detail, canChangeStatus: settingsWriter() !== "none" } : null;
   });
@@ -65,7 +78,7 @@ export const updateIssueStatus = createServerFn({ method: "POST" })
     return { app: String(d.app ?? ""), fingerprint: String(d.fingerprint ?? ""), status: status as "open" | "resolved" | "ignored", resolvedIn: typeof d.resolvedIn === "string" ? d.resolvedIn.trim().slice(0, 100) || undefined : undefined };
   })
   .handler(async ({ data }) => {
-    requireUser();
+    await requireUser();
     try {
       return { ok: true as const, ...(await writeIssueStatus(data.app, data.fingerprint, data.status, data.resolvedIn)) };
     } catch (err) {
@@ -76,7 +89,7 @@ export const updateIssueStatus = createServerFn({ method: "POST" })
 export const getSettings = createServerFn({ method: "GET" })
   .validator((d: { app?: string }) => ({ app: str(d?.app) }))
   .handler(async ({ data }) => {
-    requireUser();
+    await requireUser();
     const apps = await (await getStore()).listApps();
     const app = data.app && apps.includes(data.app) ? data.app : apps[0];
     return { apps, settings: app ? await readSettings(app) : null };
@@ -85,7 +98,7 @@ export const getSettings = createServerFn({ method: "GET" })
 export const saveRetention = createServerFn({ method: "POST" })
   .validator((d: { app: string; retentionDays: number }) => ({ app: String(d?.app ?? ""), retentionDays: validRetention(d?.retentionDays) }))
   .handler(async ({ data }) => {
-    requireUser();
+    await requireManager();
     try {
       return { ok: true as const, settings: await writeRetention(data.app, data.retentionDays) };
     } catch (err) {
@@ -115,7 +128,7 @@ export const saveAppSettings = createServerFn({ method: "POST" })
     };
   })
   .handler(async ({ data }) => {
-    requireUser();
+    await requireManager();
     try {
       return { ok: true as const, settings: await writeSettings(data.app, { criticalFlows: data.criticalFlows, alerts: data.alerts }) };
     } catch (err) {
@@ -126,7 +139,7 @@ export const saveAppSettings = createServerFn({ method: "POST" })
 export const sendTestAlert = createServerFn({ method: "POST" })
   .validator((d: { app: string }) => ({ app: String(d?.app ?? "") }))
   .handler(async ({ data }) => {
-    requireUser();
+    await requireManager();
     try {
       await testAlert(data.app);
       return { ok: true as const };
@@ -138,10 +151,95 @@ export const sendTestAlert = createServerFn({ method: "POST" })
 export const restampExisting = createServerFn({ method: "POST" })
   .validator((d: { app: string; cursor?: string }) => ({ app: String(d?.app ?? ""), cursor: str(d?.cursor) ?? (typeof d?.cursor === "string" ? d.cursor.slice(0, 200) : undefined) }))
   .handler(async ({ data }) => {
-    requireUser();
+    await requireManager();
     try {
       return { ok: true as const, ...(await restampStep(data.app, data.cursor)) };
     } catch (err) {
       return { ok: false as const, error: (err as Error).message, updated: 0 };
+    }
+  });
+
+/* ---------------------------------------------------------------- team */
+
+const role = (v: unknown): TeamRole => {
+  if (!TEAM_ROLES.includes(v as TeamRole)) throw new Error("role must be owner, admin or member");
+  return v as TeamRole;
+};
+const emailOf = (v: unknown) => (typeof v === "string" ? v.trim().toLowerCase().slice(0, 254) : "");
+const ok = async (fn: () => Promise<unknown>) => {
+  try {
+    await fn();
+    return { ok: true as const };
+  } catch (err) {
+    return { ok: false as const, error: (err as Error).message };
+  }
+};
+
+export const getTeam = createServerFn({ method: "GET" }).handler(async () => {
+  const user = await requireUser();
+  return { ...(await readTeam()), me: user, canManage: canManage(user) };
+});
+
+export const inviteToTeam = createServerFn({ method: "POST" })
+  .validator((d: { role: string; email?: string }) => ({ role: role(d?.role), email: emailOf(d?.email) || undefined }))
+  .handler(async ({ data }) => {
+    const user = await requireManager();
+    try {
+      return { ok: true as const, ...(await createInvite(user, data.role, data.email)) };
+    } catch (err) {
+      return { ok: false as const, error: (err as Error).message };
+    }
+  });
+
+export const cancelInvite = createServerFn({ method: "POST" })
+  .validator((d: { id: string }) => ({ id: String(d?.id ?? "").slice(0, 64) }))
+  .handler(async ({ data }) => {
+    const user = await requireManager();
+    return ok(() => revokeInvite(user, data.id));
+  });
+
+export const setMemberRole = createServerFn({ method: "POST" })
+  .validator((d: { email: string; role: string }) => ({ email: emailOf(d?.email), role: role(d?.role) }))
+  .handler(async ({ data }) => {
+    const user = await requireManager();
+    if (data.email === user.email) return { ok: false as const, error: "You can't change your own role." };
+    return ok(() => changeRole(user, data.email, data.role));
+  });
+
+export const removeFromTeam = createServerFn({ method: "POST" })
+  .validator((d: { email: string }) => ({ email: emailOf(d?.email) }))
+  .handler(async ({ data }) => {
+    const user = await requireManager();
+    if (data.email === user.email) return { ok: false as const, error: "You can't remove yourself." };
+    return ok(() => removeMember(user, data.email));
+  });
+
+const TOKEN = /^[A-Za-z0-9_-]{40,64}$/;
+
+/** What an invite link is for, before the person accepts it. Public: the token is the secret. */
+export const getInvite = createServerFn({ method: "GET" })
+  .validator((d: { token: string }) => ({ token: String(d?.token ?? "") }))
+  .handler(async ({ data }) => {
+    if (!TOKEN.test(data.token)) return { valid: false as const };
+    const store = await getStore();
+    const id = hashInviteToken(data.token);
+    const i = typeof store.listInvites === "function" ? (await store.listInvites()).find((x) => x.id === id) : undefined;
+    if (!i || i.usedAt || i.revokedAt || Date.parse(i.expiresAt) < Date.now()) return { valid: false as const };
+    return { valid: true as const, role: i.role, email: i.email, invitedBy: i.invitedBy, expiresAt: i.expiresAt };
+  });
+
+export const joinTeam = createServerFn({ method: "POST" })
+  .validator((d: { token: string; email: string; name?: string; password: string }) => {
+    if (typeof d?.password !== "string") throw new Error("password required");
+    return { token: String(d?.token ?? "").slice(0, 64), email: emailOf(d?.email), name: typeof d?.name === "string" ? d.name.trim().slice(0, 80) || undefined : undefined, password: d.password };
+  })
+  .handler(async ({ data }) => {
+    if (!TOKEN.test(data.token)) return { ok: false as const, error: "This invite link isn't valid." };
+    try {
+      const user = await acceptInvite(data.token, data.email, data.name, data.password);
+      startSession(user);
+      return { ok: true as const };
+    } catch (err) {
+      return { ok: false as const, error: (err as Error).message };
     }
   });

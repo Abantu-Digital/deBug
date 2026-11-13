@@ -45,6 +45,25 @@ It uses the same login as your local dashboard, and you can keep running it loca
 - Anyone with the link sees the sign-in page; only people with a login get in.
 - If Firebase Hosting can't reach a function in your database's region, the CLI offers to retry with the function in `us-central1`.
 
+### Inviting your team
+
+Open **Team** on the dashboard and create an invite link. Nothing is emailed: copy the link and
+send it however you like. The person opens it, picks a password, and is signed in.
+
+| Role | Can |
+|---|---|
+| owner | everything, including adding and removing owners |
+| admin | change settings and manage the team, except owners |
+| member | see everything and change issue status |
+
+- Links work once and expire after 7 days. Add an email to lock a link to one person.
+- Removing someone signs them out within 10 seconds, and their password stops working.
+- The login `init` created stays an owner. It lives in `.debugkit/dashboard.env`, not the team list.
+- Team logins are stored in your database (`debug_apps_members` in Firestore, `TEAM` items in
+  DynamoDB) as scrypt hashes. Invite links are stored only as SHA-256 hashes.
+- Changes go through your ingest function, like settings. Redeploy ingest (`npx debugkit init`)
+  if the Team page says it's too old.
+
 ## Several environments (preview, production…)
 
 When each environment has its own backend, such as separate Firebase projects or AWS accounts, set

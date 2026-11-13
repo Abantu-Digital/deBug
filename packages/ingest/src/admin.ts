@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { teamAction } from "./team";
 import { MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, type AlertSettings, type AppSettings, type WriteStore } from "@debugkit/adapters";
 import { SLACK_WEBHOOK } from "./alerts";
 
@@ -99,6 +100,11 @@ const APP_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
  *   POST /admin/alert-test { app }           send a test message to the app's Slack webhook
  *   POST /admin/restamp    { app, cursor? }  re-stamp existing events' expiry, one page per call
  *   PUT  /admin/issue      { app, fingerprint, status: open|resolved|ignored, resolvedIn? }
+ *   POST /admin/team/invite { role, email?, invitedBy }      { token, invite } (the token only here)
+ *   POST /admin/team/accept { token, email, name?, passwordHash }
+ *   POST /admin/team/role   { email, role }
+ *   POST /admin/team/remove { email }
+ *   POST /admin/team/revoke { id }
  */
 export async function handleAdmin(
   req: { method: string; path: string; query?: Record<string, string | undefined>; body: string; authorization?: string },
@@ -115,9 +121,14 @@ export async function handleAdmin(
       return { status: 400, body: { ok: false, error: "invalid json" } };
     }
   }
+  const route = req.path.replace(/\/+$/, "").replace(/^.*\/admin/, "");
+  // The team is the whole deployment's, not one app's.
+  if (route.startsWith("/team/")) {
+    if (req.method !== "POST") return { status: 405, body: { ok: false, error: "use POST" } };
+    return teamAction(opts.store, route.slice("/team/".length), body);
+  }
   const app = String((req.method === "GET" ? req.query?.app : body.app) ?? "");
   if (!APP_ID.test(app)) return { status: 400, body: { ok: false, error: "app is required" } };
-  const route = req.path.replace(/\/+$/, "").replace(/^.*\/admin/, "");
 
   if (route === "/settings" && req.method === "GET") {
     const settings = await opts.store.getSettings(app);

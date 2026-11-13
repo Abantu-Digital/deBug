@@ -2,7 +2,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { isRegression, type Issue, type RollupDimension, type RollupIncrement, type RollupRow, type StoredEvent } from "@debugkit/schema";
 import { coalesceRollups, rollupId } from "./rollups";
-import { HOURLY_ROLLUP_DAYS, type AppSettings, type IssueStatusChange, type IssueUpsert, type RestampResult, type Store, type UpsertOutcome, type UserMark } from "./index";
+import { HOURLY_ROLLUP_DAYS, type TeamInvite, type TeamMember, type AppSettings, type IssueStatusChange, type IssueUpsert, type RestampResult, type Store, type UpsertOutcome, type UserMark } from "./index";
 
 /**
  * Firestore layout (all under one root collection so it's easy to find / secure / delete):
@@ -13,6 +13,9 @@ import { HOURLY_ROLLUP_DAYS, type AppSettings, type IssueStatusChange, type Issu
  *   {root}/{app}/events/{eventId}     StoredEvent + expireAt (enable a TTL policy on `expireAt`)
  *   {root}/{app}/settings/app         AppSettings (retention, set from the dashboard)
  *   {root}/{app}/users/{scope__member} { scope, member, lastDay } (hashed ids; for "users affected")
+ *
+ *   {root}_members/{email}            TeamMember (dashboard logins; outside {root} so it isn't an app)
+ *   {root}_invites/{sha256 of token}  TeamInvite
  *
  * Hourly rollups (dimension issueHour) also carry expireAt, so they expire after 7 days.
  *
@@ -29,6 +32,45 @@ export class FirestoreStore implements Store {
   }
   private app(app: string) {
     return this.root.doc(app);
+  }
+  private get members() {
+    return this.db.collection(`${this.opts.root ?? "debug_apps"}_members`);
+  }
+  private get invites() {
+    return this.db.collection(`${this.opts.root ?? "debug_apps"}_invites`);
+  }
+
+  async getMember(email: string) {
+    const snap = await this.members.doc(email).get();
+    return snap.exists ? (snap.data() as TeamMember) : null;
+  }
+  async putMember(m: TeamMember) {
+    await this.members.doc(m.email).set(strip(m));
+  }
+  async listMembers() {
+    const snap = await this.members.limit(500).get();
+    return snap.docs.map((d) => d.data() as TeamMember).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+  async getInvite(id: string) {
+    const snap = await this.invites.doc(id).get();
+    return snap.exists ? (snap.data() as TeamInvite) : null;
+  }
+  async putInvite(i: TeamInvite) {
+    await this.invites.doc(i.id).set(strip(i));
+  }
+  async claimInvite(id: string, by: string, at: string) {
+    const ref = this.invites.doc(id);
+    return this.db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const cur = snap.data() as TeamInvite | undefined;
+      if (!cur || cur.usedAt || cur.revokedAt) return false;
+      tx.update(ref, { usedAt: at, usedBy: by });
+      return true;
+    });
+  }
+  async listInvites() {
+    const snap = await this.invites.limit(500).get();
+    return snap.docs.map((d) => d.data() as TeamInvite).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   async registerApp(app: string) {

@@ -2,7 +2,7 @@ import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { BatchWriteCommand, type BatchWriteCommandOutput, GetCommand, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { isRegression, type Issue, type RollupDimension, type RollupIncrement, type RollupRow, type StoredEvent } from "@debugkit/schema";
 import { coalesceRollups } from "./rollups";
-import { HOURLY_ROLLUP_DAYS, type AppSettings, type IssueStatusChange, type IssueUpsert, type RestampResult, type Store, type UpsertOutcome, type UserMark } from "./index";
+import { HOURLY_ROLLUP_DAYS, type TeamInvite, type TeamMember, type AppSettings, type IssueStatusChange, type IssueUpsert, type RestampResult, type Store, type UpsertOutcome, type UserMark } from "./index";
 
 /**
  * Single-table layout. Table needs: partition key `pk` (S), sort key `sk` (S),
@@ -16,6 +16,9 @@ import { HOURLY_ROLLUP_DAYS, type AppSettings, type IssueStatusChange, type Issu
  *   APP#{app}#SETTINGS           | app              AppSettings
  *   APP#{app}#USERS#{scope}      | {member}         { lastDay } (hashed ids; for "users affected")
  *
+ *   TEAM                         | M#{email}        TeamMember (dashboard logins)
+ *   TEAM                         | I#{sha256}       TeamInvite
+ *
  * Hourly rollups (dimension issueHour) also carry `ttl`, so they expire after 7 days.
  */
 export class DynamoStore implements Store {
@@ -26,6 +29,56 @@ export class DynamoStore implements Store {
 
   private get table() {
     return this.opts.table;
+  }
+
+  async getMember(email: string) {
+    const out = await this.doc.send(new GetCommand({ TableName: this.table, Key: { pk: "TEAM", sk: `M#${email}` } }));
+    return out.Item ? (clean(out.Item) as TeamMember) : null;
+  }
+  async putMember(m: TeamMember) {
+    await this.doc.send(new PutCommand({ TableName: this.table, Item: { ...dropUndefined(m), pk: "TEAM", sk: `M#${m.email}` } }));
+  }
+  async listMembers() {
+    return (await this.teamItems("M#")) as TeamMember[];
+  }
+  async getInvite(id: string) {
+    const out = await this.doc.send(new GetCommand({ TableName: this.table, Key: { pk: "TEAM", sk: `I#${id}` } }));
+    return out.Item ? (clean(out.Item) as TeamInvite) : null;
+  }
+  async putInvite(i: TeamInvite) {
+    await this.doc.send(new PutCommand({ TableName: this.table, Item: { ...dropUndefined(i), pk: "TEAM", sk: `I#${i.id}` } }));
+  }
+  async claimInvite(id: string, by: string, at: string) {
+    try {
+      await this.doc.send(
+        new UpdateCommand({
+          TableName: this.table,
+          Key: { pk: "TEAM", sk: `I#${id}` },
+          UpdateExpression: "SET usedAt = :at, usedBy = :by",
+          ConditionExpression: "attribute_exists(pk) AND attribute_not_exists(usedAt) AND attribute_not_exists(revokedAt)",
+          ExpressionAttributeValues: { ":at": at, ":by": by },
+        }),
+      );
+      return true;
+    } catch (e) {
+      if ((e as { name?: string }).name === "ConditionalCheckFailedException") return false;
+      throw e;
+    }
+  }
+  async listInvites() {
+    return ((await this.teamItems("I#")) as TeamInvite[]).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  private async teamItems(prefix: string) {
+    const items: unknown[] = [];
+    let ExclusiveStartKey: Record<string, unknown> | undefined;
+    do {
+      const out = await this.doc.send(
+        new QueryCommand({ TableName: this.table, KeyConditionExpression: "pk = :pk AND begins_with(sk, :p)", ExpressionAttributeValues: { ":pk": "TEAM", ":p": prefix }, ExclusiveStartKey }),
+      );
+      items.push(...(out.Items ?? []).map(clean));
+      ExclusiveStartKey = out.LastEvaluatedKey;
+    } while (ExclusiveStartKey);
+    return items;
   }
 
   async registerApp(app: string) {
@@ -315,4 +368,8 @@ export class DynamoStore implements Store {
 function clean<T>(item: T): T {
   const { pk: _p, sk: _s, ttl: _t, ...rest } = item as Record<string, unknown>;
   return rest as T;
+}
+
+function dropUndefined<T extends object>(v: T): T {
+  return Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined)) as T;
 }

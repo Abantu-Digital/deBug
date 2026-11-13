@@ -1,6 +1,6 @@
 import { isRegression, type Issue, type RollupDimension, type RollupIncrement, type RollupRow, type StoredEvent } from "@debugkit/schema";
 import { coalesceRollups, rollupId } from "./rollups";
-import type { AppSettings, IssueStatusChange, IssueUpsert, RestampResult, Store, UpsertOutcome, UserMark } from "./index";
+import type { TeamInvite, TeamMember, AppSettings, IssueStatusChange, IssueUpsert, RestampResult, Store, UpsertOutcome, UserMark } from "./index";
 
 /** In-process store for tests and the dashboard's demo mode. */
 export class MemoryStore implements Store {
@@ -14,6 +14,33 @@ export class MemoryStore implements Store {
   /** Expiry per event id (ms), mirroring what a real store would stamp. */
   expiry = new Map<string, number>();
   retentionDays = 30;
+  members = new Map<string, TeamMember>();
+  invites = new Map<string, TeamInvite>();
+
+  async getMember(email: string) {
+    return this.members.get(email) ?? null;
+  }
+  async putMember(m: TeamMember) {
+    this.members.set(m.email, { ...m });
+  }
+  async listMembers() {
+    return [...this.members.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+  async getInvite(id: string) {
+    return this.invites.get(id) ?? null;
+  }
+  async putInvite(i: TeamInvite) {
+    this.invites.set(i.id, { ...i });
+  }
+  async claimInvite(id: string, by: string, at: string) {
+    const cur = this.invites.get(id);
+    if (!cur || cur.usedAt || cur.revokedAt) return false;
+    this.invites.set(id, { ...cur, usedAt: at, usedBy: by });
+    return true;
+  }
+  async listInvites() {
+    return [...this.invites.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
 
   async registerApp(app: string) {
     this.apps.add(app);

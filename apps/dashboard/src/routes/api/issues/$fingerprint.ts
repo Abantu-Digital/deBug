@@ -9,7 +9,7 @@ export const Route = createFileRoute("/api/issues/$fingerprint")({
   server: {
     handlers: {
       GET: async ({ request, params }) => {
-        if (!authorizeApi(request)) return Response.json({ error: "unauthorized" }, { status: 401 });
+        if (!(await authorizeApi(request))) return Response.json({ error: "unauthorized" }, { status: 401 });
         const q = new URL(request.url).searchParams;
         const app = q.get("app");
         if (!app) return Response.json({ error: "app query param required" }, { status: 400 });
