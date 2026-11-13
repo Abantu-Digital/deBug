@@ -180,6 +180,11 @@ deBug hosts nothing.
   DynamoDB adapters, overview, flow, and issue pages.
 - **Automatic capture (0.2, released):** network capture, sessions and crash-free
   rates, automatic breadcrumbs, noise control.
+- **Onboarding CLI (0.3, released):** `npx @debugkit/cli init`, or `npx debugkit init`
+  once the SDK is installed. It provisions Firebase or AWS in the user's own account, wires the
+  app, opens the empty dashboard, and walks through it with a test event. The dashboard is
+  published as `@debugkit/dashboard`. Verified end to end on a real Firebase project; the AWS
+  path is covered by unit tests only.
 - **Next, automatic capture part 2:** freezes (JS thread stalls, long tasks,
   event-loop lag), performance (web vitals, cold start, slow screens), memory
   warnings, error spikes, rage clicks, and a Health page.
