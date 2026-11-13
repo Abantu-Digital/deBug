@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
-import { freePort, prepareDashboardEnv, resetLogin, startDashboard } from "./dashboard";
+import { freePort, prepareDashboardEnv, resetLogin, startDashboard, VERSION } from "./dashboard";
 import { detectApp, PLATFORM_LABEL, type AppInfo } from "./detect";
 import { sendTestEvents, walkthrough } from "./guide";
 import { setupAws } from "./providers/aws";
@@ -11,7 +11,6 @@ import { readConfig, writeConfig, type DebugkitConfig, type ProviderId } from ".
 import { bail, bold, choose, code, dim, flags, p, pc, yes } from "./ui";
 import { initFile, installSdk, wireApp } from "./wire";
 
-const VERSION = "0.2.0";
 
 const HELP = `${bold("debugkit")} ${VERSION}: set up deBug in your app
 

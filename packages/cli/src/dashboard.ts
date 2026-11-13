@@ -7,7 +7,10 @@ import { capture } from "./exec";
 import { paths, readEnv, upsertEnv } from "./state";
 import { ask, code, dim, flags, must, p } from "./ui";
 
-export const DASHBOARD_VERSION = "^0.2.0";
+declare const __DEBUGKIT_VERSION__: string | undefined;
+/** This CLI's version (set at build time). The dashboard is released with it, so they always match. */
+export const VERSION = typeof __DEBUGKIT_VERSION__ === "string" ? __DEBUGKIT_VERSION__ : "0.0.0-dev";
+export const DASHBOARD_VERSION = VERSION;
 
 /** Hash a dashboard password the same way the dashboard's hash-password script does. */
 export function hashPassword(password: string) {
