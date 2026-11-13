@@ -1,6 +1,6 @@
 {
   "name": "debugkit",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Set up deBug in your app: npx debugkit init. Picks a cloud, deploys ingest to your own account, wires the SDK and walks you through the dashboard.",
   "type": "module",
   "bin": {

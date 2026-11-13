@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { capture, interactive, openUrl, which } from "../exec";
 import FIRESTORE_INDEXES from "../../../adapters/firestore.indexes.json" with { type: "json" };
+import { VERSION } from "../dashboard";
 import { mergeKeys } from "../keys";
 import { paths } from "../state";
 import { ask, bail, choose, code, dim, next, p, yes } from "../ui";
@@ -263,8 +264,9 @@ export function writeFunctionSource(ctx: SetupContext, region: string): string {
         main: "index.js",
         engines: { node: "22" },
         dependencies: {
-          "@debugkit/adapters": "^0.2.0",
-          "@debugkit/ingest": "^0.2.0",
+          // Same release as this CLI (the packages are versioned together).
+          "@debugkit/adapters": `^${VERSION}`,
+          "@debugkit/ingest": `^${VERSION}`,
           "firebase-admin": "^13.0.0",
           "firebase-functions": "^7.0.0",
         },

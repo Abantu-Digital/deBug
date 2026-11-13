@@ -9,7 +9,7 @@
     "build": "pnpm -r --filter \"./packages/*\" build",
     "pack:local": "node scripts/pack-local.mjs",
     "changeset": "changeset",
-    "release": "pnpm build && changeset publish"
+    "release": "pnpm build && pnpm --filter @debugkit/dashboard build && changeset publish"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.1",
