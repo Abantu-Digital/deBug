@@ -4,7 +4,7 @@ import { capture, interactive, openUrl, which } from "../exec";
 import FIRESTORE_INDEXES from "../../../adapters/firestore.indexes.json" with { type: "json" };
 import { VERSION } from "../dashboard";
 import { mergeKeys } from "../keys";
-import { environment, paths } from "../state";
+import { cmdFor, environment, firebaseProjectUsedBy, paths } from "../state";
 import { ask, bail, bold, choose, code, dim, next, p, yes } from "../ui";
 import { adminEnv, type ProviderResult, type SetupContext } from "./types";
 
@@ -55,7 +55,7 @@ export async function setupFirebase(ctx: SetupContext): Promise<ProviderResult> 
   let account: string;
   if (!accounts.length) {
     await next("Open the Google sign-in page");
-    if ((await fbLive(["login"])) !== 0) bail("Firebase sign-in didn't finish. Run npx debugkit init to try again.");
+    if ((await fbLive(["login"])) !== 0) bail(`Firebase sign-in didn't finish. Run ${cmdFor("init")} to try again.`);
     accounts = emailsIn((await fb(["login:list"])).stdout);
   }
   const ADD = "__add__";
@@ -83,19 +83,34 @@ export async function setupFirebase(ctx: SetupContext): Promise<ProviderResult> 
     p.log.warn(`Couldn't read the project list: ${dim(list.stderr.slice(-300))}`);
   }
   const NEW = "__new__";
-  let projectId = await choose(
-    "Which Firebase project should deBug use?",
-    [
-      { value: NEW, label: "Create a new project", hint: "recommended: keeps deBug's data and bill separate" },
-      ...projects.map((x) => ({ value: x.projectId, label: x.displayName ? `${x.displayName}` : x.projectId, hint: x.projectId })),
-    ],
-    NEW,
-  );
+  // One Firebase project per environment: refuse one another environment of this app already uses.
+  const takenBy = (id: string) => firebaseProjectUsedBy(ctx.app.cwd, id);
+  let projectId: string;
+  for (;;) {
+    projectId = await choose(
+      "Which Firebase project should deBug use?",
+      [
+        { value: NEW, label: "Create a new project", hint: "recommended: keeps deBug's data and bill separate" },
+        ...projects.map((x) => {
+          const owner = takenBy(x.projectId);
+          return { value: x.projectId, label: x.displayName ? `${x.displayName}` : x.projectId, hint: owner ? `${x.projectId}, used by ${owner}` : x.projectId };
+        }),
+      ],
+      NEW,
+    );
+    const owner = projectId === NEW ? undefined : takenBy(projectId);
+    if (!owner) break;
+    p.log.warn(`${bold(projectId)} is already ${owner}'s project. Each environment needs its own Firebase project, so their data never mixes. Pick another project, or create one.`);
+  }
   if (projectId === NEW) {
     const suggested = `${ctx.app.appId}-debug`.slice(0, 26).replace(/-+$/, "") + `-${Math.random().toString(36).slice(2, 6)}`;
     projectId = await ask("Project id (lowercase, globally unique)", {
       initial: suggested,
-      validate: (v) => (/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(v) ? undefined : "6–30 characters: lowercase letters, digits and dashes"),
+      validate: (v) => {
+        if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(v)) return "6–30 characters: lowercase letters, digits and dashes";
+        const owner = takenBy(v);
+        return owner ? `${owner} already uses ${v}. Each environment needs its own Firebase project.` : undefined;
+      },
     });
     if ((await fbLive(["projects:create", projectId, "--display-name", `${ctx.app.name} deBug`.slice(0, 30), ...acct])) !== 0)
       bail(`Couldn't create ${projectId}. Pick an existing project or another id.`);
@@ -129,7 +144,7 @@ export async function setupFirebase(ctx: SetupContext): Promise<ProviderResult> 
     if (r.code !== 0 && !/already exists/i.test(r.stderr + r.stdout)) {
       s.error("Couldn't create the database");
       p.log.error((r.stderr || r.stdout).slice(-600));
-      bail("Fix the error above (often: the Firestore API needs enabling, or billing), then run npx debugkit init again.");
+      bail(`Fix the error above (often: the Firestore API needs enabling, or billing), then run ${cmdFor("init")} again.`);
     }
     s.stop(`Created the Firestore database (${location})`);
   }
@@ -181,7 +196,7 @@ export async function setupFirebase(ctx: SetupContext): Promise<ProviderResult> 
       ],
       "retry",
     );
-    if (again === "stop") bail(`Fix the error above, then run npx debugkit init again (it reuses what's already set up), or deploy by hand: cd ${paths(ctx.app.cwd).firebase} && npx firebase-tools@latest deploy --only functions:${CODEBASE} --project ${projectId}`);
+    if (again === "stop") bail(`Fix the error above, then run ${cmdFor("init")} again (it reuses what's already set up), or deploy by hand: cd ${paths(ctx.app.cwd).firebase} && npx firebase-tools@latest deploy --only functions:${CODEBASE} --project ${projectId}`);
     if (again === "billing") {
       openUrl(`https://console.firebase.google.com/project/${projectId}/usage/details`);
       await next("Upgraded: retry the deploy");

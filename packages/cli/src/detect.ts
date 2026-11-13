@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { cmdFor } from "./state";
 
 export type Platform = "expo" | "react-native" | "next" | "tanstack-start" | "vite-react" | "react" | "node";
 export type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
@@ -42,7 +43,7 @@ export function detectApp(cwd: string): AppInfo {
   try {
     pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8"));
   } catch {
-    throw new Error(`No package.json in ${cwd}. Run npx debugkit init from your app's folder.`);
+    throw new Error(`No package.json in ${cwd}. Run ${cmdFor("init")} from your app's folder.`);
   }
   const deps = { ...pkg.dependencies, ...pkg.devDependencies };
   const has = (d: string) => d in deps;

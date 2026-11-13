@@ -8,7 +8,7 @@ import { DASHBOARD_VERSION } from "./dashboard";
 import { capture, interactive, which } from "./exec";
 import { lookup } from "./providers/aws";
 import { asArray, firebaseCli, writeFirebaseJson } from "./providers/firebase";
-import { environment, paths, readEnv, upsertEnv, writeConfig, type DebugkitConfig } from "./state";
+import { cmdFor, environment, paths, readEnv, upsertEnv, writeConfig, type DebugkitConfig } from "./state";
 import { bail, bold, choose, code, dim, p, yes } from "./ui";
 
 export const DASHBOARD_FUNCTION = "debugkitDashboard";
@@ -25,7 +25,7 @@ export function hostedEnv(local: Record<string, string>, url: string, extra: Rec
   const plain: Record<string, string> = { DEBUG_DASHBOARD_URL: url, ...extra };
   const secret: Record<string, string> = {};
   for (const k of SHARED) if (local[k]) (SECRET.has(k) ? secret : plain)[k] = local[k]!;
-  if (!secret.DEBUG_SESSION_SECRET || !secret.DEBUG_DASHBOARD_USERS) throw new Error("The dashboard login isn't set up yet. Run npx debugkit init (or npx debugkit password) first.");
+  if (!secret.DEBUG_SESSION_SECRET || !secret.DEBUG_DASHBOARD_USERS) throw new Error(`The dashboard login isn't set up yet. Run ${cmdFor("init")} (or ${cmdFor("password")}) first.`);
   return { plain, secret };
 }
 
@@ -93,12 +93,42 @@ async function waitLive(url: string, ms = 120_000): Promise<boolean> {
 export interface HostResult {
   url: string;
   created: string[];
+  /** It answered its sign-in page after the deploy. */
+  live: boolean;
+}
+
+/**
+ * During init, hosting can be skipped but never ends the setup: declining or a failed deploy
+ * returns undefined and init carries on. `npx debugkit deploy-dashboard` stops instead.
+ */
+export interface HostOptions {
+  /** "skip": part of init, so a problem skips hosting and setup carries on. "exit" (default): deploy-dashboard. */
+  onProblem?: "skip" | "exit";
+  /** The user already said yes to hosting (init asks first), so don't ask again. */
+  confirmed?: boolean;
+}
+
+/** Leave hosting out (init) or stop (deploy-dashboard). */
+function skipOrStop(opts: HostOptions, message: string): undefined {
+  if (opts.onProblem === "skip") {
+    p.log.info(`${message} Host it any time with ${code(cmdFor("deploy-dashboard"))}.`);
+    return undefined;
+  }
+  bail(message);
+}
+
+/** A problem that rules hosting out: in init it's reported and hosting is skipped; otherwise it ends the command. */
+function fail(opts: HostOptions, message: string): never {
+  if (opts.onProblem === "skip") throw new Error(message);
+  bail(message);
 }
 
 /** Put the dashboard online in the same cloud as the data. Saves the URL in .debugkit/config.json. */
-export async function hostDashboard(cwd: string, cfg: DebugkitConfig): Promise<HostResult> {
+export async function hostDashboard(cwd: string, cfg: DebugkitConfig, opts: HostOptions = {}): Promise<HostResult | undefined> {
   const local = readEnv(paths(cwd).dashboardEnv);
-  const out = cfg.provider === "firebase" ? await hostFirebase(cwd, cfg, local) : cfg.provider === "aws" ? await hostAws(cfg, local) : bail("The dashboard can only be hosted on Firebase or AWS. On this setup, run it locally.");
+  const out =
+    cfg.provider === "firebase" ? await hostFirebase(cwd, cfg, local, opts) : cfg.provider === "aws" ? await hostAws(cfg, local, opts) : bail("The dashboard can only be hosted on Firebase or AWS. On this setup, run it locally.");
+  if (!out) return undefined;
   // Configs from before 0.6.1 kept the Google account in config.json: move it to the gitignored env.
   if (cfg.firebase?.account) {
     if (!local.DEBUGKIT_FIREBASE_ACCOUNT) upsertEnv(paths(cwd).dashboardEnv, { DEBUGKIT_FIREBASE_ACCOUNT: cfg.firebase.account });
@@ -109,9 +139,10 @@ export async function hostDashboard(cwd: string, cfg: DebugkitConfig): Promise<H
   await linkAlerts(local, cfg.appId, out.hosted.url);
   const s = p.spinner();
   s.start(`Checking ${out.hosted.url}`);
-  if (await waitLive(out.hosted.url)) s.stop(`The dashboard is live at ${code(out.hosted.url)}`);
+  const live = await waitLive(out.hosted.url);
+  if (live) s.stop(`The dashboard is live at ${code(out.hosted.url)}`);
   else s.error(`${out.hosted.url} didn't answer yet. New deploys can take a minute; open it again shortly.`);
-  return { url: out.hosted.url, created: out.created };
+  return { url: out.hosted.url, created: out.created, live };
 }
 
 /* ------------------------------------------------------------------ Firebase */
@@ -132,7 +163,7 @@ async function listSites(fb: (a: string[]) => Promise<{ code: number; stdout: st
 async function readOnlyServiceAccount(projectId: string): Promise<string | undefined> {
   const email = `${SA_NAME}@${projectId}.iam.gserviceaccount.com`;
   if (!which("gcloud")) {
-    p.log.warn(`gcloud isn't installed, so the dashboard runs as the project's default service account (which can write). Install gcloud and run ${code("npx debugkit deploy-dashboard")} again to lock it to read-only.`);
+    p.log.warn(`gcloud isn't installed, so the dashboard runs as the project's default service account (which can write). Install gcloud and run ${code(cmdFor("deploy-dashboard"))} again to lock it to read-only.`);
     return undefined;
   }
   const g = (args: string[]) => capture("gcloud", [...args, "--project", projectId, "--quiet"]);
@@ -205,8 +236,8 @@ export function writeHostingConfig(dir: string, site: string, region: string) {
   }));
 }
 
-async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<string, string>) {
-  const fbc = cfg.firebase ?? bail("This setup has no Firebase project saved. Run npx debugkit init again.");
+async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<string, string>, opts: HostOptions) {
+  const fbc = cfg.firebase ?? fail(opts, `This setup has no Firebase project saved. Run ${cmdFor("init")} again.`);
   const [fbCmd, fbPre] = await firebaseCli();
   const account = local.DEBUGKIT_FIREBASE_ACCOUNT || fbc.account;
   const acct = account ? ["--account", account] : [];
@@ -214,7 +245,7 @@ async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<stri
   const fb = (args: string[], o: { cwd?: string } = {}) => capture(fbCmd, [...fbPre, ...args], o);
   const fbLive = (args: string[], o: { cwd?: string } = {}) => interactive(fbCmd, [...fbPre, ...args], o);
   const dir = paths(cwd).firebase;
-  if (!existsSync(join(dir, "firebase.json"))) bail(`${dir} is missing. Run ${code("npx debugkit init")} again to recreate it.`);
+  if (!existsSync(join(dir, "firebase.json"))) fail(opts, `${dir} is missing. Run ${cmdFor("init")} again to recreate it.`);
   const s = p.spinner();
 
   /* 1. A Hosting site of its own, so the project's own website is untouched */
@@ -238,7 +269,7 @@ async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<stri
   }
   if (!site) {
     s.error("Couldn't find a free Hosting site name");
-    bail(`Create one in the Firebase console (Hosting → Add another site), then run ${code("npx debugkit deploy-dashboard")}.`);
+    return skipOrStop(opts, "Create a site in the Firebase console (Hosting → Add another site).");
   }
   const url = `https://${site}.web.app`;
   s.stop(`Hosting site ${code(site)}: ${url}`);
@@ -276,7 +307,7 @@ async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<stri
     ].join("\n"),
     "About to host the dashboard",
   );
-  if (!(await yes(`Host the dashboard in ${fbc.projectId}?`))) bail("Nothing was deployed. The dashboard still runs locally with npx debugkit dashboard.");
+  if (!opts.confirmed && !(await yes(`Host the dashboard in ${fbc.projectId}?`))) return skipOrStop(opts, `Skipped hosting: the dashboard still runs locally with ${cmdFor("dashboard")}.`);
 
   // A newer dashboard can query with indexes an older setup never added. Add deBug's current
   // ones; never with --force, which would delete indexes the project has that aren't in the file.
@@ -295,11 +326,11 @@ async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<stri
         // Hosting can't reach functions in some regions (africa-south1, for one): a plain retry fails the same way.
         ...(region !== "us-central1" ? [{ value: "us", label: "Retry with the function in us-central1", hint: "the usual fix when Hosting can't reach the function's region" }] : []),
         { value: "retry", label: "Retry as it is" },
-        { value: "stop", label: "Stop here" },
+        { value: "giveUp", label: opts.onProblem === "skip" ? "Skip hosting for now" : "Stop here" },
       ],
       region !== "us-central1" ? "us" : "retry",
     );
-    if (choice === "stop") bail(`Fix the error above, then run ${code("npx debugkit deploy-dashboard")}.`);
+    if (choice === "giveUp") return skipOrStop(opts, "The dashboard isn't hosted yet: fix the error above.");
     if (choice === "us") {
       region = "us-central1";
       write();
@@ -347,9 +378,9 @@ export async function dashboardZip(): Promise<Uint8Array> {
   }
 }
 
-async function hostAws(cfg: DebugkitConfig, local: Record<string, string>) {
-  const aws = cfg.aws ?? bail("This setup has no AWS details saved. Run npx debugkit init again.");
-  if (!aws.readOnlyPolicyArn) bail("The read-only policy for the dashboard is missing. Run npx debugkit init again (it adds it), then npx debugkit deploy-dashboard.");
+async function hostAws(cfg: DebugkitConfig, local: Record<string, string>, opts: HostOptions) {
+  const aws = cfg.aws ?? fail(opts, `This setup has no AWS details saved. Run ${cmdFor("init")} again.`);
+  if (!aws.readOnlyPolicyArn) fail(opts, `The read-only policy for the dashboard is missing. Run ${cmdFor("init")} again (it adds it), then ${cmdFor("deploy-dashboard")}.`);
   const { fromNodeProviderChain } = await import("@aws-sdk/credential-providers");
   const [iamMod, lambdaMod] = await Promise.all([import("@aws-sdk/client-iam"), import("@aws-sdk/client-lambda")]);
   const base = { region: aws.region, credentials: fromNodeProviderChain(aws.profile ? { profile: aws.profile } : {}) };
@@ -369,7 +400,7 @@ async function hostAws(cfg: DebugkitConfig, local: Record<string, string>) {
     ].join("\n"),
     "About to host the dashboard",
   );
-  if (!(await yes("Host the dashboard in AWS?"))) bail("Nothing was deployed. The dashboard still runs locally with npx debugkit dashboard.");
+  if (!opts.confirmed && !(await yes("Host the dashboard in AWS?"))) return skipOrStop(opts, `Skipped hosting: the dashboard still runs locally with ${cmdFor("dashboard")}.`);
 
   const s = p.spinner();
   s.start("Packaging the dashboard");
@@ -381,7 +412,7 @@ async function hostAws(cfg: DebugkitConfig, local: Record<string, string>) {
   let newRole = false;
   const role = await lookup(() => iam.send(new iamMod.GetRoleCommand({ RoleName: roleName })));
   if (role) {
-    if (!role.Role?.Tags?.some((t) => t.Key === CREATED_BY && t.Value === "debugkit")) bail(`Role ${roleName} exists and wasn't created by deBug. deBug won't change it.`);
+    if (!role.Role?.Tags?.some((t) => t.Key === CREATED_BY && t.Value === "debugkit")) fail(opts, `Role ${roleName} exists and wasn't created by deBug. deBug won't change it.`);
     roleArn = role.Role.Arn!;
   } else {
     roleArn = (
@@ -411,7 +442,7 @@ async function hostAws(cfg: DebugkitConfig, local: Record<string, string>) {
   const fn = await lookup(() => lambda.send(new lambdaMod.GetFunctionCommand({ FunctionName: functionName })));
   const fnConfig = { FunctionName: functionName, Role: roleArn, Handler: "index.handler", Runtime: "nodejs22.x" as const, MemorySize: 1024, Timeout: 30 };
   if (fn) {
-    if (fn.Tags?.[CREATED_BY] !== "debugkit") bail(`Function ${functionName} exists and wasn't created by deBug. deBug won't overwrite it.`);
+    if (fn.Tags?.[CREATED_BY] !== "debugkit") fail(opts, `Function ${functionName} exists and wasn't created by deBug. deBug won't overwrite it.`);
     await lambda.send(new lambdaMod.UpdateFunctionCodeCommand({ FunctionName: functionName, ZipFile: zip }));
     await waitUpdated(lambda, lambdaMod, functionName);
   } else {

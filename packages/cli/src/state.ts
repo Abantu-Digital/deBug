@@ -11,7 +11,7 @@ export interface DebugkitConfig {
   ingestKey: string;
   /** `account` is only in configs from before 0.6.1; it now lives in the dashboard env (DEBUGKIT_FIREBASE_ACCOUNT). */
   firebase?: { projectId: string; region: string; account?: string; location: string };
-  aws?: { region: string; profile?: string; table: string; functionName: string; roleName: string; readOnlyPolicyArn?: string };
+  aws?: { region: string; profile?: string; table: string; functionName: string; roleName: string; readOnlyPolicyArn?: string; account?: string };
   local?: { port: number };
   /** Port the dashboard runs on. */
   dashboardPort: number;
@@ -74,6 +74,27 @@ export function readConfig(cwd: string): DebugkitConfig | undefined {
   if (current) return f.environments?.[current];
   return f.provider ? (f as DebugkitConfig) : undefined;
 }
+
+/**
+ * Which other setup in this app already uses a backend: an environment's name, or "the default
+ * setup" for the one made without --env. Each environment needs its own Firebase project or
+ * DynamoDB table, so preview data never mixes with production.
+ */
+export function usedByAnotherEnvironment(cwd: string, uses: (cfg: DebugkitConfig) => boolean): string | undefined {
+  const f = readFile(cwd);
+  if (!f) return undefined;
+  if (current !== undefined && f.provider && uses(f as DebugkitConfig)) return "the default setup";
+  for (const [name, cfg] of Object.entries(f.environments ?? {})) if (name !== current && uses(cfg)) return `the ${name} environment`;
+  return undefined;
+}
+
+/** Another setup in this app already using this Firebase project, if any. */
+export const firebaseProjectUsedBy = (cwd: string, projectId: string) =>
+  usedByAnotherEnvironment(cwd, (c) => c.provider === "firebase" && c.firebase?.projectId === projectId);
+
+/** Another setup already using this DynamoDB table (same region; same account, or an older config that didn't save one). */
+export const dynamoTableUsedBy = (cwd: string, table: string, region: string, account: string) =>
+  usedByAnotherEnvironment(cwd, (c) => c.provider === "aws" && c.aws?.table === table && c.aws.region === region && (!c.aws.account || c.aws.account === account));
 
 /** Names of the environments set up so far. */
 export function listEnvironments(cwd: string): string[] {

@@ -8,25 +8,25 @@ npx @debugkit/cli init
 
 Once `@debugkit/sdk` is installed in the app, the shorter `npx debugkit init` works too: the SDK includes a `debugkit` command that runs this CLI at the same version.
 
-Run it from your app's folder. It walks you through these steps:
+Run it from your app's folder. It runs these steps in order, start to finish. Nothing asks you to stop part-way:
 
-1. **Detects your app:** Expo, React Native, Next.js, TanStack Start, React (Vite) or Node. It installs `@debugkit/sdk` if it's missing.
+1. **Detects your app:** Expo, React Native, Next.js, TanStack Start, React (Vite) or Node. It installs `@debugkit/sdk` if it's missing, and on React Native and Expo the native modules it reads device details with (`react-native-device-info`; `expo-device` and `expo-application` on Expo).
 2. **Asks where your data should live:**
    - **Firebase:** a Cloud Function and Firestore.
    - **AWS:** a Lambda with a public URL and DynamoDB.
    - **Just this machine:** no cloud, for a first look.
-3. **Signs you in and sets everything up in your own account.**
+3. **Asks how long to keep raw events:** 30, 60 (default), 90, 180 or 365 days, or any number, with a rough storage cost. Counts, issues and release health are kept forever. You can change it later on the dashboard's Settings page.
+4. **Signs you in and sets up ingest in your own account.**
    - **Firebase:** you sign in with Google in your browser, then pick or create a project. The CLI creates the Firestore database, deploys the indexes and the expiry on raw events, and deploys the ingest function. Cloud Functions need the Blaze plan, so it opens the billing page if you need to upgrade.
-   - **AWS:** you use an existing profile or sign in with AWS SSO in your browser, so you don't paste any access keys. The CLI creates the DynamoDB table, a Lambda with a public URL, an IAM role that can only write to the table, and a read-only policy for hosting the dashboard later.
-4. **Asks how long to keep raw events:** 30, 60 (default), 90, 180 or 365 days, or any number, with a rough storage cost. Counts, issues and release health are kept forever. You can change it later on the dashboard's Settings page.
-5. **Wires up your app.** It writes the endpoint and ingest key to `.env` (or into the code for bare React Native), creates `debug.ts`, and tells you the one or two lines left to add.
-6. **Opens your dashboard,** connected to your data and still empty, behind a login you choose.
-7. **Walks you through it:**
+   - **AWS:** you use an existing profile or sign in with AWS SSO in your browser, so you don't paste any access keys. The CLI creates the DynamoDB table, a Lambda with a public URL, an IAM role that can only write to the table, and a read-only policy for the dashboard.
+5. **Asks for the dashboard login** you'll sign in with.
+6. **Offers to host the dashboard** in the same Firebase project or AWS account, straight after ingest, at a link you can share with your team. "Skip for now" carries on with the setup; host it later with `npx debugkit deploy-dashboard`. If the deploy fails, you can retry or skip, and setup still finishes.
+7. **Wires up your app.** It writes the endpoint and ingest key to `.env` (or into the code for bare React Native), creates `debug.ts`, and tells you the one or two lines left to add.
+8. **Walks you through the dashboard,** on the hosted one when it's up, or locally otherwise:
    - what each part of the dashboard will show;
    - a test event, sent through the real ingest so you watch it arrive;
    - what the SDK records on its own;
    - what you add in your own try/catches.
-8. **Offers to host the dashboard** in the same Firebase project or AWS account, at a link you can share with your team. Say no and do it later with `npx debugkit deploy-dashboard`.
 
 ## Hosting the dashboard for your team
 
@@ -74,7 +74,7 @@ npx debugkit init --env preview      # e.g. into your staging Firebase project
 npx debugkit init --env production   # into the production one
 ```
 
-Each environment gets its own provider, project, endpoint, ingest key and dashboard login. They're
+Each environment gets its own provider, project, endpoint, ingest key and dashboard login. `init` enforces it: picking a Firebase project (or a DynamoDB table in the same account and region) that another environment already uses is refused, and you pick again, so preview data never mixes with production. They're
 saved under `environments` in `.debugkit/config.json`, with `.debugkit/dashboard.<env>.env`.
 
 - **Expo apps with EAS:** for `development`, `preview` and `production`, the CLI offers to put

@@ -173,7 +173,7 @@ export async function walkthrough(opts: { cwd: string; app: AppInfo; cfg: Debugk
   const sent = await sendTestEvents(cfg, app);
   if (sent.error) {
     s.error(`The ingest didn't accept them: ${sent.error}`);
-    p.log.warn(cfg.provider === "firebase" ? "A brand-new Cloud Function can take a minute to answer. Try again with npx debugkit test." : "Check the endpoint and key in .debugkit/config.json, then run npx debugkit test.");
+    p.log.warn(cfg.provider === "firebase" ? `A brand-new Cloud Function can take a minute to answer. Try again with ${cmdFor("test")}.` : `Check the endpoint and key in .debugkit/config.json, then run ${cmdFor("test")}.`);
   } else {
     s.message("Sent. Waiting for the dashboard to show them");
     const after = await waitForArrival(cwd, dashboardUrl, cfg.appId);
@@ -194,7 +194,7 @@ export async function walkthrough(opts: { cwd: string; app: AppInfo; cfg: Debugk
       );
     } else {
       s.error("Sent, but the dashboard doesn't show them yet");
-      p.log.warn(`The dashboard said: ${after?.status ?? "?"} ${after?.error ?? ""}. Refresh it in a minute, or run npx debugkit test again.`);
+      p.log.warn(`The dashboard said: ${after?.status ?? "?"} ${after?.error ?? ""}. Refresh it in a minute, or run ${cmdFor("test")} again.`);
     }
   }
   await next("What does the SDK do on its own?");

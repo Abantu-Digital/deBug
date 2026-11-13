@@ -3,7 +3,7 @@ import { dirname, join, relative } from "node:path";
 import type { AppInfo } from "./detect";
 import { installCommand } from "./detect";
 import { capture, interactive, which } from "./exec";
-import { ensureGitignored, environment, upsertEnv } from "./state";
+import { cmdFor, ensureGitignored, environment, upsertEnv } from "./state";
 import { bold, code, dim, p, yes } from "./ui";
 
 export interface Connection {
@@ -25,7 +25,7 @@ export async function installSdk(app: AppInfo) {
       if (r.code !== 0) {
         s.error("Install failed");
         p.log.error(r.stderr.slice(-800));
-        throw new Error("Couldn't install @debugkit/sdk. Install it yourself and run npx debugkit init again.");
+        throw new Error(`Couldn't install @debugkit/sdk. Install it yourself and run ${cmdFor("init")} again.`);
       }
       s.stop(`Installed @debugkit/sdk`);
       app.hasSdk = true;
@@ -42,17 +42,19 @@ export async function installSdk(app: AppInfo) {
     ].join("\n"),
     "Device details",
   );
-  if (!(await yes(`Install ${missing.join(", ")}?`))) {
-    p.log.info(dim(`Later: ${app.platform === "expo" ? `npx expo install ${missing.join(" ")}` : installCommand(app.packageManager, missing).flat().join(" ")}`));
+  // Expo picks versions that match the SDK; bare React Native uses the app's package manager.
+  const [cmd, args] = app.platform === "expo" ? (["npx", ["expo", "install", ...missing]] as [string, string[]]) : installCommand(app.packageManager, missing);
+  const command = `${cmd} ${args.join(" ")}`;
+  const names = missing.join(", ");
+  if (!(await yes(`Install ${names}?`))) {
+    p.log.info(dim(`Later: ${command}`));
     return;
   }
-  // Expo picks versions that match the SDK; bare React Native uses the app's package manager.
-  const [cmd, args] = app.platform === "expo" ? ["npx", ["expo", "install", ...missing]] : installCommand(app.packageManager, missing);
   const exit = await interactive(cmd, args, { cwd: app.cwd });
-  if (exit !== 0) p.log.warn(`Couldn't install ${missing.join(", ")}. Run: ${cmd} ${args.join(" ")}`);
+  if (exit !== 0) p.log.warn(`Couldn't install ${names}. Run: ${command}`);
   else {
     app.missingNativeModules = [];
-    p.log.success(`Installed ${missing.join(", ")}. Rebuild the app${app.platform === "react-native" ? " (cd ios && pod install first)" : " (eas build, or npx expo run:android / run:ios)"} to link them.`);
+    p.log.success(`Installed ${names}. Rebuild the app${app.platform === "react-native" ? " (cd ios && pod install first)" : " (eas build, or npx expo run:android / run:ios)"} to link them.`);
   }
 }
 
