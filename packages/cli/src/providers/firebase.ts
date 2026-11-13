@@ -18,12 +18,16 @@ const LOCATIONS: { value: string; label: string; region: string }[] = [
 const FUNCTION_NAME = "debugIngest";
 const CODEBASE = "debugkit";
 
-/** The Firebase CLI: the installed one if it's recent enough, otherwise the latest via npx. */
+/** Oldest firebase-tools that deploys the nodejs22 runtime. Older installs fall back to npx. */
+export const MIN_FIREBASE_TOOLS = 14;
+
+/** The Firebase CLI: the installed one if it's recent enough, otherwise the latest via npx (same sign-in). */
 async function firebaseCli(): Promise<[string, string[]]> {
   if (which("firebase")) {
     const v = await capture("firebase", ["--version"]);
     const major = Number(/^(\d+)/.exec(v.stdout.trim())?.[1] ?? 0);
-    if (major >= 13) return ["firebase", []];
+    if (major >= MIN_FIREBASE_TOOLS) return ["firebase", []];
+    p.log.info(dim(`Your Firebase CLI is ${v.stdout.trim()}; deBug needs ${MIN_FIREBASE_TOOLS}+ for Node 22, so it'll use npx firebase-tools@latest (same sign-in).`));
   }
   return ["npx", ["-y", "firebase-tools@latest"]];
 }
@@ -140,21 +144,28 @@ export async function setupFirebase(ctx: SetupContext): Promise<ProviderResult> 
   }
   s.stop("Installed the ingest function's dependencies");
 
-  p.log.step(`Deploying ${code(FUNCTION_NAME)} and the Firestore indexes. The first deploy turns on the Google APIs it needs and takes a few minutes.`);
+  // Indexes first, and never with --force: that would delete indexes the project already has
+  // that aren't in deBug's file. Non-interactive, firebase-tools adds ours and leaves the rest alone.
+  p.log.step("Adding deBug's Firestore indexes (your existing indexes are left alone)");
+  if ((await fbLive(["deploy", "--only", "firestore:indexes", "--non-interactive", ...proj], { cwd: dir })) !== 0)
+    p.log.warn("The indexes didn't deploy. The dashboard needs them; deploy them later with the command printed at the end.");
+
+  p.log.step(`Deploying ${code(FUNCTION_NAME)}. The first deploy turns on the Google APIs it needs and takes a few minutes.`);
   for (;;) {
-    const exit = await fbLive(["deploy", "--only", `functions:${CODEBASE},firestore:indexes`, "--force", ...proj], { cwd: dir });
+    // --force only answers the functions prompts (like the container cleanup policy).
+    const exit = await fbLive(["deploy", "--only", `functions:${CODEBASE}`, "--force", ...proj], { cwd: dir });
     if (exit === 0) break;
-    p.log.warn("The deploy didn't finish. The most common cause is that the project isn't on the Blaze plan yet.");
+    p.log.warn("The deploy didn't finish: see the error above. Common causes: the project isn't on the Blaze plan, or your account lacks permission to deploy functions.");
     const again = await choose(
       "What now?",
       [
-        { value: "billing", label: "Open billing, then retry" },
         { value: "retry", label: "Retry the deploy" },
+        { value: "billing", label: "Open billing, then retry" },
         { value: "stop", label: "Stop here" },
       ],
-      "billing",
+      "retry",
     );
-    if (again === "stop") bail(`Fix the error above, then deploy with: cd ${paths(ctx.app.cwd).firebase} && firebase deploy --only functions:${CODEBASE},firestore:indexes --project ${projectId}`);
+    if (again === "stop") bail(`Fix the error above, then run npx debugkit init again (it reuses what's already set up), or deploy by hand: cd ${paths(ctx.app.cwd).firebase} && npx firebase-tools@latest deploy --only functions:${CODEBASE} --project ${projectId}`);
     if (again === "billing") {
       openUrl(`https://console.firebase.google.com/project/${projectId}/usage/details`);
       await next("Upgraded: retry the deploy");
