@@ -8,15 +8,13 @@ import {
   type SeverityThresholds,
   type StoredEvent,
 } from "@debugkit/schema";
+import { daysBetween, resolveRange, weekOf, type DateRange } from "./range";
 
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 const dayKey = (t: number) => new Date(t).toISOString().slice(0, 10);
 const hourKey = (t: number) => new Date(t).toISOString().slice(0, 13);
 
-function days(now: number, n: number) {
-  return Array.from({ length: n }, (_, i) => dayKey(now - (n - 1 - i) * DAY));
-}
 function hours(now: number, n: number) {
   return Array.from({ length: n }, (_, i) => hourKey(now - (n - 1 - i) * HOUR));
 }
@@ -29,6 +27,8 @@ export interface IssueRow {
   severity: Severity;
   /** Occurrences in the trailing 24h. Severity is derived from this. */
   count24h: number;
+  /** Occurrences in the selected range. */
+  countRange: number;
   /** Occurrences since the issue was first seen. */
   countTotal: number;
   firstSeen: string;
@@ -38,32 +38,46 @@ export interface IssueRow {
 export interface FlowRow {
   flow: string;
   errors24h: number;
-  errors14d: number;
+  errorsRange: number;
   /** Highest severity of any issue in the flow. */
   severity: Severity;
   issues: number;
-  successes14d: number;
-  failures14d: number;
-  /** failures / (failures + successes) over 14d, from events logged with an outcome. null if no outcome events. */
+  successesRange: number;
+  failuresRange: number;
+  /** failures / (failures + successes) in the range, from events logged with an outcome. null if no outcome events. */
   failureRate: number | null;
+}
+
+/** How long the customer keeps raw events, and where that number comes from. */
+export interface Retention {
+  days: number | null;
+  source: "setting" | "default" | "unknown";
+  /** Events received before this day have expired: counts remain, details don't. */
+  detailsFrom: string | null;
 }
 
 export interface Summary {
   app: string;
   apps: string[];
   generatedAt: string;
+  range: DateRange;
+  retention: Retention;
   totals: {
     errors24h: number;
-    errorsPrev24h: number;
-    /** Percent change vs the previous 24h, null when the previous window had no errors. */
+    /** Error events in the selected range (exact hourly sums for 24h). */
+    errorsRange: number;
+    /** Error events in the period of the same length just before. */
+    errorsPrev: number;
+    /** Percent change vs the previous period, null when it had no errors. */
     changePct: number | null;
-    /** Non-error events (custom events) over the last 14 days. */
-    events14d: number;
+    /** Non-error events (custom events) in the range. */
+    eventsRange: number;
     activeIssues: number;
     criticalIssues: number;
     failingFlows: number;
   };
   narrative: string[];
+  /** One point per hour (24h), day (up to 90 days) or week (longer), labelled by its start. */
   trend: { day: string; errors: number; events: number }[];
   flows: FlowRow[];
   issues: IssueRow[];
@@ -82,42 +96,53 @@ export interface ReleaseHealth {
 }
 
 export interface Health {
-  /** Sessions started in the last 14 days (sent automatically by the SDK). 0 when the SDK predates sessions. */
-  sessions14d: number;
+  /** Sessions started in the range (sent automatically by the SDK). 0 when the SDK predates sessions. */
+  sessionsRange: number;
   crashFreeRate: number | null;
   errorFreeRate: number | null;
   /** Newest releases first (by version order), at most 8. */
   releases: ReleaseHealth[];
-  /** Endpoints with the most failed requests (5xx, timeouts, network failures) over 14 days. */
-  endpoints: { endpoint: string; failures14d: number; failures24h: number }[];
+  /** Endpoints with the most failed requests (5xx, timeouts, network failures) in the range. */
+  endpoints: { endpoint: string; failuresRange: number; failures24h: number }[];
 }
 
 /** Description of every field, shipped with the JSON API so agents can interpret it without docs. */
 export const SUMMARY_FIELDS = {
+  range: "The period the numbers cover. Query with ?range=24h|7d|14d|30d|90d, or ?range=custom&from=YYYY-MM-DD&to=YYYY-MM-DD. Default 14d.",
+  retention: "How long raw events are kept. Counts, issues and release health are kept forever; event details older than detailsFrom have expired.",
   "totals.errors24h": "Error events in the trailing 24 hours (exact, from hourly rollups).",
-  "totals.changePct": "Percent change of errors vs the previous 24h window.",
-  "totals.activeIssues": "Distinct grouped errors (issues) seen in the last 14 days.",
+  "totals.errorsRange": "Error events in the selected range.",
+  "totals.changePct": "Percent change of errors vs the previous period of the same length. null when that period had fewer than 10 errors.",
+  "totals.activeIssues": "Distinct grouped errors (issues) seen in the range.",
   "totals.criticalIssues": "Issues whose 24h occurrence count meets the critical threshold.",
-  "flows[]": "Parts of the app as tagged by the developer (e.g. auth.login). Sorted by severity, then errors24h.",
-  "flows[].failureRate": "failures/(failures+successes) from events logged with an outcome. null when the app logs no outcomes for that flow.",
-  "issues[]": "Grouped errors. Sorted by severity, then count24h.",
+  "flows[]": "Parts of the app as tagged by the developer (e.g. auth.login). Sorted by severity, then errors24h, then errorsRange.",
+  "flows[].failureRate": "failures/(failures+successes) in the range from events logged with an outcome. null when the app logs no outcomes for that flow.",
+  "issues[]": "Grouped errors seen in the range. Sorted by severity, then count24h, then countRange.",
   "issues[].severity": "Derived from count24h using thresholds critical/high/medium.",
   "issues[].culprit": "Top in-app stack frame: function (file:line).",
-  "trend[]": "Errors and non-error events per UTC day for the last 14 days.",
-  "breakdowns": "Errors over the last 14 days split by OS, app version and device model.",
-  narrative: "Plain-language summary of what is going wrong right now.",
-  "health.crashFreeRate": "Share of sessions in 14 days with no fatal crash. Sessions are recorded automatically by the SDK.",
-  "health.errorFreeRate": "Share of sessions in 14 days with no unhandled error.",
+  "trend[]": "Errors and non-error events per hour (24h), UTC day (up to 90 days) or week (longer).",
+  breakdowns: "Errors in the range split by OS, app version and device model.",
+  narrative: "Plain-language summary of what is going wrong in the range.",
+  "health.crashFreeRate": "Share of sessions in the range with no fatal crash. Sessions are recorded automatically by the SDK.",
+  "health.errorFreeRate": "Share of sessions in the range with no unhandled error.",
   "health.releases[]": "Crash-free and error-free rates per app version.",
   "health.endpoints[]": "HTTP endpoints whose requests failed most (5xx, timeouts, network errors), from automatic network capture.",
 } as const;
 
-async function counts24hByIssue(store: ReadStore, app: string, now: number) {
-  const hs = hours(now, 24);
-  const rows = await store.getRollups(app, "issueHour", hs[0]!, hs[hs.length - 1]!);
-  const map = new Map<string, number>();
-  for (const r of rows) map.set(r.key, (map.get(r.key) ?? 0) + r.errors);
-  return map;
+const sumRows = (rows: RollupRow[], field: "errors" | "events" = "errors") => rows.reduce((a, r) => a + r[field], 0);
+
+/** Retention as the dashboard knows it: the app's setting, else the deployment default it was told about. */
+export async function retentionFor(store: ReadStore, app: string, fallbackDays: number | undefined, now = Date.now()): Promise<Retention> {
+  let days: number | null = null;
+  let source: Retention["source"] = "unknown";
+  try {
+    const s = await store.getSettings(app);
+    if (s?.retentionDays) [days, source] = [s.retentionDays, "setting"];
+  } catch {
+    /* read-only credentials may not reach settings: fall through */
+  }
+  if (days === null && fallbackDays) [days, source] = [fallbackDays, "default"];
+  return { days, source, detailsFrom: days ? dayKey(now - days * DAY) : null };
 }
 
 export async function buildSummary(
@@ -125,52 +150,82 @@ export async function buildSummary(
   appParam: string | undefined,
   thresholds: SeverityThresholds,
   now = Date.now(),
+  opts: { range?: { range?: string; from?: string; to?: string }; retentionDays?: number } = {},
 ): Promise<Summary | null> {
   const apps = await store.listApps();
   const app = appParam && apps.includes(appParam) ? appParam : apps[0];
   if (!app) return null;
 
-  const d14 = days(now, 14);
-  const from = d14[0]!;
-  const to = d14[d14.length - 1]!;
-  const [sessionRows, endpointRows, total, flowRows, outcomeRows, os, appVersion, deviceModel, issues, issue24h, hourly] = await Promise.all([
+  const range = resolveRange(opts.range ?? {}, now);
+  const { from, to } = range;
+  const hourly = range.preset === "24h";
+  const h24 = hours(now, 24);
+  const [sessionRows, endpointRows, total, prevTotal, flowRows, outcomeRows, os, appVersion, deviceModel, issueDays, issues, hourRows, retention] = await Promise.all([
     store.getRollups(app, "session", from, to),
     store.getRollups(app, "endpoint", from, to),
     store.getRollups(app, "total", from, to),
+    store.getRollups(app, "total", range.prevFrom, range.prevTo),
     store.getRollups(app, "flow", from, to),
     store.getRollups(app, "flowOutcome", from, to),
     store.getRollups(app, "os", from, to),
     store.getRollups(app, "appVersion", from, to),
     store.getRollups(app, "deviceModel", from, to),
+    store.getRollups(app, "issue", from, to),
     store.listIssues(app, { limit: 500 }),
-    counts24hByIssue(store, app, now),
-    // 48 hours of issueHour rollups gives exact 24h vs previous-24h error totals.
+    // 48 hours of hourly rollups: exact 24h totals, the previous 24h, and per-issue 24h counts.
     store.getRollups(app, "issueHour", hours(now, 48)[0]!, hourKey(now)),
+    retentionFor(store, app, opts.retentionDays, now),
   ]);
 
-  const trend = d14.map((day) => {
-    const r = total.find((x) => x.day === day);
-    return { day, errors: r?.errors ?? 0, events: r?.events ?? 0 };
-  });
-
-  const h24 = new Set(hours(now, 24));
+  const last24 = new Set(h24);
   let errors24h = 0;
   let errorsPrev24h = 0;
-  for (const r of hourly) (h24.has(r.day) ? (errors24h += r.errors) : (errorsPrev24h += r.errors));
+  const issue24h = new Map<string, number>();
+  for (const r of hourRows) {
+    if (last24.has(r.day)) {
+      errors24h += r.errors;
+      issue24h.set(r.key, (issue24h.get(r.key) ?? 0) + r.errors);
+    } else errorsPrev24h += r.errors;
+  }
 
-  const since14 = new Date(now - 14 * DAY).toISOString();
+  // Trend: hourly for 24h, daily up to 90 days, weekly beyond.
+  let trend: Summary["trend"];
+  if (hourly) {
+    trend = h24.map((h) => ({ day: h, errors: hourRows.filter((r) => r.day === h).reduce((a, r) => a + r.errors, 0), events: 0 }));
+  } else {
+    const byDay = new Map(total.map((r) => [r.day, r]));
+    const daily = daysBetween(from, to).map((day) => ({ day, errors: byDay.get(day)?.errors ?? 0, events: byDay.get(day)?.events ?? 0 }));
+    if (range.granularity === "week") {
+      const weeks = new Map<string, { day: string; errors: number; events: number }>();
+      for (const d of daily) {
+        const w = weekOf(d.day);
+        const cur = weeks.get(w) ?? { day: w, errors: 0, events: 0 };
+        cur.errors += d.errors;
+        cur.events += d.events;
+        weeks.set(w, cur);
+      }
+      trend = [...weeks.values()];
+    } else trend = daily;
+  }
+
+  const errorsRange = hourly ? errors24h : sumRows(total);
+  const errorsPrev = hourly ? errorsPrev24h : sumRows(prevTotal);
+
+  const issueRange = new Map<string, number>();
+  for (const r of issueDays) issueRange.set(r.key, (issueRange.get(r.key) ?? 0) + r.errors);
+  const rangeStart = hourly ? new Date(now - DAY).toISOString() : `${from}T00:00:00.000Z`;
   const issueRows: IssueRow[] = issues
-    .filter((i) => i.lastSeen >= since14)
-    .map((i) => toIssueRow(i, issue24h.get(i.fingerprint) ?? 0, thresholds))
+    .filter((i) => i.lastSeen >= rangeStart && i.firstSeen <= `${to}T23:59:59.999Z`)
+    .map((i) => toIssueRow(i, issue24h.get(i.fingerprint) ?? 0, hourly ? (issue24h.get(i.fingerprint) ?? 0) : (issueRange.get(i.fingerprint) ?? 0), thresholds))
     .sort(bySeverityThenCount);
 
   const flowMap = new Map<string, FlowRow>();
   const flowOf = (flow: string) => {
     let f = flowMap.get(flow);
-    if (!f) flowMap.set(flow, (f = { flow, errors24h: 0, errors14d: 0, severity: "low", issues: 0, successes14d: 0, failures14d: 0, failureRate: null }));
+    if (!f) flowMap.set(flow, (f = { flow, errors24h: 0, errorsRange: 0, severity: "low", issues: 0, successesRange: 0, failuresRange: 0, failureRate: null }));
     return f;
   };
-  for (const r of flowRows) if (r.errors > 0) flowOf(r.key).errors14d += r.errors;
+  for (const r of flowRows) if (r.errors > 0) flowOf(r.key).errorsRange += r.errors;
   for (const i of issueRows) {
     const f = flowOf(i.flow ?? "untagged");
     f.issues++;
@@ -180,13 +235,13 @@ export async function buildSummary(
   for (const r of outcomeRows) {
     const [flow, outcome] = r.key.split("|");
     const f = flowOf(flow!);
-    if (outcome === "success") f.successes14d += r.events;
-    else if (outcome === "failure") f.failures14d += r.events;
+    if (outcome === "success") f.successesRange += r.events;
+    else if (outcome === "failure") f.failuresRange += r.events;
   }
   const flows = [...flowMap.values()]
-    .map((f) => ({ ...f, failureRate: f.successes14d + f.failures14d > 0 ? f.failures14d / (f.successes14d + f.failures14d) : null }))
-    .filter((f) => f.errors14d > 0 || f.failures14d > 0)
-    .sort((a, b) => SEVERITY_ORDER[b.severity] - SEVERITY_ORDER[a.severity] || b.errors24h - a.errors24h || b.errors14d - a.errors14d);
+    .map((f) => ({ ...f, failureRate: f.successesRange + f.failuresRange > 0 ? f.failuresRange / (f.successesRange + f.failuresRange) : null }))
+    .filter((f) => f.errorsRange > 0 || f.failuresRange > 0 || f.errors24h > 0)
+    .sort((a, b) => SEVERITY_ORDER[b.severity] - SEVERITY_ORDER[a.severity] || b.errors24h - a.errors24h || b.errorsRange - a.errorsRange);
 
   const top = (rows: { key: string; errors: number }[]) => {
     const m = new Map<string, number>();
@@ -198,14 +253,18 @@ export async function buildSummary(
     app,
     apps,
     generatedAt: new Date(now).toISOString(),
+    range,
+    retention,
     totals: {
       errors24h,
-      errorsPrev24h,
-      changePct: errorsPrev24h > 0 ? Math.round(((errors24h - errorsPrev24h) / errorsPrev24h) * 100) : null,
-      events14d: trend.reduce((a, d) => a + d.events, 0),
+      errorsRange,
+      errorsPrev,
+      // A percentage against a near-empty previous period (new app, short history) only misleads.
+      changePct: errorsPrev >= 10 ? Math.round(((errorsRange - errorsPrev) / errorsPrev) * 100) : null,
+      eventsRange: sumRows(total, "events"),
       activeIssues: issueRows.length,
       criticalIssues: issueRows.filter((i) => i.severity === "critical").length,
-      failingFlows: flows.filter((f) => f.errors24h > 0).length,
+      failingFlows: flows.filter((f) => (hourly ? f.errors24h : f.errorsRange) > 0).length,
     },
     narrative: [],
     trend,
@@ -221,7 +280,7 @@ export async function buildSummary(
 const rate = (bad: number, total: number) => (total > 0 ? Math.max(0, 1 - bad / total) : null);
 
 /** "2.10.0" sorts after "2.9.1". */
-function compareVersions(a: string, b: string) {
+export function compareVersions(a: string, b: string) {
   const pa = a.split(/[.-]/);
   const pb = b.split(/[.-]/);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
@@ -250,23 +309,23 @@ function buildHealth(sessionRows: RollupRow[], endpointRows: RollupRow[], today:
     .slice(0, 8);
   const sum = (k: "sessions" | "errored" | "crashed") => [...byVersion.values()].reduce((a, v) => a + v[k], 0);
 
-  const eps = new Map<string, { endpoint: string; failures14d: number; failures24h: number }>();
+  const eps = new Map<string, { endpoint: string; failuresRange: number; failures24h: number }>();
   for (const r of endpointRows) {
     let e = eps.get(r.key);
-    if (!e) eps.set(r.key, (e = { endpoint: r.key, failures14d: 0, failures24h: 0 }));
-    e.failures14d += r.errors;
+    if (!e) eps.set(r.key, (e = { endpoint: r.key, failuresRange: 0, failures24h: 0 }));
+    e.failuresRange += r.errors;
     if (r.day === today) e.failures24h += r.errors;
   }
   return {
-    sessions14d: sum("sessions"),
+    sessionsRange: sum("sessions"),
     crashFreeRate: rate(sum("crashed"), sum("sessions")),
     errorFreeRate: rate(sum("errored"), sum("sessions")),
     releases,
-    endpoints: [...eps.values()].sort((a, b) => b.failures14d - a.failures14d).slice(0, 8),
+    endpoints: [...eps.values()].sort((a, b) => b.failuresRange - a.failuresRange).slice(0, 8),
   };
 }
 
-function toIssueRow(i: Issue, count24h: number, t: SeverityThresholds): IssueRow {
+function toIssueRow(i: Issue, count24h: number, countRange: number, t: SeverityThresholds): IssueRow {
   return {
     fingerprint: i.fingerprint,
     title: i.title,
@@ -274,6 +333,7 @@ function toIssueRow(i: Issue, count24h: number, t: SeverityThresholds): IssueRow
     flow: i.flow,
     severity: severityFromCount(count24h, t),
     count24h,
+    countRange,
     countTotal: i.count,
     firstSeen: i.firstSeen,
     lastSeen: i.lastSeen,
@@ -281,43 +341,53 @@ function toIssueRow(i: Issue, count24h: number, t: SeverityThresholds): IssueRow
 }
 
 const bySeverityThenCount = (a: IssueRow, b: IssueRow) =>
-  SEVERITY_ORDER[b.severity] - SEVERITY_ORDER[a.severity] || b.count24h - a.count24h || b.lastSeen.localeCompare(a.lastSeen);
+  SEVERITY_ORDER[b.severity] - SEVERITY_ORDER[a.severity] || b.count24h - a.count24h || b.countRange - a.countRange || b.lastSeen.localeCompare(a.lastSeen);
 
 const pct = (n: number) => `${Math.round(n * 100)}%`;
 const pctOne = (n: number) => `${(Math.floor(n * 1000) / 10).toFixed(1)}%`;
+const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
 
 function narrate(s: Summary): string[] {
   const out: string[] = [];
   const t = s.totals;
-  if (t.errors24h === 0) {
-    out.push("No errors in the last 24 hours.");
+  const r = s.range;
+  if (t.errorsRange === 0) {
+    out.push(`No errors in ${r.label}.`);
     return out;
   }
+  // Past +500% a percentage stops meaning much; the previous count says more.
   const change =
-    t.changePct === null ? "" : t.changePct === 0 ? ", flat versus the day before" : `, ${t.changePct > 0 ? "up" : "down"} ${Math.abs(t.changePct)}% on the previous 24h`;
-  out.push(`${t.errors24h.toLocaleString()} errors in the last 24 hours${change}, across ${t.failingFlows} part${t.failingFlows === 1 ? "" : "s"} of the app.`);
+    t.changePct === null
+      ? ""
+      : t.changePct === 0
+        ? `, flat versus the previous ${r.span}`
+        : t.changePct > 500
+          ? `, up from ${t.errorsPrev.toLocaleString()} in the previous ${r.span}`
+          : `, ${t.changePct > 0 ? "up" : "down"} ${Math.abs(t.changePct)}% on the previous ${r.span}`;
+  out.push(`${plural(t.errorsRange, "error")} in ${r.label}${change}, across ${t.failingFlows} part${t.failingFlows === 1 ? "" : "s"} of the app.`);
   const f = s.flows[0];
-  if (f && f.errors24h > 0) {
-    const rate = f.failureRate !== null ? ` ${pct(f.failureRate)} of attempts fail.` : "";
-    out.push(`${f.flow} is the most affected flow (${f.severity}): ${f.errors24h} errors in 24h from ${f.issues} issue${f.issues === 1 ? "" : "s"}.${rate}`);
+  if (f && (f.errors24h > 0 || f.errorsRange > 0)) {
+    const failRate = f.failureRate !== null ? ` ${pct(f.failureRate)} of attempts fail.` : "";
+    const n = r.preset === "24h" ? f.errors24h : f.errorsRange;
+    out.push(`${f.flow} is the most affected flow (${f.severity}): ${plural(n, "error")} in ${r.label} from ${plural(f.issues, "issue")}.${failRate}`);
   }
   const i = s.issues[0];
-  if (i && i.count24h > 0) {
+  if (i && i.countRange > 0) {
     const isNew = Date.parse(s.generatedAt) - Date.parse(i.firstSeen) < 3 * DAY;
-    out.push(`Top issue: "${i.title}"${i.culprit ? ` in ${i.culprit}` : ""} — ${i.count24h} time${i.count24h === 1 ? "" : "s"} in 24h${isNew ? `, first seen ${relDays(s.generatedAt, i.firstSeen)}` : ""}.`);
+    out.push(`Top issue: "${i.title}"${i.culprit ? ` in ${i.culprit}` : ""}, ${plural(i.countRange, "time")} in ${r.label}${isNew ? `, first seen ${relDays(s.generatedAt, i.firstSeen)}` : ""}.`);
   }
   const h = s.health;
   const latest = h.releases[0];
   const prev = h.releases[1];
   if (latest?.crashFreeRate != null && latest.sessions >= 20 && latest.crashFreeRate < 0.995) {
     const vs = prev?.crashFreeRate != null && prev.sessions >= 20 ? ` (${prev.version}: ${pctOne(prev.crashFreeRate)})` : "";
-    out.push(`${latest.version} is ${pctOne(latest.crashFreeRate)} crash-free across ${latest.sessions.toLocaleString()} sessions${vs}.`);
+    out.push(`${latest.version} is ${pctOne(latest.crashFreeRate)} crash-free across ${plural(latest.sessions, "session")}${vs}.`);
   }
   const ep = h.endpoints[0];
-  if (ep && ep.failures24h > 0) out.push(`${ep.endpoint} is the most failing endpoint: ${ep.failures24h} failed request${ep.failures24h === 1 ? "" : "s"} today.`);
+  if (ep && ep.failuresRange > 0) out.push(`${ep.endpoint} is the most failing endpoint: ${plural(ep.failuresRange, "failed request")} in ${r.label}.`);
   const os = s.breakdowns.os;
   const osTotal = os.reduce((a, b) => a + b.errors, 0);
-  if (os[0] && osTotal > 20 && os[0].errors / osTotal > 0.6) out.push(`${pct(os[0].errors / osTotal)} of errors in the last 14 days come from ${os[0].key}.`);
+  if (os[0] && osTotal > 20 && os[0].errors / osTotal > 0.6) out.push(`${pct(os[0].errors / osTotal)} of errors in ${r.label} come from ${os[0].key}.`);
   return out;
 }
 
@@ -330,6 +400,8 @@ function relDays(now: string, then: string) {
 
 export interface IssueDetail {
   app: string;
+  range: DateRange;
+  retention: Retention;
   issue: IssueRow;
   hourly: { hour: string; count: number }[];
   daily: { day: string; count: number }[];
@@ -346,19 +418,22 @@ export async function buildIssueDetail(
   fingerprint: string,
   thresholds: SeverityThresholds,
   now = Date.now(),
+  opts: { range?: { range?: string; from?: string; to?: string }; retentionDays?: number } = {},
 ): Promise<IssueDetail | null> {
   const issue = await store.getIssue(app, fingerprint);
   if (!issue) return null;
+  const range = resolveRange(opts.range ?? {}, now);
   const hs = hours(now, 48);
-  const d14 = days(now, 14);
-  const [hourRows, dayRows, events] = await Promise.all([
+  const [hourRows, dayRows, events, retention] = await Promise.all([
     store.getRollups(app, "issueHour", hs[0]!, hs[hs.length - 1]!),
-    store.getRollups(app, "issue", d14[0]!, d14[d14.length - 1]!),
+    store.getRollups(app, "issue", range.from, range.to),
     store.listIssueEvents(app, fingerprint, { limit: 200 }),
+    retentionFor(store, app, opts.retentionDays, now),
   ]);
   const hourly = hs.map((hour) => ({ hour, count: hourRows.filter((r) => r.key === fingerprint && r.day === hour).reduce((a, r) => a + r.errors, 0) }));
-  const daily = d14.map((day) => ({ day, count: dayRows.filter((r) => r.key === fingerprint && r.day === day).reduce((a, r) => a + r.errors, 0) }));
+  const daily = daysBetween(range.from, range.to).map((day) => ({ day, count: dayRows.filter((r) => r.key === fingerprint && r.day === day).reduce((a, r) => a + r.errors, 0) }));
   const count24h = hourly.slice(-24).reduce((a, h) => a + h.count, 0);
+  const countRange = range.preset === "24h" ? count24h : daily.reduce((a, d) => a + d.count, 0);
 
   const split = (pick: (e: StoredEvent) => string | undefined) => {
     const m = new Map<string, number>();
@@ -380,9 +455,11 @@ export async function buildIssueDetail(
   };
   const users = new Set(events.map((e) => e.user?.id ?? e.user?.anonymousId ?? e.sessionId));
 
-  const row = toIssueRow(issue, count24h, thresholds);
+  const row = toIssueRow(issue, count24h, countRange, thresholds);
   return {
     app,
+    range,
+    retention,
     issue: row,
     hourly,
     daily,

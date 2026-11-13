@@ -15,6 +15,8 @@ export interface DebugkitConfig {
   /** Port the dashboard runs on. */
   dashboardPort: number;
   createdAt: string;
+  /** Raw-event retention chosen at init (the dashboard's Settings page can change it per app). */
+  retentionDays?: number;
   /** Set when this is one of several environments (npx debugkit init --env preview). */
   environment?: string;
 }
@@ -82,7 +84,7 @@ export function writeConfig(cwd: string, cfg: DebugkitConfig) {
   const out: ConfigFile = current ? { ...f, environments: { ...f.environments, [current]: { ...cfg, environment: current } } } : { ...cfg, ...(f.environments ? { environments: f.environments } : {}) };
   writeFileSync(config, JSON.stringify(out, null, 2) + "\n");
   // Dashboard env files hold a session secret and a password hash: keep them out of git.
-  writeFileSync(join(dir, ".gitignore"), "dashboard*.env\nfirebase*/functions/node_modules/\nfirebase*/.firebase/\n*.log\n");
+  writeFileSync(join(dir, ".gitignore"), "dashboard*.env\nfirebase*/functions/node_modules/\nfirebase*/functions/.env.*\nfirebase*/.firebase/\n*.log\n");
 }
 
 /** Write KEY=value lines, replacing keys that are already there. */

@@ -184,7 +184,7 @@ export async function walkthrough(opts: { cwd: string; app: AppInfo; cfg: Debugk
         [
           ...(d.narrative ?? []).map((l: string) => `“${l}”`),
           "",
-          `${bold(String(d.issues.length))} issues · ${bold(String(d.health?.sessions14d ?? 0))} session · failing endpoint ${code(d.health?.endpoints?.[0]?.endpoint ?? "—")}`,
+          `${bold(String(d.issues.length))} issues · ${bold(String(d.health?.sessionsRange ?? 0))} session · failing endpoint ${code(d.health?.endpoints?.[0]?.endpoint ?? "—")}`,
           "",
           `Refresh the dashboard. You'll see a ${pc.red("HttpError")} from a failed request (captured the way the SDK does it automatically),`,
           `a ${pc.red("SyntaxError")} reported from a try/catch, and the ${code("onboarding.test")} flow with a 50% failure rate from track().`,

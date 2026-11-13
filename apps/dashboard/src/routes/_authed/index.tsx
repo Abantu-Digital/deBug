@@ -2,17 +2,19 @@ import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-r
 import { useEffect } from "react";
 import { FlowChart, TrendChart } from "~/components/charts";
 import { Card, DataTable, SeverityBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
+import { RangePicker, rangeSearch, RetentionNote, type RangeSearch } from "~/components/range-picker";
 import { getOverview } from "~/server/fns";
 
-type Search = { app?: string; flow?: string };
+type Search = { app?: string; flow?: string } & RangeSearch;
 
 export const Route = createFileRoute("/_authed/")({
   validateSearch: (s: Record<string, unknown>): Search => ({
     app: typeof s.app === "string" ? s.app : undefined,
     flow: typeof s.flow === "string" ? s.flow : undefined,
+    ...rangeSearch(s),
   }),
-  loaderDeps: ({ search }) => ({ app: search.app }),
-  loader: ({ deps }) => getOverview({ data: { app: deps.app } }),
+  loaderDeps: ({ search }) => ({ app: search.app, range: search.range, from: search.from, to: search.to }),
+  loader: ({ deps }) => getOverview({ data: deps }),
   component: Overview,
 });
 
@@ -23,7 +25,8 @@ function Overview() {
 
   if (!summary) return <EmptyState />;
 
-  const { totals } = summary;
+  const { totals, range } = summary;
+  const span = range.preset === "custom" ? "range" : range.preset;
   const issues = flow ? summary.issues.filter((i) => (i.flow ?? "untagged") === flow) : summary.issues;
   const change = totals.changePct;
 
@@ -31,20 +34,29 @@ function Overview() {
     <main className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-wide text-muted">Overview · last 24h</p>
+          <p className="text-xs uppercase tracking-wide text-muted">Overview · {range.label}</p>
           <h1 className="text-2xl font-semibold tracking-tight">What's going wrong in {summary.app}</h1>
         </div>
-        {summary.apps.length > 1 && (
-          <select
-            aria-label="App"
-            value={summary.app}
-            onChange={(e) => navigate({ search: { app: e.target.value } })}
-            className="rounded-md border border-line bg-panel px-2 py-1.5 text-sm"
-          >
-            {summary.apps.map((a) => <option key={a}>{a}</option>)}
-          </select>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <RangePicker
+            key={`${range.preset}${range.from}${range.to}`}
+            value={range}
+            today={summary.generatedAt.slice(0, 10)}
+            onChange={(r) => navigate({ search: (s) => ({ ...s, ...r }) })}
+          />
+          {summary.apps.length > 1 && (
+            <select
+              aria-label="App"
+              value={summary.app}
+              onChange={(e) => navigate({ search: (s) => ({ ...s, app: e.target.value, flow: undefined }) })}
+              className="rounded-md border border-line bg-panel px-2 py-1.5 text-sm"
+            >
+              {summary.apps.map((a) => <option key={a}>{a}</option>)}
+            </select>
+          )}
+        </div>
       </div>
+      <RetentionNote rangeFrom={range.from} retention={summary.retention} />
 
       {/* The story, in words first. */}
       <section aria-label="Summary" className="rounded-xl border border-line bg-panel p-4 sm:p-5">
@@ -57,40 +69,40 @@ function Overview() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat
-          label="Errors (24h)"
-          value={totals.errors24h.toLocaleString()}
+          label={`Errors (${span})`}
+          value={totals.errorsRange.toLocaleString()}
           tone={totals.criticalIssues ? "critical" : undefined}
-          hint={change === null ? "no prior data" : `${change > 0 ? "▲" : change < 0 ? "▼" : "•"} ${Math.abs(change)}% vs previous 24h`}
+          hint={change === null ? "not enough earlier data to compare" : change > 500 ? `▲ from ${totals.errorsPrev.toLocaleString()} in the previous ${range.span}` : `${change > 0 ? "▲" : change < 0 ? "▼" : "•"} ${Math.abs(change)}% vs previous ${range.span}`}
         />
         <Stat label="Critical issues" value={totals.criticalIssues} tone={totals.criticalIssues ? "critical" : undefined} hint="≥ threshold occurrences in 24h" />
-        <Stat label="Failing flows" value={totals.failingFlows} hint="parts of the app with errors in 24h" />
+        <Stat label="Failing flows" value={totals.failingFlows} hint={`parts of the app with errors in ${range.label}`} />
         <Stat
-          label="Crash-free sessions (14d)"
+          label={`Crash-free sessions (${span})`}
           value={asPct(summary.health.crashFreeRate)}
           tone={summary.health.crashFreeRate !== null && summary.health.crashFreeRate < 0.99 ? "high" : undefined}
-          hint={`${summary.health.sessions14d.toLocaleString()} sessions · ${totals.activeIssues} active issues`}
+          hint={`${summary.health.sessionsRange.toLocaleString()} sessions · ${totals.activeIssues} active issues`}
         />
       </div>
 
       <div className="grid gap-5 lg:grid-cols-5">
-        <div className="lg:col-span-3">
-          <Card title="Where the app is failing" subtitle="Errors in the last 24h by flow, coloured by worst severity. Click a bar to filter issues.">
+        <div className="min-w-0 lg:col-span-3">
+          <Card title="Where the app is failing" subtitle={`Errors in ${range.label} by flow, coloured by worst severity. Click a bar to filter issues.`}>
             <FlowChart data={summary.flows} onSelect={(f) => navigate({ search: (s) => ({ ...s, flow: s.flow === f ? undefined : f }) })} />
             <DataTable
-              columns={["Flow", "Severity", "Errors 24h", "Errors 14d", "Issues", "Failure rate 14d"]}
+              columns={["Flow", "Severity", "Errors 24h", `Errors (${span})`, "Issues", `Failure rate (${span})`]}
               rows={summary.flows.map((f) => [
                 f.flow,
                 f.severity,
                 f.errors24h,
-                f.errors14d,
+                f.errorsRange,
                 f.issues,
                 f.failureRate === null ? "—" : `${Math.round(f.failureRate * 100)}%`,
               ])}
             />
           </Card>
         </div>
-        <div className="lg:col-span-2">
-          <Card title="Error trend" subtitle="Errors per day, last 14 days (UTC)">
+        <div className="min-w-0 lg:col-span-2">
+          <Card title="Error trend" subtitle={`Errors per ${range.granularity}, ${range.label} (UTC)`}>
             <TrendChart data={summary.trend} />
             <DataTable columns={["Day", "Errors", "Events"]} rows={summary.trend.map((d) => [d.day, d.errors, d.events])} />
           </Card>
@@ -100,7 +112,7 @@ function Overview() {
       <div className="grid gap-5 lg:grid-cols-2">
         <Card
           title="Release health"
-          subtitle="Share of sessions without a crash or unhandled error, per app version (14d). Recorded automatically by the SDK."
+          subtitle={`Share of sessions without a crash or unhandled error, per app version, in ${range.label}. Recorded automatically by the SDK.`}
         >
           {summary.health.releases.length ? (
             <div className="-mx-4 overflow-x-auto sm:mx-0">
@@ -129,9 +141,9 @@ function Overview() {
             <p className="text-sm text-muted">No sessions yet. They're recorded automatically from SDK 0.2.</p>
           )}
         </Card>
-        <Card title="Failing endpoints" subtitle="Requests that returned 5xx, timed out or failed, 14d. Captured automatically from fetch and XHR.">
+        <Card title="Failing endpoints" subtitle={`Requests that returned 5xx, timed out or failed in ${range.label}. Captured automatically from fetch and XHR.`}>
           {summary.health.endpoints.length ? (
-            <ShareBars rows={summary.health.endpoints.map((e) => ({ key: e.endpoint, value: e.failures14d }))} />
+            <ShareBars rows={summary.health.endpoints.map((e) => ({ key: e.endpoint, value: e.failuresRange }))} />
           ) : (
             <p className="text-sm text-muted">No failed requests.</p>
           )}
@@ -140,7 +152,7 @@ function Overview() {
 
       <Card
         title={flow ? `Issues in ${flow}` : "Issues by severity"}
-        subtitle="Grouped errors. Severity is set by occurrences in the last 24 hours."
+        subtitle={`Grouped errors seen in ${range.label}. Severity is set by occurrences in the last 24 hours.`}
         right={flow ? <button className="text-xs text-accent" onClick={() => navigate({ search: (s) => ({ ...s, flow: undefined }) })}>Clear filter ×</button> : null}
       >
         <div className="-mx-4 overflow-x-auto sm:mx-0">
@@ -151,7 +163,7 @@ function Overview() {
                 <th className="px-2 py-2 font-medium">Issue</th>
                 <th className="px-2 py-2 font-medium">Flow</th>
                 <th className="px-2 py-2 text-right font-medium">24h</th>
-                <th className="px-2 py-2 text-right font-medium">Total</th>
+                <th className="px-2 py-2 text-right font-medium">{span === "24h" ? "Total" : span === "range" ? "Range" : span}</th>
                 <th className="px-2 py-2 text-right font-medium">Last seen</th>
               </tr>
             </thead>
@@ -160,14 +172,14 @@ function Overview() {
                 <tr key={i.fingerprint} className="border-b border-line last:border-0 hover:bg-panel-2">
                   <td className="px-4 py-2.5 sm:px-2"><SeverityBadge severity={i.severity} /></td>
                   <td className="max-w-[420px] px-2 py-2.5">
-                    <Link to="/issues/$fingerprint" params={{ fingerprint: i.fingerprint }} search={{ app: summary.app }} className="block truncate font-medium hover:text-accent">
+                    <Link to="/issues/$fingerprint" params={{ fingerprint: i.fingerprint }} search={{ app: summary.app, range: range.preset === "14d" ? undefined : range.preset, ...(range.preset === "custom" ? { from: range.from, to: range.to } : {}) }} className="block truncate font-medium hover:text-accent">
                       {i.title}
                     </Link>
                     {i.culprit && <div className="truncate font-mono text-xs text-muted">{i.culprit}</div>}
                   </td>
                   <td className="px-2 py-2.5 text-xs">{i.flow ?? <span className="text-muted">untagged</span>}</td>
                   <td className="px-2 py-2.5 text-right font-semibold">{i.count24h}</td>
-                  <td className="px-2 py-2.5 text-right text-muted">{i.countTotal}</td>
+                  <td className="px-2 py-2.5 text-right text-muted">{span === "24h" ? i.countTotal : i.countRange}</td>
                   <td className="px-2 py-2.5 text-right text-xs text-muted">{timeAgo(i.lastSeen)}</td>
                 </tr>
               ))}
@@ -180,9 +192,9 @@ function Overview() {
       </Card>
 
       <div className="grid gap-5 md:grid-cols-3">
-        <Card title="By OS" subtitle="Errors, 14d"><ShareBars rows={summary.breakdowns.os.map((r) => ({ key: r.key, value: r.errors }))} /></Card>
-        <Card title="By app version" subtitle="Errors, 14d"><ShareBars rows={summary.breakdowns.appVersion.map((r) => ({ key: r.key, value: r.errors }))} /></Card>
-        <Card title="By device" subtitle="Errors, 14d"><ShareBars rows={summary.breakdowns.deviceModel.map((r) => ({ key: r.key, value: r.errors }))} /></Card>
+        <Card title="By OS" subtitle={`Errors, ${range.label}`}><ShareBars rows={summary.breakdowns.os.map((r) => ({ key: r.key, value: r.errors }))} /></Card>
+        <Card title="By app version" subtitle={`Errors, ${range.label}`}><ShareBars rows={summary.breakdowns.appVersion.map((r) => ({ key: r.key, value: r.errors }))} /></Card>
+        <Card title="By device" subtitle={`Errors, ${range.label}`}><ShareBars rows={summary.breakdowns.deviceModel.map((r) => ({ key: r.key, value: r.errors }))} /></Card>
       </div>
 
       <p className="pb-6 text-xs text-muted">

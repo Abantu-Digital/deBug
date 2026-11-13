@@ -2,7 +2,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import type { Issue, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debugkit/schema";
 import { coalesceRollups, rollupId } from "./rollups";
-import type { IssueUpsert, Store } from "./index";
+import { HOURLY_ROLLUP_DAYS, type AppSettings, type IssueUpsert, type RestampResult, type Store } from "./index";
 
 /**
  * Firestore layout (all under one root collection so it's easy to find / secure / delete):
@@ -11,6 +11,9 @@ import type { IssueUpsert, Store } from "./index";
  *   {root}/{app}/issues/{fingerprint} Issue
  *   {root}/{app}/rollups/{day__dim__key}  RollupRow (counters via FieldValue.increment)
  *   {root}/{app}/events/{eventId}     StoredEvent + expireAt (enable a TTL policy on `expireAt`)
+ *   {root}/{app}/settings/app         AppSettings (retention, set from the dashboard)
+ *
+ * Hourly rollups (dimension issueHour) also carry expireAt, so they expire after 7 days.
  *
  * Composite index needed: rollups (dimension ASC, day ASC). See firestore.indexes.json.
  */
@@ -31,8 +34,8 @@ export class FirestoreStore implements Store {
     await this.app(app).set({ id: app, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
   }
 
-  async writeEvents(events: StoredEvent[]) {
-    const days = this.opts.retentionDays ?? 30;
+  async writeEvents(events: StoredEvent[], opts: { retentionDays?: number } = {}) {
+    const days = opts.retentionDays ?? this.opts.retentionDays ?? 30;
     for (const chunk of chunks(events, 400)) {
       const batch = this.db.batch();
       for (const e of chunk) {
@@ -86,12 +89,41 @@ export class FirestoreStore implements Store {
             key: r.key,
             errors: FieldValue.increment(r.errors),
             events: FieldValue.increment(r.events),
+            // Hourly buckets look like "YYYY-MM-DDTHH"; expire them a week after the hour.
+            ...(r.dimension === "issueHour" ? { expireAt: Timestamp.fromMillis(Date.parse(`${r.day}:00:00Z`) + HOURLY_ROLLUP_DAYS * 86_400_000) } : {}),
           },
           { merge: true },
         );
       }
       await batch.commit();
     }
+  }
+
+  private settingsRef(app: string) {
+    return this.app(app).collection("settings").doc("app");
+  }
+  async getSettings(app: string) {
+    const snap = await this.settingsRef(app).get();
+    return snap.exists ? (snap.data() as AppSettings) : null;
+  }
+  async putSettings(app: string, s: AppSettings) {
+    const next = strip({ ...s, updatedAt: new Date().toISOString() });
+    await this.settingsRef(app).set(next, { merge: true });
+    return { ...(await this.getSettings(app)), ...next };
+  }
+  async restampExpiry(app: string, retentionDays: number, { cursor, limit = 400 }: { cursor?: string; limit?: number } = {}): Promise<RestampResult> {
+    let q = this.app(app).collection("events").orderBy("__name__").limit(Math.min(limit, 400));
+    if (cursor) q = q.startAfter(cursor);
+    const snap = await q.get();
+    if (snap.empty) return { updated: 0 };
+    const batch = this.db.batch();
+    for (const d of snap.docs) {
+      const receivedAt = Date.parse((d.get("receivedAt") as string | undefined) ?? (d.get("ts") as string));
+      batch.update(d.ref, { expireAt: Timestamp.fromMillis(receivedAt + retentionDays * 86_400_000) });
+    }
+    await batch.commit();
+    const last = snap.docs[snap.docs.length - 1]!.id;
+    return { updated: snap.size, cursor: snap.size === Math.min(limit, 400) ? last : undefined };
   }
 
   async listApps() {

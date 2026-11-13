@@ -1,11 +1,15 @@
+import { handleAdmin } from "./admin";
 import { CORS_HEADERS, ingest, type IngestOptions } from "./index";
 
 interface HttpEvent {
   body?: string | null;
   isBase64Encoded?: boolean;
   headers?: Record<string, string | undefined>;
-  requestContext?: { http?: { method?: string } };
+  requestContext?: { http?: { method?: string; path?: string } };
   httpMethod?: string;
+  rawPath?: string;
+  path?: string;
+  queryStringParameters?: Record<string, string | undefined> | null;
 }
 
 /**
@@ -23,9 +27,21 @@ interface HttpEvent {
  *     keys: parseIngestKeys(process.env.DEBUG_INGEST_KEYS),
  *   });
  */
-export function lambdaHandler(opts: IngestOptions) {
+export function lambdaHandler(opts: IngestOptions & { adminToken?: string }) {
   return async (event: HttpEvent) => {
     const method = event.requestContext?.http?.method ?? event.httpMethod ?? "POST";
+    const path = event.rawPath ?? event.requestContext?.http?.path ?? event.path ?? "/";
+    if (path.startsWith("/admin")) {
+      const headers = Object.fromEntries(Object.entries(event.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
+      const body = event.isBase64Encoded ? Buffer.from(event.body ?? "", "base64").toString("utf8") : (event.body ?? "");
+      try {
+        const out = await handleAdmin({ method, path, query: event.queryStringParameters ?? {}, body, authorization: headers.authorization }, { store: opts.store, adminToken: opts.adminToken, retentionDays: opts.retentionDays });
+        return { statusCode: out.status, headers: { "content-type": "application/json" }, body: JSON.stringify(out.body) };
+      } catch (err) {
+        console.error("[deBug] admin request failed", err);
+        return { statusCode: 500, headers: { "content-type": "application/json" }, body: JSON.stringify({ ok: false, error: "internal" }) };
+      }
+    }
     if (method === "OPTIONS") return { statusCode: 204, headers: CORS_HEADERS, body: "" };
     if (method !== "POST") return reply(405, { ok: false, error: "method not allowed" });
     const headers = Object.fromEntries(Object.entries(event.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]));

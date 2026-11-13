@@ -1,13 +1,14 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
-import { HourlyChart } from "~/components/charts";
+import { HourlyChart, TrendChart } from "~/components/charts";
+import { RangePicker, rangeSearch, RetentionNote, type RangeSearch } from "~/components/range-picker";
 import { Card, DataTable, SeverityBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
 import { getIssueDetail } from "~/server/fns";
 
 export const Route = createFileRoute("/_authed/issues/$fingerprint")({
-  validateSearch: (s: Record<string, unknown>): { app: string } => ({ app: typeof s.app === "string" ? s.app : "" }),
-  loaderDeps: ({ search }) => ({ app: search.app }),
+  validateSearch: (s: Record<string, unknown>): { app: string } & RangeSearch => ({ app: typeof s.app === "string" ? s.app : "", ...rangeSearch(s) }),
+  loaderDeps: ({ search }) => ({ app: search.app, range: search.range, from: search.from, to: search.to }),
   loader: async ({ params, deps }) => {
-    const d = await getIssueDetail({ data: { app: deps.app, fingerprint: params.fingerprint } });
+    const d = await getIssueDetail({ data: { ...deps, fingerprint: params.fingerprint } });
     if (!d) throw notFound();
     return d;
   },
@@ -19,10 +20,17 @@ function IssuePage() {
   const { issue, sample } = d;
   const ev = sample?.event.type === "error" ? sample.event : null;
   const frames = ev?.error.frames ?? [];
+  const navigate = Route.useNavigate();
+  const search = Route.useSearch();
+  const { range } = d;
 
   return (
     <main className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6">
-      <Link to="/" search={{ app: d.app }} className="text-sm text-muted hover:text-ink">← Overview</Link>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Link to="/" search={{ app: d.app, range: search.range, from: search.from, to: search.to }} className="text-sm text-muted hover:text-ink">← Overview</Link>
+        <RangePicker key={`${range.preset}${range.from}${range.to}`} value={range} today={new Date().toISOString().slice(0, 10)} onChange={(r) => navigate({ search: (s) => ({ ...s, ...r }) })} />
+      </div>
+      <RetentionNote rangeFrom={range.from} retention={d.retention} />
 
       <div>
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
@@ -36,7 +44,7 @@ function IssuePage() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Occurrences (24h)" value={issue.count24h} tone={issue.severity} />
-        <Stat label="Total occurrences" value={issue.countTotal.toLocaleString()} />
+        <Stat label={`Occurrences (${range.label})`} value={issue.countRange.toLocaleString()} hint={`${issue.countTotal.toLocaleString()} since first seen`} />
         <Stat label="Users affected" value={d.affectedUsers} hint="in the last 200 events" />
         <Stat label="Top app version" value={d.breakdowns.appVersion[0]?.key ?? "—"} hint={d.breakdowns.appVersion[0] ? `${Math.round(d.breakdowns.appVersion[0].share * 100)}% of occurrences` : undefined} />
       </div>
@@ -57,6 +65,13 @@ function IssuePage() {
 
       <div className="grid gap-5 lg:grid-cols-3">
         <div className="lg:col-span-2">
+          {range.preset !== "24h" && (
+            <div className="mb-5">
+              <Card title="Occurrences per day" subtitle={`${range.label} (UTC)`}>
+                <TrendChart data={d.daily.map((x) => ({ day: x.day, errors: x.count }))} />
+              </Card>
+            </div>
+          )}
           <Card title="Occurrences per hour" subtitle="Last 48 hours">
             <HourlyChart data={d.hourly} />
             <DataTable columns={["Hour (UTC)", "Count"]} rows={d.hourly.map((h) => [h.hour, h.count])} />

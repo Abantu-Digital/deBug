@@ -79,7 +79,14 @@ export const debugIngest = onRequest(
 );
 ```
 
-Then deploy `packages/adapters/firestore.indexes.json` (it includes the TTL policy on `events.expireAt`).
+Then deploy `packages/adapters/firestore.indexes.json`. It includes the TTL policies on `events.expireAt`, and on `rollups.expireAt` for the hourly counters.
+
+**How long data is kept** is up to you, since it's your database:
+- **Raw events** (stack traces, breadcrumbs, context) expire after `retentionDays`. Pass it to `ingest` or set `DEBUG_RETENTION_DAYS`; the default is 30. The dashboard's Settings page can change it per app, and can re-stamp events already stored.
+- **Counts, issues and release health** are kept forever, so any date range works.
+- **Hourly counters** expire after 7 days, since they only feed the 24h and 48h views.
+
+To let the dashboard change settings while its database credentials stay read-only, set `DEBUG_ADMIN_TOKEN` (16+ characters) on the ingest function, plus `DEBUG_ADMIN_URL` (the ingest URL followed by `/admin`) and the same token in the dashboard's environment. `npx debugkit init` does all of this.
 
 **AWS:** a DynamoDB table with `pk`/`sk` string keys and TTL on `ttl`, plus a Lambda:
 

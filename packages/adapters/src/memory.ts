@@ -1,6 +1,6 @@
 import type { Issue, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debugkit/schema";
 import { coalesceRollups, rollupId } from "./rollups";
-import type { IssueUpsert, Store } from "./index";
+import type { AppSettings, IssueUpsert, RestampResult, Store } from "./index";
 
 /** In-process store for tests and the dashboard's demo mode. */
 export class MemoryStore implements Store {
@@ -8,12 +8,34 @@ export class MemoryStore implements Store {
   events: StoredEvent[] = [];
   issues = new Map<string, Issue>();
   rollups = new Map<string, RollupRow>();
+  settings = new Map<string, AppSettings>();
+  /** Expiry per event id (ms), mirroring what a real store would stamp. */
+  expiry = new Map<string, number>();
+  retentionDays = 30;
 
   async registerApp(app: string) {
     this.apps.add(app);
   }
-  async writeEvents(events: StoredEvent[]) {
+  async writeEvents(events: StoredEvent[], opts: { retentionDays?: number } = {}) {
+    const days = opts.retentionDays ?? this.retentionDays;
+    for (const e of events) this.expiry.set(e.event.id, Date.parse(e.receivedAt) + days * 86_400_000);
     this.events.push(...events);
+  }
+  async getSettings(app: string) {
+    return this.settings.get(app) ?? null;
+  }
+  async putSettings(app: string, s: AppSettings) {
+    const next = { ...this.settings.get(app), ...s, updatedAt: new Date().toISOString() };
+    this.settings.set(app, next);
+    return next;
+  }
+  async restampExpiry(app: string, retentionDays: number, { cursor, limit = 500 }: { cursor?: string; limit?: number } = {}): Promise<RestampResult> {
+    const mine = this.events.filter((e) => e.app === app);
+    const start = cursor ? Number(cursor) : 0;
+    const page = mine.slice(start, start + limit);
+    for (const e of page) this.expiry.set(e.event.id, Date.parse(e.receivedAt) + retentionDays * 86_400_000);
+    const next = start + page.length;
+    return { updated: page.length, cursor: next < mine.length ? String(next) : undefined };
   }
   async upsertIssues(updates: IssueUpsert[]) {
     for (const u of updates) {

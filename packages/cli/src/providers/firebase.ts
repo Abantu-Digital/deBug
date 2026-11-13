@@ -6,7 +6,7 @@ import { VERSION } from "../dashboard";
 import { mergeKeys } from "../keys";
 import { environment, paths } from "../state";
 import { ask, bail, bold, choose, code, dim, next, p, yes } from "../ui";
-import type { ProviderResult, SetupContext } from "./types";
+import { adminEnv, type ProviderResult, type SetupContext } from "./types";
 
 /** Firestore locations offered, with the Cloud Functions region that sits closest to each. */
 const LOCATIONS: { value: string; label: string; region: string }[] = [
@@ -136,7 +136,7 @@ export async function setupFirebase(ctx: SetupContext): Promise<ProviderResult> 
   const region = functionRegion(location);
 
   /* ---------- 5. The ingest function ---------- */
-  const dir = writeFunctionSource(ctx, region);
+  const dir = writeFunctionSource(ctx, region, projectId);
   s.start("Installing the ingest function's dependencies");
   const inst = await capture("npm", ["install", "--no-audit", "--no-fund"], { cwd: join(dir, "functions") });
   if (inst.code !== 0) {
@@ -194,7 +194,7 @@ export async function setupFirebase(ctx: SetupContext): Promise<ProviderResult> 
 
   return {
     config: { provider: "firebase", endpoint, ingestKey: ctx.ingestKey, firebase: { projectId, region, account, location } },
-    dashboardEnv: { DEBUG_STORE: "firestore", GOOGLE_CLOUD_PROJECT: projectId, GCLOUD_PROJECT: projectId },
+    dashboardEnv: { DEBUG_STORE: "firestore", GOOGLE_CLOUD_PROJECT: projectId, GCLOUD_PROJECT: projectId, ...adminEnv(endpoint, ctx) },
     created: [
       `Firestore database in ${code(projectId)} (${location}), with indexes and 30-day expiry on raw events`,
       `Cloud Function ${code(FUNCTION_NAME)} in ${region}: ${code(endpoint)}`,
@@ -253,7 +253,7 @@ export function functionRegion(location: string): string {
 }
 
 /** The Cloud Function the setup deploys, written to .debugkit/firebase in the app's repo. */
-export function writeFunctionSource(ctx: SetupContext, region: string): string {
+export function writeFunctionSource(ctx: SetupContext, region: string, projectId = "default"): string {
   const dir = paths(ctx.app.cwd).firebase;
   mkdirSync(join(dir, "functions"), { recursive: true });
   writeFileSync(
@@ -303,7 +303,12 @@ initializeApp();
 
 export const ${FUNCTION_NAME} = onRequest(
   { region: ${JSON.stringify(region)}, invoker: "public", memory: "256MiB", maxInstances: 10 },
-  firebaseHandler({ store: new FirestoreStore(getFirestore()), keys: parseIngestKeys(process.env.DEBUG_INGEST_KEYS) }),
+  firebaseHandler({
+    store: new FirestoreStore(getFirestore()),
+    keys: parseIngestKeys(process.env.DEBUG_INGEST_KEYS),
+    retentionDays: Number(process.env.DEBUG_RETENTION_DAYS) || undefined,
+    adminToken: process.env.DEBUG_ADMIN_TOKEN,
+  }),
 );
 `,
   );
@@ -311,6 +316,9 @@ export const ${FUNCTION_NAME} = onRequest(
   // keys already there: builds in users' hands, and other apps sharing this function, use them.
   const envFile = join(dir, "functions", ".env");
   const current = existsSync(envFile) ? /^DEBUG_INGEST_KEYS=(.*)$/m.exec(readFileSync(envFile, "utf8"))?.[1] : undefined;
-  writeFileSync(envFile, `DEBUG_INGEST_KEYS=${mergeKeys(current, ctx.ingestKey, ctx.app.appId)}\n`);
+  writeFileSync(envFile, `DEBUG_INGEST_KEYS=${mergeKeys(current, ctx.ingestKey, ctx.app.appId)}\nDEBUG_RETENTION_DAYS=${ctx.retentionDays}\n`);
+  // The admin token is a secret: it goes in the per-project env file Firebase deploys with
+  // (functions/.env.<projectId>), which .debugkit/.gitignore keeps out of git.
+  writeFileSync(join(dir, "functions", `.env.${projectId}`), `DEBUG_ADMIN_TOKEN=${ctx.adminToken}\n`, { mode: 0o600 });
   return dir;
 }

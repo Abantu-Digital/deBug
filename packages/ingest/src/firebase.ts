@@ -1,3 +1,4 @@
+import { handleAdmin } from "./admin";
 import { CORS_HEADERS, ingest, type IngestOptions } from "./index";
 
 /**
@@ -15,15 +16,27 @@ import { CORS_HEADERS, ingest, type IngestOptions } from "./index";
  *     firebaseHandler({ store: new FirestoreStore(getFirestore()), keys: parseIngestKeys(process.env.DEBUG_INGEST_KEYS) }),
  *   );
  */
-export function firebaseHandler(opts: IngestOptions) {
+export function firebaseHandler(opts: IngestOptions & { adminToken?: string }) {
   return async (
-    req: { method: string; header(name: string): string | undefined; rawBody?: Buffer; body?: unknown },
+    req: { method: string; path?: string; query?: Record<string, unknown>; header(name: string): string | undefined; rawBody?: Buffer; body?: unknown },
     res: { set(h: Record<string, string>): unknown; status(n: number): { json(b: unknown): void; send(b?: unknown): void } },
   ) => {
+    const rawText = () => req.rawBody?.toString("utf8") ?? (typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {}));
+    // Settings routes for the dashboard (server to server: no CORS).
+    if (req.path?.startsWith("/admin")) {
+      try {
+        const query = Object.fromEntries(Object.entries(req.query ?? {}).map(([k, v]) => [k, typeof v === "string" ? v : undefined]));
+        const out = await handleAdmin({ method: req.method, path: req.path, query, body: req.method === "GET" ? "" : rawText(), authorization: req.header("authorization") }, { store: opts.store, adminToken: opts.adminToken, retentionDays: opts.retentionDays });
+        return res.status(out.status).json(out.body);
+      } catch (err) {
+        console.error("[deBug] admin request failed", err);
+        return res.status(500).json({ ok: false, error: "internal" });
+      }
+    }
     res.set(CORS_HEADERS);
     if (req.method === "OPTIONS") return res.status(204).send();
     if (req.method !== "POST") return res.status(405).json({ ok: false, error: "method not allowed" });
-    const raw = req.rawBody?.toString("utf8") ?? (typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {}));
+    const raw = rawText();
     try {
       const out = await ingest(raw, req.header("x-debug-key"), opts);
       res.status(out.status).json(out.body);

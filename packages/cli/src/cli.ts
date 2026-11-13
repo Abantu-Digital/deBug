@@ -7,8 +7,8 @@ import { setupAws } from "./providers/aws";
 import { setupFirebase } from "./providers/firebase";
 import { setupLocal } from "./providers/local";
 import type { ProviderResult } from "./providers/types";
-import { cmdFor, environment, listEnvironments, readConfig, writeConfig, type DebugkitConfig, type ProviderId } from "./state";
-import { bail, bold, choose, code, dim, flags, p, pc, yes } from "./ui";
+import { cmdFor, environment, listEnvironments, paths, readConfig, readEnv, writeConfig, type DebugkitConfig, type ProviderId } from "./state";
+import { ask, bail, bold, choose, code, dim, flags, p, pc, yes } from "./ui";
 import { initFile, installSdk, wireApp } from "./wire";
 
 
@@ -47,6 +47,34 @@ function parseArgs(argv: string[]) {
 
 /** " (preview)" when working on a named environment. */
 const envLabel = () => (environment.get() ? ` (${environment.get()})` : "");
+
+/**
+ * How long to keep raw events. Shown with a rough storage cost: about 2 KB per event, at
+ * 10,000 events a day, priced per GB-month (Firestore ~$0.18, DynamoDB ~$0.25).
+ */
+async function askRetention(current: number | undefined, provider: ProviderId): Promise<number> {
+  const perGb = provider === "aws" ? 0.25 : 0.18;
+  const cost = (d: number) => {
+    const gb = (10_000 * d * 2) / 1_000_000;
+    return `${gb < 1 ? gb.toFixed(1) : Math.round(gb)} GB ≈ $${(gb * perGb).toFixed(2)}/month at 10k events a day`;
+  };
+  p.note(
+    [
+      "Raw events carry the stack trace, breadcrumbs and device details. They expire after the period you pick.",
+      `${bold("Counts, issues and release health are kept forever")}, so charts cover any date range.`,
+      "You can change this later on the dashboard's Settings page.",
+    ].join("\n"),
+    "Data retention",
+  );
+  const options = [30, 60, 90, 180, 365].map((d) => ({ value: String(d), label: `${d} days`, hint: cost(d) }));
+  const picked = await choose("Keep raw events for how long?", [...options, { value: "custom", label: "Another number of days" }], String(current ?? 60));
+  if (picked !== "custom") return Number(picked);
+  const days = await ask("Days (1 to 3650)", {
+    initial: String(current ?? 60),
+    validate: (v) => (/^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 3650 ? undefined : "A whole number from 1 to 3650"),
+  });
+  return Number(days);
+}
 
 function requireConfig(cwd: string): DebugkitConfig {
   let cfg = readConfig(cwd);
@@ -105,7 +133,10 @@ async function init(cwd: string, preset?: ProviderId) {
   // Re-running on the same provider keeps the key: builds already shipped carry it.
   const ingestKey =
     existing?.provider === provider && existing.ingestKey ? existing.ingestKey : `pk_${provider === "local" ? "local" : "live"}_${randomBytes(12).toString("hex")}`;
-  const ctx = { app, ingestKey, dashboardPort };
+  const retentionDays = provider === "local" ? 30 : await askRetention(existing?.retentionDays, provider);
+  // Keep the admin token across re-runs, so a dashboard already set up keeps working.
+  const adminToken = readEnv(paths(cwd).dashboardEnv).DEBUG_ADMIN_TOKEN ?? `adm_${randomBytes(24).toString("hex")}`;
+  const ctx = { app, ingestKey, dashboardPort, retentionDays, adminToken };
   let result: ProviderResult;
   try {
     result = provider === "firebase" ? await setupFirebase(ctx) : provider === "aws" ? await setupAws(ctx) : await setupLocal(ctx);
@@ -113,7 +144,7 @@ async function init(cwd: string, preset?: ProviderId) {
     p.log.error((err as Error).message);
     bail("Setup stopped. Nothing else was changed in your app. Fix the error above and run npx debugkit init again.");
   }
-  const cfg: DebugkitConfig = { ...result.config, appId: app.appId, dashboardPort, createdAt: new Date().toISOString() };
+  const cfg: DebugkitConfig = { ...result.config, appId: app.appId, dashboardPort, retentionDays, createdAt: new Date().toISOString() };
   writeConfig(cwd, cfg);
   p.note(result.created.map((l) => `• ${l}`).join("\n"), "Created");
 
