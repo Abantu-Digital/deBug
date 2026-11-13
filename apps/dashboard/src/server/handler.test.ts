@@ -74,3 +74,12 @@ describe("dashboard on Lambda", () => {
     expect(r).toMatchObject({ statusCode: 200, body: "console.log(1)", isBase64Encoded: false });
   });
 });
+
+describe("index errors", async () => {
+  const { isIndexError } = await import("./errors");
+  it("are recognised, so the page explains them instead of showing the raw error", () => {
+    expect(isIndexError("9 FAILED_PRECONDITION: The query requires an index. You can create it here: https://…")).toBe(true);
+    expect(isIndexError("That index is currently building and cannot be used yet")).toBe(true);
+    expect(isIndexError("permission denied")).toBe(false);
+  });
+});

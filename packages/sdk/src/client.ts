@@ -14,12 +14,20 @@ import {
 } from "./auto";
 
 export const SDK_NAME = "@debugkit/sdk";
-export const SDK_VERSION = "0.5.0";
+declare const __DEBUGKIT_SDK_VERSION__: string | undefined;
+/** This package's version, stamped in at build time from package.json. */
+export const SDK_VERSION = typeof __DEBUGKIT_SDK_VERSION__ === "string" ? __DEBUGKIT_SDK_VERSION__ : "0.0.0-dev";
 
 /** Optional persistence so events survive app restarts / offline. e.g. AsyncStorage. */
 export interface QueueStorage {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<void>;
+  /**
+   * Optional synchronous write, used on a fatal crash: the app is killed straight after, so an
+   * async write may never land. MMKV can do this (`(k, v) => mmkv.set(k, v)`); AsyncStorage can't,
+   * and then the crash is saved on a best-effort basis.
+   */
+  setItemSync?(key: string, value: string): void;
 }
 
 export interface InitOptions {
@@ -136,6 +144,10 @@ export class DebugClient {
   private user: { id?: string; anonymousId: string } = { anonymousId: uid() };
   private timer: ReturnType<typeof setInterval> | undefined;
   private flushing: Promise<void> | undefined;
+  /** The batch being uploaded: still saved, so a crash mid-upload doesn't lose it. */
+  private inflight: EventInput[] = [];
+  /** Saved events from the last run, read once; saves wait for it so they don't overwrite them. */
+  private restoring: Promise<void> | undefined;
   private backoffUntil = 0;
   private failures = 0;
   private ready = false;
@@ -164,7 +176,7 @@ export class DebugClient {
     this.rawFetch = typeof globalThis.fetch === "function" ? (((globalThis.fetch as { __raw?: typeof fetch }).__raw ?? globalThis.fetch) as typeof fetch) : undefined;
     this.ready = true;
     this.loadAnonymousId();
-    void this.restore();
+    this.restoring = this.restore();
     if (this.auto.errors && !this.handlersInstalled) this.installGlobalHandlers();
     this.instrument();
     if (this.auto.sessions) this.startSession();
@@ -295,11 +307,14 @@ export class DebugClient {
     if (this.flushing) return this.flushing;
     if (!this.ready || this.queue.length === 0 || Date.now() < this.backoffUntil) return;
     const batch = this.queue.splice(0, this.opts.maxBatch);
+    this.inflight = batch;
     this.flushing = this.send(batch)
       .then(() => {
         this.failures = 0;
+        this.inflight = [];
       })
       .catch((err) => {
+        this.inflight = [];
         this.queue.unshift(...batch);
         this.failures++;
         this.backoffUntil = Date.now() + Math.min(60_000, 1000 * 2 ** this.failures);
@@ -389,7 +404,14 @@ export class DebugClient {
   /** Queue without sampling (sessions must be complete for crash-free rates to be right). */
   private push(e: EventInput) {
     if (!this.ready) return;
-    const out = this.opts.beforeSend ? this.opts.beforeSend(e) : e;
+    let out: EventInput | null | undefined = e;
+    if (this.opts.beforeSend) {
+      try {
+        out = this.opts.beforeSend(e);
+      } catch (err) {
+        this.log("beforeSend threw; sending the event unchanged", err);
+      }
+    }
     if (!out) return;
     this.queue.push(out);
     if (this.queue.length > MAX_QUEUE) this.queue.splice(0, this.queue.length - MAX_QUEUE);
@@ -452,9 +474,27 @@ export class DebugClient {
     if (!res.ok) throw new Error(`ingest responded ${res.status}`);
   }
 
+  /** What must survive a restart: the batch being uploaded, then the queue. */
+  private snapshot() {
+    return JSON.stringify([...this.inflight, ...this.queue]);
+  }
+
   private async persist() {
+    const storage = this.opts.storage;
+    if (!storage) return;
     try {
-      await this.opts.storage?.setItem(QUEUE_KEY, JSON.stringify(this.queue));
+      await this.restoring;
+      await storage.setItem(QUEUE_KEY, this.snapshot());
+    } catch {}
+  }
+
+  /** Save now, synchronously where the storage can: the app is about to die. */
+  private persistNow() {
+    const storage = this.opts.storage;
+    if (!storage) return;
+    try {
+      if (storage.setItemSync) storage.setItemSync(QUEUE_KEY, this.snapshot());
+      else void storage.setItem(QUEUE_KEY, this.snapshot()).catch(() => {});
     } catch {}
   }
 
@@ -487,7 +527,12 @@ export class DebugClient {
   private async restore() {
     try {
       const raw = await this.opts.storage?.getItem(QUEUE_KEY);
-      if (raw) this.queue.unshift(...(JSON.parse(raw) as EventInput[]));
+      const saved = raw ? (JSON.parse(raw) as EventInput[]) : [];
+      if (!Array.isArray(saved) || !saved.length) return;
+      // Skip anything already queued in this run (the same event saved twice).
+      const have = new Set([...this.inflight, ...this.queue].map((e) => e.id));
+      this.queue.unshift(...saved.filter((e) => e && typeof e === "object" && !have.has(e.id)));
+      if (this.queue.length > MAX_QUEUE) this.queue.splice(0, this.queue.length - MAX_QUEUE);
     } catch {}
   }
 
@@ -498,8 +543,14 @@ export class DebugClient {
     if (g.ErrorUtils?.setGlobalHandler) {
       const prev = g.ErrorUtils.getGlobalHandler?.();
       g.ErrorUtils.setGlobalHandler((err: unknown, isFatal?: boolean) => {
-        this.error(err, { handled: false, fatal: !!isFatal, tags: { source: "global-handler" } });
-        void this.flush();
+        try {
+          this.error(err, { handled: false, fatal: !!isFatal, tags: { source: "global-handler" } });
+          // In release builds React Native's handler kills the app right after this, so the
+          // upload below may never finish: save the crash first, and send it on the next launch.
+          if (isFatal) this.persistNow();
+          void this.flush();
+          if (isFatal) this.persistNow(); // the crash may now be in the batch being uploaded
+        } catch {}
         prev?.(err, isFatal);
       });
     }

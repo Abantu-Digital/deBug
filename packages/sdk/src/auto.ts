@@ -31,6 +31,8 @@ const g = globalThis as Record<string, any>;
 /* ------------------------------- URLs ------------------------------- */
 
 const ID_SEGMENT = /^(?:\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{16,}|(?=[^/]*\d)[\w-]{20,})$/i;
+/** Personal data in a path segment: a run of 7+ digits (phone numbers, ids: +27821234567, msisdn-0821234567) or an email. */
+const PERSONAL_SEGMENT = /\d(?:[\s().-]?\d){6,}|@|%40/;
 
 /**
  * "https://api.x.com/v1/orders/8812?token=abc" → "api.x.com/v1/orders/:id". Query strings and
@@ -40,10 +42,18 @@ const ID_SEGMENT = /^(?:\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 export function normaliseUrl(raw: string): string {
   const m = /^(?:([a-z][a-z0-9+.-]*:)?\/\/([^/?#]*))?([^?#]*)/i.exec(raw.trim());
   let host = m?.[2] ?? "";
-  const path = (m?.[3] || "/").split("/").map((s) => (ID_SEGMENT.test(s) ? ":id" : s)).join("/");
+  const path = (m?.[3] || "/").split("/").map((s) => (ID_SEGMENT.test(s) || PERSONAL_SEGMENT.test(safeDecode(s)) ? ":id" : s)).join("/");
   if (host.includes("@")) host = host.slice(host.lastIndexOf("@") + 1); // drop user:pass@
   const here = typeof location !== "undefined" ? location.host : undefined;
   return !host || host === here ? path : `${host}${path.startsWith("/") ? "" : "/"}${path}`;
+}
+
+function safeDecode(s: string) {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
 }
 
 /* ------------------------------ network ----------------------------- */

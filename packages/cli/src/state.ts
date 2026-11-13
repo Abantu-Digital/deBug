@@ -9,6 +9,7 @@ export interface DebugkitConfig {
   appId: string;
   endpoint: string;
   ingestKey: string;
+  /** `account` is only in configs from before 0.6.1; it now lives in the dashboard env (DEBUGKIT_FIREBASE_ACCOUNT). */
   firebase?: { projectId: string; region: string; account?: string; location: string };
   aws?: { region: string; profile?: string; table: string; functionName: string; roleName: string; readOnlyPolicyArn?: string };
   local?: { port: number };

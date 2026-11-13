@@ -46,14 +46,14 @@ export function nativeContext(opts: { deviceInfo?: DeviceInfoModule } = {}): Con
     os: { name: Platform.OS, version: Platform.OS === "android" ? (c.Release ?? String(Platform.Version)) : String(Platform.Version) },
     runtime: { name: "react-native", version: rn ? `${rn.major}.${rn.minor}.${rn.patch}` : undefined, engine: hermes ? "hermes" : "jsc" },
     device: {
-      model: call(di?.getModel.bind(di)) ?? c.Model,
-      brand: call(di?.getBrand.bind(di)) ?? c.Brand,
+      model: call(di?.getModel?.bind(di)) ?? c.Model,
+      brand: call(di?.getBrand?.bind(di)) ?? c.Brand,
       manufacturer: call(di?.getManufacturerSync?.bind(di)) ?? c.Manufacturer,
       isEmulator: call(di?.isEmulatorSync?.bind(di)) ?? (c.Fingerprint ? /generic|emulator/i.test(c.Fingerprint) : undefined),
       memoryMb: totalMemory ? Math.round(totalMemory / 1024 / 1024) : undefined,
-      type: di ? (call(di.isTablet.bind(di)) ? "tablet" : "phone") : Platform.OS === "ios" && (Platform as { isPad?: boolean }).isPad ? "tablet" : "phone",
+      type: di ? (call(di.isTablet?.bind(di)) ? "tablet" : "phone") : Platform.OS === "ios" && (Platform as { isPad?: boolean }).isPad ? "tablet" : "phone",
     },
-    app: { version: call(di?.getVersion.bind(di)), build: call(di?.getBuildNumber.bind(di)) } as ContextPatch["app"],
+    app: { version: call(di?.getVersion?.bind(di)), build: call(di?.getBuildNumber?.bind(di)) } as ContextPatch["app"],
     locale: locale(),
     timezone: timezone(),
   };
@@ -75,6 +75,8 @@ const SESSION_TIMEOUT_MS = 30 * 60_000;
 /** Initialise deBug in a React Native app (bare or Expo). Fills in device context and flushes when the app is backgrounded. */
 export function initReactNative(options: ReactNativeInitOptions, client: DebugClient = deBug): DebugClient {
   const { deviceInfo, captureUnhandledRejections = "production", ...rest } = options;
+  // Switched off: don't touch the device at all.
+  if (rest.enabled === false) return client.init(rest);
   const base = nativeContext({ deviceInfo });
   client.init({
     ...rest,

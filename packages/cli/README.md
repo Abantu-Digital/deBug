@@ -108,9 +108,9 @@ Options: `--provider firebase|aws|local` skips the provider question, `--cwd <di
 |---|---|
 | Just this machine | Run end to end: the empty dashboard, then test events arriving |
 | Firebase | Run end to end against a real project: function deployed, indexes added without touching existing ones, test events read back on the dashboard |
-| Hosting the dashboard | Firebase: deployed to a real project (us-central1), reading live data as the read-only service account, redeployed on top of itself. AWS: the Lambda package runs locally; not yet deployed to a real account |
+| Hosting the dashboard | Firebase: deployed to two real projects, reading live data as the read-only service account. With ingest in africa-south1, Hosting couldn't reach a dashboard function there, so it runs in us-central1 (the retry now offers that first). AWS: the Lambda package runs locally; not yet deployed to a real account |
 | AWS | Unit-tested (profile parsing, the "not found" handling, key merging) and the bundled Lambda run locally. Not yet run against a real account |
-| Environments (`--env`) | Run end to end with "just this machine" in an Expo-style app: separate config and login, `.env` untouched, `debug.ts` with the on/off switch. `eas env:set` is checked against EAS's help but not yet run against a real EAS project |
+| Environments (`--env`) | Run end to end with "just this machine" in an Expo-style app: separate config and login, `.env` untouched, `debug.ts` with the on/off switch. `eas env:set` has run against a real EAS project (Project Megatron Native's preview) |
 | Platforms | Vite and React run for real. The Expo, React Native, Next.js, TanStack Start and Node templates are unit-tested |
 
 ## What it needs
@@ -125,7 +125,7 @@ Options: `--provider firebase|aws|local` skips the provider question, `--cwd <di
 
 | Path | What it is | Commit it? |
 |---|---|---|
-| `.debugkit/config.json` | provider, endpoint, ingest key, resource names | yes |
+| `.debugkit/config.json` | provider, endpoint, ingest key, resource names. No personal details (since 0.6.1 the Google account is kept in `dashboard.env`) | yes, or gitignore the whole `.debugkit/` folder if you prefer |
 | `.debugkit/firebase/` | the ingest function source (Firebase), so you can redeploy it | yes |
 | `.debugkit/firebase/dashboard/` | the hosted dashboard's function source (Firebase). Its `.env.<project>` holds secrets and is gitignored | yes, except `.env.*` |
 | `.debugkit/dashboard.env` | the dashboard login (a password hash), session secret, API token | no, it's gitignored |
