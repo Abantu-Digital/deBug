@@ -1,7 +1,9 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { cpSync, renameSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { zipSync } from "fflate";
+import FIRESTORE_INDEXES from "../../adapters/firestore.indexes.json" with { type: "json" };
 import { DASHBOARD_VERSION } from "./dashboard";
 import { capture, interactive, which } from "./exec";
 import { lookup } from "./providers/aws";
@@ -44,7 +46,11 @@ async function dashboardDependency(into: string): Promise<string> {
   const r = await capture("npm", ["pack", "--silent", "--pack-destination", into], { cwd: dir });
   const tgz = r.stdout.trim().split(/\r?\n/).pop();
   if (r.code !== 0 || !tgz) throw new Error(`Couldn't pack the local dashboard: ${r.stderr.slice(-400)}`);
-  return `file:./${tgz}`;
+  // Name it by content: npm keeps an installed package whose file name and version haven't changed.
+  const hash = createHash("sha256").update(readFileSync(join(into, tgz))).digest("hex").slice(0, 12);
+  const named = tgz.replace(/\.tgz$/, `-${hash}.tgz`);
+  renameSync(join(into, tgz), join(into, named));
+  return `file:./${named}`;
 }
 
 async function npmInstall(cwd: string, extra: string[] = []) {
@@ -264,6 +270,13 @@ async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<stri
     "About to host the dashboard",
   );
   if (!(await yes(`Host the dashboard in ${fbc.projectId}?`))) bail("Nothing was deployed. The dashboard still runs locally with npx debugkit dashboard.");
+
+  // A newer dashboard can query with indexes an older setup never added. Add deBug's current
+  // ones; never with --force, which would delete indexes the project has that aren't in the file.
+  writeFileSync(join(dir, "firestore.indexes.json"), JSON.stringify(FIRESTORE_INDEXES, null, 2) + "\n");
+  p.log.step("Adding any Firestore indexes this version of deBug needs (existing ones are left alone)");
+  if ((await fbLive(["deploy", "--only", "firestore:indexes", "--non-interactive", ...proj], { cwd: dir })) !== 0)
+    p.log.warn("The indexes didn't deploy. Some counts on the dashboard may be missing until they do.");
 
   for (;;) {
     p.log.step(`Deploying the dashboard to ${url}. The first deploy takes a few minutes.`);
