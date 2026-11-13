@@ -1,5 +1,12 @@
 # @debugkit/ingest
 
+## 0.3.1
+
+### Patch Changes
+
+- @debugkit/schema@0.3.1
+- @debugkit/adapters@0.3.1
+
 ## 0.3.0
 
 ### Minor Changes
