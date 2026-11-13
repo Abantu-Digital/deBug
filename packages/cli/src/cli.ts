@@ -177,6 +177,7 @@ async function password(cwd: string) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   flags.yes = args.yes;
+  flags.command = args.cmd ?? "help";
   if (args.help || !args.cmd) {
     console.log(HELP);
     return;

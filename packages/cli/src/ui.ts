@@ -4,9 +4,9 @@ import pc from "picocolors";
 export { p, pc };
 
 /** Set by --yes: accept every default without asking. */
-export const flags = { yes: false };
+export const flags = { yes: false, command: "init" };
 
-export function bail(message = "Setup cancelled. Run npx debugkit init again whenever you're ready."): never {
+export function bail(message = flags.command === "init" ? "Setup cancelled. Run npx debugkit init again whenever you're ready." : "Stopped."): never {
   p.cancel(message);
   process.exit(0);
 }

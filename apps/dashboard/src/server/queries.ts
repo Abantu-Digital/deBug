@@ -304,7 +304,7 @@ function narrate(s: Summary): string[] {
   const i = s.issues[0];
   if (i && i.count24h > 0) {
     const isNew = Date.parse(s.generatedAt) - Date.parse(i.firstSeen) < 3 * DAY;
-    out.push(`Top issue: "${i.title}"${i.culprit ? ` in ${i.culprit}` : ""} — ${i.count24h} times in 24h${isNew ? `, first seen ${relDays(s.generatedAt, i.firstSeen)}` : ""}.`);
+    out.push(`Top issue: "${i.title}"${i.culprit ? ` in ${i.culprit}` : ""} — ${i.count24h} time${i.count24h === 1 ? "" : "s"} in 24h${isNew ? `, first seen ${relDays(s.generatedAt, i.firstSeen)}` : ""}.`);
   }
   const h = s.health;
   const latest = h.releases[0];
