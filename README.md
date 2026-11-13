@@ -17,10 +17,10 @@ Sign in with `demo@debug.local` / `demo-debug`.
 ## Set it up with one command
 
 ```bash
-npx debugkit init
+npx @debugkit/cli init
 ```
 
-Run it in your app's folder. It sets up Firebase or AWS in your own account, wires the SDK into your app, opens your (still empty) dashboard, sends a test event so you can watch it arrive, and walks you through what deBug records on its own and what you add. See [packages/cli](packages/cli/README.md).
+Run it in your app's folder. Once `@debugkit/sdk` is installed, `npx debugkit init` works too. It sets up Firebase or AWS in your own account, wires the SDK into your app, opens your (still empty) dashboard, sends a test event so you can watch it arrive, and walks you through what deBug records on its own and what you add. See [packages/cli](packages/cli/README.md).
 
 The rest of this page describes the same setup done by hand.
 

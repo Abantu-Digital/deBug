@@ -13,6 +13,7 @@ import { initFile, installSdk, wireApp } from "./wire";
 
 
 const HELP = `${bold("debugkit")} ${VERSION}: set up deBug in your app
+${dim("Run as npx debugkit <command> once @debugkit/sdk is installed, or npx @debugkit/cli <command> anywhere.")}
 
   ${code("npx debugkit init")}        choose a cloud, deploy ingest to your account, wire the SDK, walk through the dashboard
   ${code("npx debugkit dashboard")}   run the dashboard against your data

@@ -1,10 +1,12 @@
-# debugkit
+# @debugkit/cli
 
 Set up [deBug](https://github.com/Abantu-Digital/deBug) in your app with one command:
 
 ```bash
-npx debugkit init
+npx @debugkit/cli init
 ```
+
+Once `@debugkit/sdk` is installed in the app, the shorter `npx debugkit init` works too: the SDK includes a `debugkit` command that runs this CLI at the same version.
 
 Run it from your app's folder. It walks you through these steps:
 
@@ -25,6 +27,8 @@ Run it from your app's folder. It walks you through these steps:
    - what you add in your own try/catches.
 
 ## Commands
+
+Every command below also works as `npx @debugkit/cli <command>`.
 
 | Command | What it does |
 |---|---|
