@@ -3,7 +3,7 @@ import { MemoryStore } from "@debugkit/adapters/memory";
 import { ingest } from "@debugkit/ingest";
 import { DEFAULT_SEVERITY_THRESHOLDS } from "@debugkit/schema";
 import { seedDemo } from "./demo";
-import { buildIssueDetail, buildSummary } from "./queries";
+import { buildIssueDetail, buildSummary, issueLabels } from "./queries";
 
 describe("buildSummary", () => {
   it("tells the demo story: auth.login regression on 2.4.0 / android 14 is the critical issue", async () => {
@@ -178,5 +178,60 @@ describe("where and how much", () => {
     expect(bumped.issues[0]!.severity).toBe("medium");
     expect(bumped.flows[0]).toMatchObject({ flow: "checkout.payment", critical: true });
     expect(bumped.narrative.join(" ")).toContain("checkout.payment (a critical flow)");
+  });
+});
+
+describe("labels", () => {
+  it("ingest labels the staging resume incident, and the summary shows the labels and breakdowns", async () => {
+    const { resumeIncident } = await import("../../../../packages/ingest/src/fixtures/resume-incident");
+    const store = new MemoryStore();
+    const ts = resumeIncident[0]!.ts;
+    const env = {
+      sdk: { name: "t", version: "1" },
+      context: { app: { id: "cell-c", version: "10.1.29" }, os: { name: "ios", version: "27.3" }, runtime: { name: "react-native" }, device: { model: "iPhone 16 Pro Max" } },
+      session: { id: "s", startedAt: ts },
+      events: resumeIncident,
+    };
+    const last = resumeIncident[resumeIncident.length - 1]!.ts;
+    expect((await ingest(JSON.stringify(env), "k", { store, keys: { k: "cell-c" }, now: () => new Date(last) })).status).toBe(202);
+
+    const s = (await buildSummary(store, "cell-c", DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last)))!;
+    expect(s.issues).toHaveLength(4);
+    for (const i of s.issues) expect(i.labels).toMatchObject({ category: "network.never_sent", owner: "app", impact: "degraded" });
+    expect(s.issues.every((i) => i.labels!.causes.includes("resumed_from_background"))).toBe(true);
+    expect(s.breakdowns.category).toEqual([{ key: "network.never_sent", errors: 6 }]);
+    expect(s.breakdowns.owner).toEqual([{ key: "app", errors: 6 }]);
+    expect(s.breakdowns.impact).toEqual([{ key: "degraded", errors: 6 }]);
+  });
+
+  it("works out labels for issues stored before the classifier existed, and adds the issue's causes", async () => {
+    const { resumeIncident } = await import("../../../../packages/ingest/src/fixtures/resume-incident");
+    const event = resumeIncident[5]!;
+    const old = {
+      app: "cell-c",
+      fingerprint: "fp",
+      title: "t",
+      firstSeen: event.ts,
+      lastSeen: event.ts,
+      count: 1,
+      status: "regressed" as const,
+      firstVersion: "10.1.29",
+      // No labels: stored by an older ingest.
+      lastEvent: { app: "cell-c", day: "2026-11-14", fingerprint: "fp", event, context: { app: { id: "cell-c" }, os: { name: "ios" }, runtime: { name: "rn" }, device: {} }, sessionId: "s", receivedAt: event.ts },
+    };
+    expect(issueLabels(old as never, "10.1.29")).toEqual({
+      category: "network.never_sent",
+      owner: "app",
+      impact: "degraded",
+      causes: ["resumed_from_background", "burst", "new_in_release", "regressed"],
+    });
+  });
+
+  it("shows the same labels on the issue page as in the list", async () => {
+    const store = await seedDemo();
+    const s = (await buildSummary(store, undefined, DEFAULT_SEVERITY_THRESHOLDS))!;
+    for (const i of s.issues) expect(i.labels?.category).toBeTruthy();
+    const d = (await buildIssueDetail(store, s.app, s.issues[0]!.fingerprint, DEFAULT_SEVERITY_THRESHOLDS))!;
+    expect(d.issue.labels?.category).toBe(s.issues[0]!.labels?.category);
   });
 });

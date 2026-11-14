@@ -105,8 +105,8 @@ several.
 
 | Id | Plain label | Rule |
 |---|---|---|
-| `resumed_from_background` | Right after reopening the app | The last lifecycle breadcrumb is `App came to the foreground`, at most 2 s before the error. *Later*: the SDK sends the exact time since foreground. |
-| `burst` | Several failures at once | At least one other failed-request breadcrumb in the 1 s before the error. The first failure of a burst doesn't get it; incidents group the whole burst. |
+| `resumed_from_background` | Right after reopening the app | The last lifecycle breadcrumb is `App came to the foreground`, at most 10 s before the error, and no request has succeeded since. On Cell C staging the failures went on for 6 s after reopening, so a short window misses most of them. *Later*: the SDK sends the exact time since foreground. |
+| `burst` | Several failures at once | At least one other failed-request breadcrumb in the 5 s before the error. The first failure of a burst doesn't get it; incidents group the whole burst. |
 | `slow_network` | Slow network | At least 2 of the last 5 network breadcrumbs are slow (level `warning`). |
 | `auth_expired` | Sign-in expired | Category `auth`, and an earlier request in the breadcrumbs to the same host succeeded. |
 | `new_in_release` | New in this version | The issue's `firstVersion` is the latest version seen for the app. |
@@ -115,8 +115,9 @@ several.
 
 ## Worked example: Cell C staging, 14 Nov
 
-The app came back to the foreground on an iPhone. Seconds earlier, the same endpoints had returned
-200. Then five requests failed, each within 3–49 ms of being sent. The last of the five was:
+The app came back to the foreground on an iPhone at 12:59:55.45. Seconds earlier, the same
+endpoints had returned 200. Over the next 6 s, six requests failed, each within 3–49 ms of being
+sent, and none succeeded. One of them, 5.9 s after reopening:
 
 `POST …/balance/getBalances → failed (16ms)`
 
@@ -125,11 +126,10 @@ The app came back to the foreground on an iPhone. Seconds earlier, the same endp
 | Category | `network.never_sent` | no status, 16 ms |
 | Owner | `app` | the app sent the request before the phone had reconnected |
 | Impact | `degraded` | the app was in the foreground |
-| Causes | `resumed_from_background`, `burst` | the last lifecycle breadcrumb is the foreground; 4 failed requests just before it |
+| Causes | `resumed_from_background`, `burst` | reopened 5.9 s before, nothing has worked since; 2 other failures in the 5 s before |
 
-The other four failures get the same category, owner and impact. All of them get
-`resumed_from_background`; the first one doesn't get `burst`. Incidents fold all five into one:
-"Requests failed on app resume (iOS)".
+All six get the same category, owner and impact, and all get `resumed_from_background`. The first
+one doesn't get `burst`. Incidents fold all six into one: "Requests failed on app resume (iOS)".
 
 Plain version: "Balance didn't load right after reopening the app; the phone hadn't reconnected.
 Not a server outage. Pass to: app team."

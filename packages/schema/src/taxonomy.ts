@@ -134,11 +134,11 @@ export type Cause = (typeof CAUSES)[number];
 export const CAUSE_INFO: Record<Cause, LabelInfo> = {
   resumed_from_background: {
     name: "Right after reopening the app",
-    description: "It happened within seconds of the app coming back to the foreground, before the phone had reconnected.",
+    description: "It happened soon after the app came back to the foreground, and nothing had worked since: the phone hadn't reconnected.",
   },
   burst: {
     name: "Several failures at once",
-    description: "Other requests failed at the same moment, which points at the connection or a shared service, not one screen.",
+    description: "Other requests failed within the same few seconds, which points at the connection or a shared service, not one screen.",
   },
   slow_network: {
     name: "Slow network",
