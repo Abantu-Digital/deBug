@@ -28,6 +28,8 @@ export type {
   RollupRow,
 } from "./index";
 
+export * from "./taxonomy";
+
 export const SCHEMA_VERSION = 1;
 
 /** "2.10.0" sorts after "2.9.1"; pre-release and build suffixes compare as text. */
