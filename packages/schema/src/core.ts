@@ -3,7 +3,7 @@
  * Client code (the SDK) imports only this entry so validators never reach app bundles.
  */
 import type { Severity, StackFrame } from "./index";
-import { markLibraryFrames } from "./frames";
+import { markLibraryFrames, RN_BUNDLE } from "./frames";
 
 export type {
   Flow,
@@ -132,7 +132,6 @@ const NOT_IN_APP = [/node_modules/, /\bnative\b/, /\[native code\]/, /InternalBy
  * frames count as in-app and the function name carries the signal: known library functions are
  * marked by name (see ./frames).
  */
-const RN_BUNDLE = /\.(?:js)?bundle\b/;
 
 function cleanFile(file: string): string {
   return file.replace(/^address at /, "");

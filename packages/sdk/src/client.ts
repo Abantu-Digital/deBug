@@ -1,5 +1,5 @@
 import type { Breadcrumb, ContextInput, EnvelopeInput, EventInput, Severity } from "@debugkit/schema/core";
-import { latencyBucket, LATENCY_BUCKETS_MS, parseStack } from "@debugkit/schema/core";
+import { latencyBucket, LATENCY_BUCKETS_MS, markLibraryFrames, parseStack } from "@debugkit/schema/core";
 import { browserContext, mergeContext, type ContextPatch } from "./context";
 import {
   instrumentClicks,
@@ -675,8 +675,9 @@ export class DebugClient {
     const cause = r.error ? normaliseError(r.error) : undefined;
     const message =
       r.status !== undefined ? `${r.method} ${url} responded ${r.status}` : `${r.method} ${url} ${r.timedOut ? "timed out" : "failed"}${cause ? `: ${cause.message}` : ""}`;
-    // The first frame is our own wrapper; the rest is the code that made the request.
-    const frames = parseStack(r.stack).slice(1);
+    // The first frame is our own wrapper; the rest is the code that made the request. Mark library
+    // frames again without it: the wrapper on top hides the library run below it.
+    const frames = markLibraryFrames(parseStack(r.stack).slice(1));
     this.captureError(
       { name: r.status !== undefined ? "HttpError" : "NetworkError", message, stack: r.stack, frames },
       { flow, handled: true, tags: { source: "network" } },
