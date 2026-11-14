@@ -29,6 +29,8 @@ function Overview() {
 
   const { totals, range } = summary;
   const span = range.preset === "custom" ? "range" : range.preset;
+  /** Keep the app and range when opening an issue. */
+  const issueSearch = { app: summary.app, range: range.preset === "14d" ? undefined : range.preset, ...(range.preset === "custom" ? { from: range.from, to: range.to } : {}) };
   const statusFilter = search.status ?? "open";
   const byStatus = summary.issues.filter((i) =>
     statusFilter === "all" ? true : statusFilter === "open" ? i.status === "open" || i.status === "regressed" : i.status === statusFilter,
@@ -225,6 +227,33 @@ function Overview() {
         </div>
       )}
 
+      {!flow && summary.incidents.length > 0 && (
+        <Card title="Incidents" subtitle={`Issues that failed together for the same reason in ${range.label}, folded into one problem.`}>
+          <ul className="space-y-3">
+            {summary.incidents.map((inc) => (
+              <li key={inc.key} className="rounded-lg border border-line p-3">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="font-medium">{inc.title}</span>
+                  <span className="text-xs text-muted">
+                    {inc.errors.toLocaleString()} error{inc.errors === 1 ? "" : "s"} · {inc.issues.length} issue{inc.issues.length === 1 ? "" : "s"} · {inc.users || "—"} user{inc.users === 1 ? "" : "s"}
+                  </span>
+                </div>
+                <ul className="mt-2 space-y-1 text-sm">
+                  {inc.issues.map((i) => (
+                    <li key={i.fingerprint} className="flex items-baseline justify-between gap-3">
+                      <Link to="/issues/$fingerprint" params={{ fingerprint: i.fingerprint }} search={issueSearch} className="truncate text-muted hover:text-accent">
+                        {i.title}
+                      </Link>
+                      <span className="shrink-0 text-xs text-muted">{i.errors}</span>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
       <Card
         title={flow ? `Issues in ${flow}` : "Issues by severity"}
         subtitle={`Grouped errors seen in ${range.label}. Severity is set by occurrences in the last 24 hours.`}
@@ -262,7 +291,7 @@ function Overview() {
                 <tr key={i.fingerprint} className="border-b border-line last:border-0 hover:bg-panel-2">
                   <td className="px-4 py-2.5 sm:px-2"><SeverityBadge severity={i.severity} /></td>
                   <td className="max-w-[420px] px-2 py-2.5">
-                    <Link to="/issues/$fingerprint" params={{ fingerprint: i.fingerprint }} search={{ app: summary.app, range: range.preset === "14d" ? undefined : range.preset, ...(range.preset === "custom" ? { from: range.from, to: range.to } : {}) }} className="block truncate font-medium hover:text-accent">
+                    <Link to="/issues/$fingerprint" params={{ fingerprint: i.fingerprint }} search={issueSearch} className="block truncate font-medium hover:text-accent">
                       {i.title}
                     </Link>
                     {i.culprit && <div className="truncate font-mono text-xs text-muted">{i.culprit}</div>}
@@ -309,6 +338,7 @@ function healthTone(rate: number | null) {
 
 const WHAT_YOU_WILL_SEE: { title: string; when: string; detail: string }[] = [
   { title: "A written summary", when: "after the first error", detail: "How many errors in the last 24 hours, the worst part of the app, the top issue and the release that's struggling, in plain sentences." },
+  { title: "Incidents", when: "when several errors share a cause", detail: "Issues that failed together for the same reason, like every request failing right after the app reopens, shown as one problem with the issues inside it." },
   { title: "Issues by severity", when: "after the first error", detail: "Errors grouped by cause. Severity comes from how often each happened in the last 24 hours. Open one for the stack trace and the steps that led to it." },
   { title: "Release health", when: "as soon as the app starts", detail: "Every app launch is a session. You'll see the share of sessions per version that ran without a crash or an unhandled error." },
   { title: "Failing endpoints", when: "after the first failed request", detail: "Requests that timed out, failed or returned 5xx, captured from fetch and XHR without any code from you." },

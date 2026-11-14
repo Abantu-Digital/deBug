@@ -277,3 +277,33 @@ describe("culprit in app code", () => {
     expect(sample.type === "error" && sample.error.frames!.find((f) => f.fn === "dispatchXhrRequest")?.inApp).toBe(false);
   });
 });
+
+describe("incidents", () => {
+  it("folds the staging resume incident's 4 issues into 1 incident", async () => {
+    const { resumeIncident } = await import("../../../../packages/ingest/src/fixtures/resume-incident");
+    const store = new MemoryStore();
+    const ts = resumeIncident[0]!.ts;
+    const last = resumeIncident[resumeIncident.length - 1]!.ts;
+    const env = {
+      sdk: { name: "t", version: "1" },
+      context: { app: { id: "cell-c", version: "10.1.29" }, os: { name: "ios", version: "27.3" }, runtime: { name: "react-native" } },
+      user: { anonymousId: "install-1" },
+      session: { id: "s", startedAt: ts },
+      events: resumeIncident,
+    };
+    await ingest(JSON.stringify(env), "k", { store, keys: { k: "cell-c" }, now: () => new Date(last) });
+    const s = (await buildSummary(store, "cell-c", DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last)))!;
+
+    expect(s.incidents).toHaveLength(1);
+    expect(s.incidents[0]).toMatchObject({ key: "resumed_from_background|network.never_sent|ios", title: "Requests failed on app resume (iOS)", errors: 6, users: 1 });
+    expect(s.incidents[0]!.issues).toHaveLength(4);
+    expect(s.incidents[0]!.issues.map((i) => i.errors).sort()).toEqual([1, 1, 2, 2]);
+    expect(s.issues.every((i) => i.incident === s.incidents[0]!.key)).toBe(true);
+  });
+
+  it("titles incidents in plain words", async () => {
+    const { incidentTitle } = await import("./queries");
+    expect(incidentTitle("burst|server|android")).toBe("Server error: several requests at once (Android)");
+    expect(incidentTitle("resumed_from_background|screen_crash|ios")).toBe("Screen crash on app resume (iOS)");
+  });
+});

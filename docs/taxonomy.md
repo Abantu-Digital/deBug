@@ -122,6 +122,19 @@ error when it arrives, using the Settings of that moment: marking a flow critica
 relabel earlier errors. The issue causes (`new_in_release`, `regressed`, `single_device`) are
 worked out when the dashboard reads the issue, so they're always current.
 
+## Incidents
+
+Issues that fail together for the same reason are one problem. An incident is keyed by a
+grouping cause, the category and the OS, e.g. `resumed_from_background|network.never_sent|ios`.
+The key never includes a fingerprint, so it stays the same across builds and releases.
+
+- **Grouping causes:** `resumed_from_background`, then `burst`. A burst only makes an incident for
+  request categories (`network.*`, `server`, `auth`, `client_request`).
+- **The first failure of a burst:** it can't carry `burst` itself, so at ingest an error with no
+  incident joins one of the same category that starts within 5 s after it, in the same batch.
+- **Issues stay the unit** for resolving and regressions. Incidents sit above them: the overview
+  lists each incident with its issues, and each error stores its incident key.
+
 ## Worked example: Cell C staging, 14 Nov
 
 The app came back to the foreground on an iPhone at 12:59:55.45. Seconds earlier, the same
@@ -138,7 +151,8 @@ sent, and none succeeded. One of them, 5.9 s after reopening:
 | Causes | `resumed_from_background`, `burst` | reopened 5.9 s before, nothing has worked since; 2 other failures in the 5 s before |
 
 All six get the same category, owner and impact, and all get `resumed_from_background`. The first
-one doesn't get `burst`. Incidents fold all six into one: "Requests failed on app resume (iOS)".
+one doesn't get `burst`. They make one incident, `resumed_from_background|network.never_sent|ios`:
+"Requests failed on app resume (iOS)", 6 errors across 4 issues, 1 user.
 
 Plain version: "Balance didn't load right after reopening the app; the phone hadn't reconnected.
 Not a server outage. Pass to: app team."

@@ -5,10 +5,12 @@ import { cachedSettings, effectiveRetention } from "./admin";
 import { sendAlerts } from "./alerts";
 import { countryOf } from "./country";
 import { classify } from "./classify";
+import { assignIncidents, type BatchError } from "./incidents";
 import { culpritOf, fingerprint, titleOf } from "./fingerprint";
 
 export * from "./fingerprint";
 export { classify, issueCauses, withIssueCauses, type ClassifyOptions, type IssueFacts } from "./classify";
+export { incidentKey, parseIncidentKey, INCIDENT_WINDOW_MS, type IncidentKey } from "./incidents";
 export { handleAdmin, effectiveRetention, cachedSettings, type AdminOptions } from "./admin";
 export { countryOf } from "./country";
 export { sendAlerts, SLACK_WEBHOOK } from "./alerts";
@@ -105,6 +107,8 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
   // Critical flows decide whether an error blocks the user. Cached, and only read when there are errors.
   const settings = env.events.some((e) => e.type === "error") ? await cachedSettings(opts.store, app) : null;
   const criticalFlows = settings?.criticalFlows ?? [];
+  /** This batch's errors, to group into incidents once they're all labelled. */
+  const batchErrors: (BatchError & { se: StoredEvent; fp: string })[] = [];
 
   for (const raw of env.events) {
     const event = { ...raw, ts: sanitiseTs(raw.ts, now) } as Event;
@@ -138,12 +142,14 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
 
     let fp: string | undefined;
     let labels: StoredEvent["labels"];
+    let se: StoredEvent | undefined;
     if (event.type === "error") {
       fp = fingerprint(event);
       // The device's own clock: breadcrumbs use it too, and sanitiseTs may have replaced event.ts.
       labels = classify({ ...event, ts: raw.ts }, { criticalFlows });
       const cur = issues.get(fp);
-      const se = storedEvent(day, event, fp, labels);
+      se = storedEvent(day, event, fp, labels);
+      batchErrors.push({ ts: raw.ts, labels, se, fp });
       issues.set(fp, {
         app,
         fingerprint: fp,
@@ -181,7 +187,17 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
       }
     }
 
-    stored.push(storedEvent(day, event, fp, labels));
+    stored.push(se ?? storedEvent(day, event, fp, labels));
+  }
+
+  // Incidents: one per cause, category and OS. Counted per error, per issue in it, and per user.
+  assignIncidents(batchErrors, context.os.name);
+  for (const b of batchErrors) {
+    if (!b.incident) continue;
+    b.se.incident = b.incident;
+    rollups.push({ app, day: b.se.day, dimension: "incident", key: b.incident, kind: "error", by: 1 });
+    rollups.push({ app, day: b.se.day, dimension: "incidentIssue", key: `${b.incident}|${b.fp}`, kind: "error", by: 1 });
+    scopes.add(`incident:${b.incident}`);
   }
 
   await opts.store.registerApp(app);
