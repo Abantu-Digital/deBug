@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ErrorEvent, StackFrame } from "@debugkit/schema";
+import { cleanFnName, type ErrorEvent, type StackFrame } from "@debugkit/schema";
 
 /** Strip volatile parts so "User 123 not found" and "User 456 not found" group together. */
 export function normaliseMessage(msg: string): string {
@@ -40,7 +40,8 @@ export function culpritOf(e: ErrorEvent): string | undefined {
   const f = topInAppFrame(e.error.frames);
   if (!f) return undefined;
   const loc = normaliseFile(f.file) + (f.line ? `:${f.line}` : "");
-  return f.fn ? `${f.fn} (${loc})` : loc;
+  const fn = cleanFnName(f.fn);
+  return fn ? `${fn} (${loc})` : loc;
 }
 
 /**
@@ -55,7 +56,7 @@ export function fingerprint(e: ErrorEvent): string {
   const where = r
     ? `${r.method.toUpperCase()} ${r.url} ${r.status ? `${Math.floor(r.status / 100)}xx` : "failed"}`
     : f
-      ? `${f.fn ?? "?"}@${normaliseFile(f.file)}`
+      ? `${cleanFnName(f.fn) ?? "?"}@${normaliseFile(f.file)}`
       : normaliseMessage(e.error.message);
   return createHash("sha256")
     .update([e.error.name, where, e.flow ?? ""].join("|"))
