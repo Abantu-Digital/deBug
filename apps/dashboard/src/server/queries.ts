@@ -188,7 +188,7 @@ export const SUMMARY_FIELDS = {
   "breakdowns.owner": "Errors in the range by likely owner: app, backend, infrastructure, third_party, unknown.",
   "breakdowns.impact": "Errors in the range by user impact: blocked, degraded, silent.",
   "trend[]": "Errors and non-error events per hour (24h), UTC day (up to 90 days) or week (longer).",
-  breakdowns: "Errors in the range split by OS, app version and device model.",
+  breakdowns: "Errors in the range split by OS, app version, device model, network, country, and the labels category, owner and impact.",
   narrative: "Plain-language summary of what is going wrong in the range.",
   "health.crashFreeRate": "Share of sessions in the range with no fatal crash. Sessions are recorded automatically by the SDK.",
   "health.errorFreeRate": "Share of sessions in the range with no unhandled error.",
@@ -313,7 +313,7 @@ export async function buildSummary(
   const latestVersion = versionsInRange[versionsInRange.length - 1] ?? null;
   const issueRows: IssueRow[] = issues
     .filter((i) => i.lastSeen >= rangeStart && i.firstSeen <= `${to}T23:59:59.999Z`)
-    .map((i) => toIssueRow(i, issue24h.get(i.fingerprint) ?? 0, hourly ? (issue24h.get(i.fingerprint) ?? 0) : (issueRange.get(i.fingerprint) ?? 0), thresholds, latestVersion, critical, criticalFlows))
+    .map((i) => toIssueRow(i, issue24h.get(i.fingerprint) ?? 0, hourly ? (issue24h.get(i.fingerprint) ?? 0) : (issueRange.get(i.fingerprint) ?? 0), thresholds, latestVersion, criticalFlows))
     .sort(bySeverityThenCount);
   // Users affected: one count per issue, so only for the issues people look at first.
   const active = issueRows.filter((i) => i.status !== "ignored" && i.status !== "resolved");
@@ -503,10 +503,10 @@ function toIssueRow(
   countRange: number,
   t: SeverityThresholds,
   latestVersion: string | null = null,
-  critical: Set<string> = new Set(),
   criticalFlows: readonly string[] = [],
 ): IssueRow {
   const base = severityFromCount(count24h, t);
+  const critical = new Set(criticalFlows);
   return {
     labels: issueLabels(i, latestVersion, criticalFlows),
     status: i.status ?? "open",
@@ -655,7 +655,7 @@ export async function buildIssueDetail(
   const affectedUsers = counted || new Set(events.map((e) => e.user?.id ?? e.user?.anonymousId ?? e.sessionId)).size;
 
   const criticalFlows = settings?.criticalFlows ?? [];
-  const row = toIssueRow(issue, count24h, countRange, thresholds, null, new Set(criticalFlows), criticalFlows);
+  const row = toIssueRow(issue, count24h, countRange, thresholds, null, criticalFlows);
   // Recent occurrences say whether it's one device model.
   if (row.labels) row.labels = withIssueCauses(row.labels, { deviceModels: events.map((e) => e.context.device.model) });
   const hints = hintsFor(issue, breakdowns, events);

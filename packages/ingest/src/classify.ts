@@ -24,10 +24,11 @@ const CRASH_SOURCES = new Set(["global-handler", "uncaughtException"]);
 const REJECTION_SOURCES = new Set(["unhandled-rejection", "unhandledrejection", "unhandledRejection"]);
 
 /** "GET host/path → 200 (93ms)", as the SDK writes network breadcrumbs. */
-const NETWORK_CRUMB = /^(\S+) (\S+) → /;
+const NETWORK_CRUMB = /^\S+ (\S+) → /;
+/** "GET host/path timed out", optionally followed by ": <cause>", as the SDK writes a timed-out request. */
+const TIMED_OUT = /^\S+ \S+ timed out(?::|$)/;
 
-interface Request {
-  method: string;
+interface CrumbRequest {
   url: string;
   status?: number;
   failed: boolean;
@@ -35,28 +36,34 @@ interface Request {
 
 const hostOf = (url: string) => url.replace(/^[a-z]+:\/\//i, "").split("/")[0] ?? "";
 
-function crumbRequest(b: Breadcrumb): Request | undefined {
+function crumbRequest(b: Breadcrumb): CrumbRequest | undefined {
   if (b.category !== "network") return undefined;
   const m = NETWORK_CRUMB.exec(b.message);
   if (!m) return undefined;
   const status = typeof b.data?.status === "number" ? b.data.status : undefined;
-  return { method: m[1]!, url: m[2]!, status, failed: b.level === "error" };
+  return { url: m[1]!, status, failed: b.level === "error" };
 }
+
+/** A request that got a good answer: 2xx or 3xx. */
+const succeeded = (r: CrumbRequest) => !r.failed && r.status !== undefined && r.status < 400;
 
 /**
  * The breadcrumbs before this error. The SDK records a failed request's own breadcrumb just
- * before reporting it; that one is the error, not something that happened before it.
+ * before reporting it; that one is the error, not something that happened before it. The SDK
+ * also merges identical breadcrumbs in a row into one with `data.repeated`: when the error's own
+ * breadcrumb says so, the same request had already failed just before.
  */
-function earlierCrumbs(e: ErrorEvent): Breadcrumb[] {
+function earlierCrumbs(e: ErrorEvent): { crumbs: Breadcrumb[]; repeatedFailure: boolean } {
   const crumbs = e.breadcrumbs ?? [];
   const r = e.request;
-  if (!r) return crumbs;
-  const own = `${r.method} ${r.url} → `;
+  if (!r) return { crumbs, repeatedFailure: false };
+  const own = `${r.method} ${r.url} → `.toUpperCase();
   for (let i = crumbs.length - 1; i >= 0; i--) {
     const b = crumbs[i]!;
-    if (b.category === "network" && b.level === "error" && b.message.toUpperCase().startsWith(own.toUpperCase())) return [...crumbs.slice(0, i), ...crumbs.slice(i + 1)];
+    if (b.category === "network" && b.level === "error" && b.message.toUpperCase().startsWith(own))
+      return { crumbs: [...crumbs.slice(0, i), ...crumbs.slice(i + 1)], repeatedFailure: Number(b.data?.repeated ?? 1) > 1 };
   }
-  return crumbs;
+  return { crumbs, repeatedFailure: false };
 }
 
 function category(e: ErrorEvent): Category {
@@ -64,7 +71,7 @@ function category(e: ErrorEvent): Category {
   const source = e.tags?.source;
   if (r && r.status === undefined) {
     // network.offline needs the phone's network state, which the SDK doesn't send yet.
-    if (/timed out\s*$|timed out:/.test(e.error.message)) return "network.timeout";
+    if (TIMED_OUT.test(e.error.message)) return "network.timeout";
     if (r.durationMs !== undefined && r.durationMs < NEVER_SENT_MS) return "network.never_sent";
     return "network.failed";
   }
@@ -77,7 +84,7 @@ function category(e: ErrorEvent): Category {
   if (source === "error-boundary") return "screen_crash";
   if (source && REJECTION_SOURCES.has(source)) return "unhandled_rejection";
   if (!e.handled) return "uncaught";
-  if (e.handled && !r) return "app_reported";
+  if (!r) return "app_reported";
   return "other";
 }
 
@@ -90,7 +97,7 @@ function lastLifecycle(crumbs: Breadcrumb[]): Breadcrumb | undefined {
   return undefined;
 }
 
-function eventCauses(e: ErrorEvent, cat: Category, crumbs: Breadcrumb[]): { causes: Cause[]; burstHosts: Set<string> } {
+function eventCauses(e: ErrorEvent, cat: Category, crumbs: Breadcrumb[], repeatedFailure: boolean): { causes: Cause[]; burstHosts: Set<string> } {
   const causes: Cause[] = [];
   const at = Date.parse(e.ts);
   const within = (b: Breadcrumb, ms: number) => {
@@ -98,19 +105,19 @@ function eventCauses(e: ErrorEvent, cat: Category, crumbs: Breadcrumb[]): { caus
     return d >= 0 && d <= ms;
   };
 
-  const requests = crumbs.map((b) => ({ b, r: crumbRequest(b) })).filter((x): x is { b: Breadcrumb; r: Request } => !!x.r);
+  const requests = crumbs.map((b) => ({ b, r: crumbRequest(b) })).filter((x): x is { b: Breadcrumb; r: CrumbRequest } => !!x.r);
 
   // Reopened recently, and no request has worked since: the connection never came back.
   const life = lastLifecycle(crumbs);
   if (life?.message === FOREGROUND && within(life, RESUME_WINDOW_MS)) {
     const since = Date.parse(life.ts);
-    const worked = requests.some((x) => Date.parse(x.b.ts) >= since && !x.r.failed && x.r.status !== undefined);
+    const worked = requests.some((x) => Date.parse(x.b.ts) >= since && succeeded(x.r));
     if (!worked) causes.push("resumed_from_background");
   }
 
   const burst = requests.filter((x) => x.r.failed && within(x.b, BURST_WINDOW_MS));
   const burstHosts = new Set(burst.map((x) => hostOf(x.r.url)));
-  if (burst.length >= 1) {
+  if (burst.length >= 1 || repeatedFailure) {
     causes.push("burst");
     if (e.request) burstHosts.add(hostOf(e.request.url));
   }
@@ -119,7 +126,7 @@ function eventCauses(e: ErrorEvent, cat: Category, crumbs: Breadcrumb[]): { caus
 
   if (cat === "auth" && e.request) {
     const host = hostOf(e.request.url);
-    if (requests.some((x) => hostOf(x.r.url) === host && x.r.status !== undefined && x.r.status >= 200 && x.r.status < 300)) causes.push("auth_expired");
+    if (requests.some((x) => hostOf(x.r.url) === host && succeeded(x.r))) causes.push("auth_expired");
   }
   return { causes, burstHosts };
 }
@@ -153,10 +160,15 @@ function impact(e: ErrorEvent, cat: Category, crumbs: Breadcrumb[], critical: Re
   return "degraded";
 }
 
+/**
+ * `e.ts` must be the device's own time, as sent: breadcrumbs carry device time too, and the time
+ * rules compare the two. Ingest pins skewed clocks to the server's time for storage; classify
+ * before that.
+ */
 export function classify(e: ErrorEvent, opts: ClassifyOptions = {}): Classification {
-  const crumbs = earlierCrumbs(e);
+  const { crumbs, repeatedFailure } = earlierCrumbs(e);
   const cat = category(e);
-  const { causes, burstHosts } = eventCauses(e, cat, crumbs);
+  const { causes, burstHosts } = eventCauses(e, cat, crumbs, repeatedFailure);
   return {
     category: cat,
     owner: owner(cat, causes, burstHosts),

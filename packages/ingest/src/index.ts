@@ -91,6 +91,17 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
   const issues = new Map<string, IssueUpsert>();
   /** Where this envelope's user counts: "app", "crash", "issue:<fp>". */
   const scopes = new Set<string>();
+  const storedEvent = (day: string, event: Event, fingerprint?: string, labels?: StoredEvent["labels"]): StoredEvent => ({
+    app,
+    day,
+    fingerprint,
+    labels,
+    event,
+    context,
+    user: env.user,
+    sessionId: env.session.id,
+    receivedAt,
+  });
   // Critical flows decide whether an error blocks the user. Cached, and only read when there are errors.
   const settings = env.events.some((e) => e.type === "error") ? await cachedSettings(opts.store, app) : null;
   const criticalFlows = settings?.criticalFlows ?? [];
@@ -125,9 +136,10 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
     let labels: StoredEvent["labels"];
     if (event.type === "error") {
       fp = fingerprint(event);
-      labels = classify(event, { criticalFlows });
+      // The device's own clock: breadcrumbs use it too, and sanitiseTs may have replaced event.ts.
+      labels = classify({ ...event, ts: raw.ts }, { criticalFlows });
       const cur = issues.get(fp);
-      const se: StoredEvent = { app, day, fingerprint: fp, labels, event, context, user: env.user, sessionId: env.session.id, receivedAt };
+      const se = storedEvent(day, event, fp, labels);
       issues.set(fp, {
         app,
         fingerprint: fp,
@@ -165,7 +177,7 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
       }
     }
 
-    stored.push({ app, day, fingerprint: fp, labels, event, context, user: env.user, sessionId: env.session.id, receivedAt });
+    stored.push(storedEvent(day, event, fp, labels));
   }
 
   await opts.store.registerApp(app);
@@ -177,7 +189,7 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
     markUsers(opts.store, app, env.user?.id ?? env.user?.anonymousId ?? env.session.id, scopes, dayOf(receivedAt)),
   ]);
 
-  if (outcome && (outcome.created.length || outcome.regressed.length)) await sendAlerts(app, outcome, issues, settings ?? (await cachedSettings(opts.store, app)));
+  if (outcome && (outcome.created.length || outcome.regressed.length)) await sendAlerts(app, outcome, issues, settings);
 
   return { status: 202, body: { ok: true, accepted: env.events.length } };
 }

@@ -235,3 +235,18 @@ describe("labels", () => {
     expect(d.issue.labels?.category).toBe(s.issues[0]!.labels?.category);
   });
 });
+
+describe("labels and skewed clocks", () => {
+  it("classifies on the device's own time when ingest pins a fast clock to the server's", async () => {
+    const { resumeIncident } = await import("../../../../packages/ingest/src/fixtures/resume-incident");
+    const store = new MemoryStore();
+    const e = resumeIncident[5]!;
+    const env = { sdk: { name: "t", version: "1" }, context: { app: { id: "a" }, os: { name: "ios" }, runtime: { name: "rn" } }, session: { id: "s", startedAt: e.ts }, events: [e] };
+    // The server is 2 hours behind the device: ingest stores the event at server time.
+    const server = new Date(Date.parse(e.ts) - 2 * 3_600_000);
+    await ingest(JSON.stringify(env), "k", { store, keys: { k: "a" }, now: () => server });
+    const [issue] = await store.listIssues("a", { limit: 1 });
+    expect(issue!.lastEvent.event.ts).toBe(server.toISOString());
+    expect(issue!.lastEvent.labels?.causes).toEqual(["resumed_from_background", "burst"]);
+  });
+});

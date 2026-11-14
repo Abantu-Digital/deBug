@@ -174,3 +174,25 @@ describe("issue causes", () => {
     expect(withIssueCauses(merged, { status: "regressed" })).toBe(merged);
   });
 });
+
+describe("review fixes", () => {
+  it("owner app for requests the server refused, crashes and screen crashes", () => {
+    expect(classify(http(422)).owner).toBe("app");
+    expect(classify(err({ handled: false, severity: "critical", tags: { source: "global-handler" } })).owner).toBe("app");
+    expect(classify(err({ handled: false, tags: { source: "error-boundary" } })).owner).toBe("app");
+  });
+
+  it("timeout only from the SDK's own phrase, not a cause that mentions it", () => {
+    expect(classify(failed("api.x/v1/feed", 400, "GET api.x/v1/feed failed: Network request timed out")).category).toBe("network.failed");
+  });
+
+  it("a 4xx since reopening doesn't count as the connection working", () => {
+    const e = { ...failed("api.x/v1/feed", 20), breadcrumbs: [ui("App came to the foreground", 6), net("GET", "api.x/v1/me", 404, 80, 3)] };
+    expect(classify(e).causes).toContain("resumed_from_background");
+  });
+
+  it("a merged repeat of the same failure counts as a burst", () => {
+    const own = { ...net("GET", "api.x/v1/feed", null, 20, 0), data: { status: null, durationMs: 20, repeated: 2 } };
+    expect(classify({ ...failed("api.x/v1/feed", 20), breadcrumbs: [own] }).causes).toContain("burst");
+  });
+});
