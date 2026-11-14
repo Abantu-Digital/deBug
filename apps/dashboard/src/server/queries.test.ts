@@ -3,6 +3,7 @@ import { MemoryStore } from "@debugkit/adapters/memory";
 import { ingest } from "@debugkit/ingest";
 import { DEFAULT_SEVERITY_THRESHOLDS, parseStack } from "@debugkit/schema";
 import { seedDemo } from "./demo";
+import { filterIssues } from "../lib/issue-filter";
 import { buildIssueDetail, buildSummary, issueLabels } from "./queries";
 
 describe("buildSummary", () => {
@@ -182,6 +183,27 @@ describe("where and how much", () => {
 });
 
 describe("labels", () => {
+  it("breaks errors down by category, owner and impact from the rollups, and filters issues by them", async () => {
+    const store = new MemoryStore();
+    const ts = "2026-11-13T09:00:00.000Z";
+    const events = [
+      { type: "error", id: "evt_000000101", ts, error: { name: "HttpError", message: "POST api.x.com/pay → 503" }, request: { method: "POST", url: "api.x.com/pay", status: 503, durationMs: 400 } },
+      { type: "error", id: "evt_000000102", ts, error: { name: "HttpError", message: "POST api.x.com/pay → 503" }, request: { method: "POST", url: "api.x.com/pay", status: 503, durationMs: 380 } },
+      { type: "error", id: "evt_000000103", ts, handled: false, severity: "critical", tags: { source: "global-handler" }, error: { name: "TypeError", message: "x is undefined", stack: "TypeError\n    at render (/app/src/home.tsx:1:1)" } },
+    ];
+    const env = { sdk: { name: "t", version: "1" }, context: { app: { id: "a" }, os: { name: "ios" }, runtime: { name: "rn" } }, session: { id: "s", startedAt: ts }, events };
+    expect((await ingest(JSON.stringify(env), "k", { store, keys: { k: "a" }, now: () => new Date(ts) })).status).toBe(202);
+
+    const s = (await buildSummary(store, "a", DEFAULT_SEVERITY_THRESHOLDS, Date.parse("2026-11-13T12:00:00Z"), { range: { range: "7d" } }))!;
+    expect(s.breakdowns.category).toEqual([{ key: "server", errors: 2 }, { key: "crash", errors: 1 }]);
+    expect(s.breakdowns.owner).toEqual([{ key: "backend", errors: 2 }, { key: "app", errors: 1 }]);
+    expect(s.breakdowns.impact).toEqual([{ key: "degraded", errors: 2 }, { key: "blocked", errors: 1 }]);
+
+    const blocking = filterIssues(s.issues, { impact: "blocked" });
+    expect(blocking.map((i) => i.labels)).toEqual([expect.objectContaining({ category: "crash", owner: "app" })]);
+    expect(filterIssues(s.issues, { owner: "backend" }).map((i) => i.labels?.category)).toEqual(["server"]);
+  });
+
   it("ingest labels the staging resume incident, and the summary shows the labels and breakdowns", async () => {
     const { resumeIncident } = await import("../../../../packages/ingest/src/fixtures/resume-incident");
     const store = new MemoryStore();

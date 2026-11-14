@@ -1,17 +1,24 @@
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { FlowChart, TrendChart } from "~/components/charts";
-import { Card, DataTable, IssueLabels, SeverityBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
+import { CATEGORY_INFO, IMPACT_INFO, OWNER_INFO } from "@debugkit/schema";
+import { Card, DataTable, IssueLabels, LabelBadges, SeverityBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
+import { filterIssues, labelCounts, labelFilterOf, LABEL_FILTER_KEYS, type IssueFilter, type LabelFilterKey } from "~/lib/issue-filter";
 import { RangePicker, rangeSearch, RetentionNote, type RangeSearch } from "~/components/range-picker";
 import { getOverview } from "~/server/fns";
 
-type Search = { app?: string; flow?: string; status?: string } & RangeSearch;
+type Search = { app?: string; flow?: string; status?: string } & Pick<IssueFilter, LabelFilterKey> & RangeSearch;
+
+/** Plain names for label ids, for the filters and the breakdown. */
+const LABEL_NAMES: Record<LabelFilterKey, Record<string, { name: string }>> = { category: CATEGORY_INFO, owner: OWNER_INFO, impact: IMPACT_INFO };
+const LABEL_TITLES: Record<LabelFilterKey, string> = { impact: "Impact", owner: "Owner", category: "Category" };
 
 export const Route = createFileRoute("/_authed/")({
   validateSearch: (s: Record<string, unknown>): Search => ({
     app: typeof s.app === "string" ? s.app : undefined,
     flow: typeof s.flow === "string" ? s.flow : undefined,
     status: typeof s.status === "string" ? s.status : undefined,
+    ...labelFilterOf((k) => s[k]),
     ...rangeSearch(s),
   }),
   loaderDeps: ({ search }) => ({ app: search.app, range: search.range, from: search.from, to: search.to }),
@@ -32,11 +39,15 @@ function Overview() {
   /** Keep the app and range when opening an issue. */
   const issueSearch = { app: summary.app, range: range.preset === "14d" ? undefined : range.preset, ...(range.preset === "custom" ? { from: range.from, to: range.to } : {}) };
   const statusFilter = search.status ?? "open";
-  const byStatus = summary.issues.filter((i) =>
-    statusFilter === "all" ? true : statusFilter === "open" ? i.status === "open" || i.status === "regressed" : i.status === statusFilter,
-  );
-  const issues = flow ? byStatus.filter((i) => (i.flow ?? "untagged") === flow) : byStatus;
-  const countFor = (st: string) => summary.issues.filter((i) => (st === "open" ? i.status === "open" || i.status === "regressed" : i.status === st)).length;
+  const filter: IssueFilter = { status: statusFilter, flow, category: search.category, owner: search.owner, impact: search.impact };
+  const issues = filterIssues(summary.issues, filter);
+  const countFor = (st: string) => filterIssues(summary.issues, { ...filter, status: st }).length;
+  const labelFiltered = LABEL_FILTER_KEYS.filter((k) => filter[k]);
+  const toggleLabel = (k: LabelFilterKey, v: string | undefined) => navigate({ search: (s) => ({ ...s, [k]: s[k] === v ? undefined : v }), resetScroll: false });
+  const issuesTitle = [
+    labelFiltered.length ? labelFiltered.map((k) => LABEL_NAMES[k][filter[k]!]?.name).join(" · ") : "Issues by severity",
+    flow ? `in ${flow}` : "",
+  ].filter(Boolean).join(" ");
   const change = totals.changePct;
 
   return (
@@ -101,7 +112,7 @@ function Overview() {
       <div className="grid gap-5 lg:grid-cols-5">
         <div className="min-w-0 lg:col-span-3">
           <Card title="Where the app is failing" subtitle={`Errors in ${range.label} by flow, coloured by worst severity. Click a bar to filter issues.`}>
-            <FlowChart data={summary.flows} onSelect={(f) => navigate({ search: (s) => ({ ...s, flow: s.flow === f ? undefined : f }) })} />
+            <FlowChart data={summary.flows} onSelect={(f) => navigate({ search: (s) => ({ ...s, flow: s.flow === f ? undefined : f }), resetScroll: false })} />
             <DataTable
               columns={["Flow", "Severity", "Errors 24h", `Errors (${span})`, "Issues", `Failure rate (${span})`]}
               rows={summary.flows.map((f) => [
@@ -254,16 +265,37 @@ function Overview() {
         </Card>
       )}
 
+      {summary.breakdowns.impact.length > 0 && (
+        <Card title="Who it hurts and whose it is" subtitle={`Errors in ${range.label}, by how badly they hurt users, who likely fixes them, and what kind of problem. Click one to filter issues.`}>
+          <div className="grid gap-5 md:grid-cols-3">
+            {(["impact", "owner", "category"] as const).map((k) => (
+              <div key={k} className="min-w-0">
+                <h3 className="mb-2 text-xs font-medium text-muted">{LABEL_TITLES[k]}</h3>
+                <ShareBars
+                  rows={summary.breakdowns[k].map((r) => ({ key: r.key, label: LABEL_NAMES[k][r.key]?.name, value: r.errors }))}
+                  selected={filter[k]}
+                  onSelect={(v) => toggleLabel(k, v)}
+                />
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-xs text-muted">Owner counts errors as labelled when they arrived; the issue list uses the owners set in Settings now.</p>
+        </Card>
+      )}
+
       <Card
-        title={flow ? `Issues in ${flow}` : "Issues by severity"}
+        title={issuesTitle}
         subtitle={`Grouped errors seen in ${range.label}. Severity is set by occurrences in the last 24 hours.`}
         right={
           <div className="flex flex-wrap items-center justify-end gap-1 text-xs">
-            {flow && <button className="mr-2 text-accent" onClick={() => navigate({ search: (s) => ({ ...s, flow: undefined }) })}>Clear flow ×</button>}
+            {flow && <button className="mr-2 text-accent" onClick={() => navigate({ search: (s) => ({ ...s, flow: undefined }), resetScroll: false })}>Clear flow ×</button>}
+            {labelFiltered.length > 0 && (
+              <button className="mr-2 text-accent" onClick={() => navigate({ search: (s) => ({ ...s, category: undefined, owner: undefined, impact: undefined }), resetScroll: false })}>Clear labels ×</button>
+            )}
             {(["open", "resolved", "ignored", "all"] as const).map((st) => (
               <button
                 key={st}
-                onClick={() => navigate({ search: (s) => ({ ...s, status: st === "open" ? undefined : st }) })}
+                onClick={() => navigate({ search: (s) => ({ ...s, status: st === "open" ? undefined : st }), resetScroll: false })}
                 className={`rounded-md border px-2 py-1 capitalize ${statusFilter === st ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:bg-panel-2"}`}
               >
                 {st}
@@ -273,6 +305,27 @@ function Overview() {
           </div>
         }
       >
+        <div className="mb-3 flex flex-wrap gap-2">
+          {LABEL_FILTER_KEYS.map((k) => {
+            const counts = labelCounts(summary.issues, filter, k);
+            return (
+              <select
+                key={k}
+                aria-label={`Filter by ${LABEL_TITLES[k].toLowerCase()}`}
+                value={filter[k] ?? ""}
+                onChange={(e) => navigate({ search: (s) => ({ ...s, [k]: e.target.value || undefined }), resetScroll: false })}
+                className={`rounded-md border bg-panel px-2 py-1 text-xs ${filter[k] ? "border-accent text-accent" : "border-line"}`}
+              >
+                <option value="">Any {LABEL_TITLES[k].toLowerCase()}</option>
+                {Object.entries(LABEL_NAMES[k])
+                  .filter(([id]) => counts.has(id) || filter[k] === id)
+                  .map(([id, info]) => (
+                    <option key={id} value={id}>{info.name} ({counts.get(id) ?? 0})</option>
+                  ))}
+              </select>
+            );
+          })}
+        </div>
         <div className="-mx-4 overflow-x-auto sm:mx-0">
           <table className="tabular w-full min-w-[640px] text-left text-sm">
             <thead className="text-xs text-muted">
@@ -295,7 +348,7 @@ function Overview() {
                       {i.title}
                     </Link>
                     {i.culprit && <div className="truncate font-mono text-xs text-muted">{i.culprit}</div>}
-                    <IssueLabels issue={i} />
+                    <div><LabelBadges labels={i.labels} /><IssueLabels issue={i} /></div>
                   </td>
                   <td className="px-2 py-2.5 text-xs">{i.flow ?? <span className="text-muted">untagged</span>}</td>
                   <td className="px-2 py-2.5 text-right text-muted">{i.users ?? "—"}</td>
@@ -305,7 +358,7 @@ function Overview() {
                 </tr>
               ))}
               {!issues.length && (
-                <tr><td colSpan={7} className="px-2 py-6 text-center text-muted">No issues.</td></tr>
+                <tr><td colSpan={7} className="px-2 py-6 text-center text-muted">{labelFiltered.length || flow ? "No issues match these filters." : "No issues."}</td></tr>
               )}
             </tbody>
           </table>

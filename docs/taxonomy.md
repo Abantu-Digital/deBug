@@ -139,6 +139,22 @@ error when it arrives, using the Settings of that moment: marking a flow critica
 relabel earlier errors. The issue causes (`new_in_release`, `regressed`, `single_device`) are
 worked out when the dashboard reads the issue, so they're always current.
 
+## On the dashboard
+
+- **Badges:** each issue on the overview shows its impact and category as badges, and its likely
+  owner.
+- **Breakdown:** "Who it hurts and whose it is" splits the range's errors by impact, owner and
+  category, from the rollups. Click a bar to filter the issue list.
+- **Filters:** the issue list has a filter per label, next to the status and flow filters, and
+  each option shows how many issues it would leave. They combine: "Blocked" and "Backend team"
+  answers "what's blocking users, and is it the backend's?". Filters live in the URL, so a
+  filtered view can be shared.
+- **API:** `GET /api/summary` takes the same filters: `?category=`, `?owner=`, `?impact=`, plus
+  `?status=` and `?flow=`.
+
+The breakdown counts errors with the labels they got when they arrived; the badges and filters
+use each issue's labels now, including host owners saved since (see Host names).
+
 ## Incidents
 
 Issues that fail together for the same reason are one problem. An incident is keyed by a
