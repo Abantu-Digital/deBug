@@ -3,6 +3,7 @@
  * Client code (the SDK) imports only this entry so validators never reach app bundles.
  */
 import type { Severity, StackFrame } from "./index";
+import { markLibraryFrames, RN_BUNDLE } from "./frames";
 
 export type {
   Flow,
@@ -28,6 +29,7 @@ export type {
   RollupRow,
 } from "./index";
 
+export { cleanFnName, markLibraryFrames } from "./frames";
 export {
   CATEGORIES,
   CATEGORY_INFO,
@@ -127,9 +129,9 @@ const NOT_IN_APP = [/node_modules/, /\bnative\b/, /\[native code\]/, /InternalBy
  * React Native ships one JS bundle, so every frame points at it: in development a Metro URL
  * (".../entry.bundle//&platform=ios&dev=true..."), in release "address at index.android.bundle"
  * or "main.jsbundle". We can't tell app code from library code without source maps, so bundle
- * frames count as in-app and the function name carries the signal.
+ * frames count as in-app and the function name carries the signal: known library functions are
+ * marked by name (see ./frames).
  */
-const RN_BUNDLE = /\.(?:js)?bundle\b/;
 
 function cleanFile(file: string): string {
   return file.replace(/^address at /, "");
@@ -152,5 +154,5 @@ export function parseStack(stack: string | undefined): StackFrame[] {
     });
     if (frames.length >= 100) break;
   }
-  return frames;
+  return markLibraryFrames(frames);
 }

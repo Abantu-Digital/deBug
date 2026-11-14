@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MemoryStore } from "@debugkit/adapters/memory";
 import { ingest } from "@debugkit/ingest";
-import { DEFAULT_SEVERITY_THRESHOLDS } from "@debugkit/schema";
+import { DEFAULT_SEVERITY_THRESHOLDS, parseStack } from "@debugkit/schema";
 import { seedDemo } from "./demo";
 import { buildIssueDetail, buildSummary, issueLabels } from "./queries";
 
@@ -248,5 +248,32 @@ describe("labels and skewed clocks", () => {
     const [issue] = await store.listIssues("a", { limit: 1 });
     expect(issue!.lastEvent.event.ts).toBe(server.toISOString());
     expect(issue!.lastEvent.labels?.causes).toEqual(["resumed_from_background", "burst"]);
+  });
+});
+
+describe("culprit in app code", () => {
+  it("names the app's own function on the Cell C staging stack, for SDKs that sent every frame as in-app", async () => {
+    const { stagingRequestStack } = await import("../../../../packages/schema/src/fixtures/staging-stack");
+    const store = new MemoryStore();
+    const ts = "2026-11-14T13:00:01.304Z";
+    // An older SDK marked every bundle frame in-app: undo that to prove ingest re-marks them.
+    const frames = parseStack(stagingRequestStack).map((f) => ({ ...f, inApp: !/InternalBytecode/.test(f.file ?? "") }));
+    const event = {
+      type: "error" as const,
+      id: "evt_staging_stack",
+      ts,
+      handled: true,
+      tags: { source: "network" },
+      error: { name: "NetworkError", message: "POST api-b.example.com/api/balance/getBalances failed", stack: stagingRequestStack, frames },
+      request: { method: "POST", url: "api-b.example.com/api/balance/getBalances", durationMs: 16 },
+    };
+    const env = { sdk: { name: "t", version: "0.7.0" }, context: { app: { id: "a" }, os: { name: "ios" }, runtime: { name: "react-native" } }, session: { id: "s", startedAt: ts }, events: [event] };
+    await ingest(JSON.stringify(env), "k", { store, keys: { k: "a" }, now: () => new Date(ts) });
+    const s = (await buildSummary(store, "a", DEFAULT_SEVERITY_THRESHOLDS, Date.parse(ts)))!;
+    expect(s.issues[0]!.culprit).toBe("attemptApiRequest (main.jsbundle:235308)");
+    const d = (await buildIssueDetail(store, "a", s.issues[0]!.fingerprint, DEFAULT_SEVERITY_THRESHOLDS, Date.parse(ts)))!;
+    expect(d.issue.culprit).toBe("attemptApiRequest (main.jsbundle:235308)"); // what the issue page shows
+    const sample = d.sample!.event;
+    expect(sample.type === "error" && sample.error.frames!.find((f) => f.fn === "dispatchXhrRequest")?.inApp).toBe(false);
   });
 });

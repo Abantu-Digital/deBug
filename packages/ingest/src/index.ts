@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Envelope, parseStack, releaseKey, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debugkit/schema";
+import { Envelope, markLibraryFrames, parseStack, releaseKey, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debugkit/schema";
 import type { IssueUpsert, UserMark, WriteStore } from "@debugkit/adapters";
 import { cachedSettings, effectiveRetention } from "./admin";
 import { sendAlerts } from "./alerts";
@@ -109,7 +109,11 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
   for (const raw of env.events) {
     const event = { ...raw, ts: sanitiseTs(raw.ts, now) } as Event;
     // Clients that don't parse stacks (curl, other SDKs) still get grouped by code location.
-    if (event.type === "error" && !event.error.frames?.length && event.error.stack) event.error.frames = parseStack(event.error.stack);
+    if (event.type === "error") {
+      if (!event.error.frames?.length && event.error.stack) event.error.frames = parseStack(event.error.stack);
+      // Older SDKs marked every React Native bundle frame in-app: mark library code by name here too.
+      else if (event.error.frames?.length) event.error.frames = markLibraryFrames(event.error.frames);
+    }
     const day = dayOf(event.ts);
     // Session health only feeds the crash-free rollup; storing each one would cost a write per session.
     if (event.type === "session") {
