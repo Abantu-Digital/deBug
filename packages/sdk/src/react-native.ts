@@ -68,8 +68,11 @@ export function initReactNative(options: ReactNativeInitOptions, client: DebugCl
   if (!di && deviceInfo !== null && rest.debug) console.log("[deBug] react-native-device-info isn't linked (Expo Go, or the app needs a rebuild): device details are limited");
 
   // Device facts on every error and event: fixed ones read once, on the first event; live ones each time.
+  // device.details says whether react-native-device-info was there, so a release build missing
+  // it shows on the dashboard instead of failing silently. No tag when the app opted out (null).
+  const details: Record<string, string> = deviceInfo === null ? {} : { "device.details": di ? "full" : "limited" };
   let fixed: Record<string, string> | undefined;
-  removeDeviceTags = client.addTagSource(() => ({ ...(fixed ??= staticDeviceTags(di, collect)), ...liveDeviceTags(di, collect) }));
+  removeDeviceTags = client.addTagSource(() => ({ ...(fixed ??= { ...details, ...staticDeviceTags(di, collect) }), ...liveDeviceTags(di, collect) }));
 
   // Sessions end after 30 minutes in the background; coming back after that starts a new one.
   let backgroundedAt = 0;

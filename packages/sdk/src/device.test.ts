@@ -68,6 +68,7 @@ describe("device facts, read by the SDK", () => {
         "network.carrier": "Cell C",
         "app.installer": "com.huawei.appmarket",
         "network.airplaneMode": "true",
+        "device.details": "full",
       });
     expect(JSON.stringify(sent)).not.toMatch(/SECRET-ID|Sam's phone/);
     await c.close();
@@ -85,7 +86,19 @@ describe("device facts, read by the SDK", () => {
     await c.flush();
     expect(loader).not.toHaveBeenCalled(); // never even evaluated
     expect(sent[0]!.context.device).toMatchObject({ model: "fallback-model", screen: { width: 411 } });
-    expect(sent[0]!.events[0]!.tags).toEqual({ "device.fontScale": "1.1" }); // React Native's own font scale
+    expect(sent[0]!.events[0]!.tags).toEqual({ "device.details": "limited", "device.fontScale": "1.1" }); // React Native's own font scale
+  });
+
+  it("sends no device.details tag when the app opts out with deviceInfo: null", async () => {
+    const loader = vi.fn(() => huawei);
+    setDeviceInfoLoader(loader);
+    const { c, sent, fetch } = client();
+    initReactNative({ ...opts, fetch, deviceInfo: null }, c);
+    c.error(new Error("x"));
+    await c.flush();
+    expect(loader).not.toHaveBeenCalled();
+    expect(sent[0]!.events[0]!.tags).not.toHaveProperty("device.details");
+    await c.close();
   });
 
   it("survives a loader that throws even with the native half present", () => {
