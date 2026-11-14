@@ -325,3 +325,23 @@ describe("incidents", () => {
     expect(incidentTitle("resumed_from_background|screen_crash|ios")).toBe("Screen crash on app resume (iOS)");
   });
 });
+
+describe("explanations", () => {
+  it("are in /api/summary and on the issue page, with Markdown for a ticket", async () => {
+    const { resumeIncident } = await import("../../../../packages/ingest/src/fixtures/resume-incident");
+    const store = new MemoryStore();
+    const last = resumeIncident[resumeIncident.length - 1]!.ts;
+    const env = { sdk: { name: "t", version: "1" }, context: { app: { id: "cell-c" }, os: { name: "ios" }, runtime: { name: "react-native" } }, user: { anonymousId: "i1" }, session: { id: "s", startedAt: resumeIncident[0]!.ts }, events: resumeIncident };
+    await ingest(JSON.stringify(env), "k", { store, keys: { k: "cell-c" }, now: () => new Date(last) });
+    const s = (await buildSummary(store, "cell-c", DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last)))!;
+    for (const i of s.issues) {
+      expect(i.explanation?.summary).toMatch(/right after reopening the app.*Not a server outage.*Pass to: app team\.$/);
+      expect(i.explanation?.technical.fix).toMatch(/NetInfo/);
+    }
+    const d = (await buildIssueDetail(store, "cell-c", s.issues[0]!.fingerprint, DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last), { trackers: { dashboardUrl: "https://debug.example" } }))!;
+    expect(d.issue.explanation?.summary).toContain("for 1 user");
+    expect(d.ticketMarkdown).toContain(`deBug: https://debug.example/issues/${s.issues[0]!.fingerprint}?app=cell-c`);
+    // The generic network hints are replaced by the explanation.
+    expect(d.hints.map((h) => h.title)).not.toContain("Network failure");
+  });
+});

@@ -1,8 +1,9 @@
 import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { HourlyChart, TrendChart } from "~/components/charts";
 import { RangePicker, rangeSearch, RetentionNote, type RangeSearch } from "~/components/range-picker";
 import { Card, DataTable, IssueLabels, SeverityBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
+import { copyText } from "~/lib/copy";
 import { getIssueDetail, updateIssueStatus } from "~/server/fns";
 
 export const Route = createFileRoute("/_authed/issues/$fingerprint")({
@@ -61,19 +62,46 @@ function IssuePage() {
         <Stat label="Top app version" value={d.breakdowns.appVersion[0]?.key ?? "—"} hint={d.breakdowns.appVersion[0] ? `${Math.round(d.breakdowns.appVersion[0].share * 100)}% of occurrences` : undefined} />
       </div>
 
-      <Card title="What to look at" subtitle="Generated from the error, its breadcrumbs and where it happens.">
-        <ol className="space-y-3">
-          {d.hints.map((h, i) => (
-            <li key={i} className="flex gap-3">
-              <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent-soft text-[11px] font-semibold text-accent">{i + 1}</span>
-              <div>
-                <div className="text-sm font-medium">{h.title}</div>
-                <div className="text-sm text-muted">{h.detail}</div>
-              </div>
-            </li>
-          ))}
-        </ol>
-      </Card>
+      {issue.explanation && (
+        <div className="grid gap-5 lg:grid-cols-2">
+          <Card title="What happened" subtitle="In plain words, for support." right={d.ticketMarkdown ? <CopyButton text={d.ticketMarkdown} /> : undefined}>
+            <p className="text-sm leading-relaxed">{issue.explanation.summary}</p>
+          </Card>
+          <Card title="For developers" subtitle={plain(issue.explanation.technical.headline)}>
+            <ul className="list-disc space-y-1 pl-5 text-sm">
+              {issue.explanation.technical.evidence.map((line, i) => (
+                <li key={i} className="break-words">{plain(line)}</li>
+              ))}
+            </ul>
+            {issue.explanation.technical.where && (
+              <p className="mt-3 text-sm">
+                <span className="font-medium">Where: </span>
+                <span className="break-words font-mono text-xs">{plain(issue.explanation.technical.where)}</span>
+              </p>
+            )}
+            <p className="mt-3 text-sm">
+              <span className="font-medium">Suggested fix: </span>
+              {plain(issue.explanation.technical.fix)}
+            </p>
+          </Card>
+        </div>
+      )}
+
+      {d.hints.length > 0 && (
+        <Card title={issue.explanation ? "Also worth checking" : "What to look at"} subtitle="Generated from the error, its breadcrumbs and where it happens.">
+          <ol className="space-y-3">
+            {d.hints.map((h, i) => (
+              <li key={i} className="flex gap-3">
+                <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent-soft text-[11px] font-semibold text-accent">{i + 1}</span>
+                <div>
+                  <div className="text-sm font-medium">{h.title}</div>
+                  <div className="text-sm text-muted">{h.detail}</div>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </Card>
+      )}
 
       <div className="grid gap-5 lg:grid-cols-3">
         <div className="lg:col-span-2">
@@ -219,3 +247,28 @@ function IssueActions({
     </section>
   );
 }
+
+/** Copies the explanation as Markdown, for a Jira or Linear ticket made by hand. */
+function CopyButton({ text }: { text: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  return (
+    <button
+      type="button"
+      className="rounded-md border border-line px-2 py-1 text-xs text-muted hover:bg-panel-2"
+      onClick={() => {
+        void copyText(text).then((ok) => {
+          setState(ok ? "copied" : "failed");
+          clearTimeout(timer.current);
+          timer.current = setTimeout(() => setState("idle"), 2500);
+        });
+      }}
+    >
+      {state === "copied" ? "Copied" : state === "failed" ? "Couldn't copy" : "Copy for a ticket"}
+    </button>
+  );
+}
+
+/** Explanations mark code with backticks for Markdown; on the page they read as plain text. */
+const plain = (s: string) => s.replaceAll("`", "");

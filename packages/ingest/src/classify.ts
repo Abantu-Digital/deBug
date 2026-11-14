@@ -97,41 +97,83 @@ function lastLifecycle(crumbs: Breadcrumb[]): Breadcrumb | undefined {
   return undefined;
 }
 
-function eventCauses(e: ErrorEvent, cat: Category, crumbs: Breadcrumb[], repeatedFailure: boolean): { causes: Cause[]; burstHosts: Set<string> } {
-  const causes: Cause[] = [];
+/** The facts the rules use, measured from the error and the breadcrumbs before it. Explanations quote them. */
+export interface Evidence {
+  /** The request's duration and status, when the error is a failed request. */
+  durationMs?: number;
+  status?: number;
+  /** Time since the app last came to the foreground, when that's the last lifecycle breadcrumb. */
+  msSinceForeground?: number;
+  /** Whether any request succeeded (status under 400) since then. */
+  workedSinceForeground: boolean;
+  /** The last lifecycle breadcrumb says the app was in the background. */
+  inBackground: boolean;
+  /** Other failed requests in the 5 s before, and their hosts (with this request's). */
+  failedBefore: number;
+  failedHosts: string[];
+  /** The same request had already failed just before (a merged repeat breadcrumb). */
+  repeatedFailure: boolean;
+  /** Slow requests among the last 5. */
+  slowRecent: number;
+  /** A request to the same host succeeded earlier. */
+  sameHostWorkedBefore: boolean;
+}
+
+function gather(e: ErrorEvent, crumbs: Breadcrumb[], repeatedFailure: boolean): Evidence {
   const at = Date.parse(e.ts);
   const within = (b: Breadcrumb, ms: number) => {
     const d = at - Date.parse(b.ts);
     return d >= 0 && d <= ms;
   };
-
   const requests = crumbs.map((b) => ({ b, r: crumbRequest(b) })).filter((x): x is { b: Breadcrumb; r: CrumbRequest } => !!x.r);
-
-  // Reopened recently, and no request has worked since: the connection never came back.
   const life = lastLifecycle(crumbs);
-  if (life?.message === FOREGROUND && within(life, RESUME_WINDOW_MS)) {
-    const since = Date.parse(life.ts);
-    const worked = requests.some((x) => Date.parse(x.b.ts) >= since && succeeded(x.r));
-    if (!worked) causes.push("resumed_from_background");
-  }
-
+  const foreground = life?.message === FOREGROUND ? Date.parse(life.ts) : undefined;
   const burst = requests.filter((x) => x.r.failed && within(x.b, BURST_WINDOW_MS));
-  const burstHosts = new Set(burst.map((x) => hostOf(x.r.url)));
-  if (burst.length >= 1 || repeatedFailure) {
-    causes.push("burst");
-    if (e.request) burstHosts.add(hostOf(e.request.url));
-  }
-
-  if (requests.slice(-5).filter((x) => x.b.level === "warning").length >= 2) causes.push("slow_network");
-
-  if (cat === "auth" && e.request) {
-    const host = hostOf(e.request.url);
-    if (requests.some((x) => hostOf(x.r.url) === host && succeeded(x.r))) causes.push("auth_expired");
-  }
-  return { causes, burstHosts };
+  const hosts = new Set(burst.map((x) => hostOf(x.r.url)));
+  if (e.request && (burst.length || repeatedFailure)) hosts.add(hostOf(e.request.url));
+  const host = e.request ? hostOf(e.request.url) : undefined;
+  return {
+    durationMs: e.request?.durationMs,
+    status: e.request?.status,
+    msSinceForeground: foreground !== undefined && at >= foreground ? at - foreground : undefined,
+    workedSinceForeground: foreground !== undefined && requests.some((x) => Date.parse(x.b.ts) >= foreground && succeeded(x.r)),
+    inBackground: life?.message === BACKGROUND,
+    failedBefore: burst.length,
+    failedHosts: [...hosts],
+    repeatedFailure,
+    slowRecent: requests.slice(-5).filter((x) => x.b.level === "warning").length,
+    sameHostWorkedBefore: !!host && requests.some((x) => hostOf(x.r.url) === host && succeeded(x.r)),
+  };
 }
 
-function owner(cat: Category, causes: Cause[], burstHosts: Set<string>): Owner {
+/** Evidence for when there's no error event to measure (e.g. it has expired). */
+export const NO_EVIDENCE: Evidence = {
+  workedSinceForeground: false,
+  inBackground: false,
+  failedBefore: 0,
+  failedHosts: [],
+  repeatedFailure: false,
+  slowRecent: 0,
+  sameHostWorkedBefore: false,
+};
+
+/** The evidence behind an error's labels. */
+export function evidenceOf(e: ErrorEvent): Evidence {
+  const { crumbs, repeatedFailure } = earlierCrumbs(e);
+  return gather(e, crumbs, repeatedFailure);
+}
+
+function eventCauses(cat: Category, ev: Evidence): Cause[] {
+  const causes: Cause[] = [];
+  // Reopened recently, and no request has worked since: the connection never came back.
+  if (ev.msSinceForeground !== undefined && ev.msSinceForeground <= RESUME_WINDOW_MS && !ev.workedSinceForeground) causes.push("resumed_from_background");
+  if (ev.failedBefore >= 1 || ev.repeatedFailure) causes.push("burst");
+  if (ev.slowRecent >= 2) causes.push("slow_network");
+  if (cat === "auth" && ev.sameHostWorkedBefore) causes.push("auth_expired");
+  return causes;
+}
+
+function owner(cat: Category, causes: Cause[], burstHosts: readonly string[]): Owner {
   switch (cat) {
     case "network.never_sent":
     case "client_request":
@@ -147,15 +189,15 @@ function owner(cat: Category, causes: Cause[], burstHosts: Set<string>): Owner {
       return causes.includes("auth_expired") ? "app" : "unknown";
     case "network.timeout":
     case "network.failed":
-      return causes.includes("burst") && burstHosts.size > 1 ? "infrastructure" : "unknown";
+      return causes.includes("burst") && burstHosts.length > 1 ? "infrastructure" : "unknown";
     default:
       return "unknown";
   }
 }
 
-function impact(e: ErrorEvent, cat: Category, crumbs: Breadcrumb[], critical: ReadonlySet<string>): Impact {
+function impact(e: ErrorEvent, cat: Category, ev: Evidence, critical: ReadonlySet<string>): Impact {
   if (cat === "crash" || (e.flow && critical.has(e.flow))) return "blocked";
-  if (lastLifecycle(crumbs)?.message === BACKGROUND) return "silent";
+  if (ev.inBackground) return "silent";
   if (cat === "app_reported" && !e.flow) return "silent";
   return "degraded";
 }
@@ -166,13 +208,13 @@ function impact(e: ErrorEvent, cat: Category, crumbs: Breadcrumb[], critical: Re
  * before that.
  */
 export function classify(e: ErrorEvent, opts: ClassifyOptions = {}): Classification {
-  const { crumbs, repeatedFailure } = earlierCrumbs(e);
+  const ev = evidenceOf(e);
   const cat = category(e);
-  const { causes, burstHosts } = eventCauses(e, cat, crumbs, repeatedFailure);
+  const causes = eventCauses(cat, ev);
   return {
     category: cat,
-    owner: owner(cat, causes, burstHosts),
-    impact: impact(e, cat, crumbs, new Set(opts.criticalFlows ?? [])),
+    owner: owner(cat, causes, ev.failedHosts),
+    impact: impact(e, cat, ev, new Set(opts.criticalFlows ?? [])),
     causes,
   };
 }
