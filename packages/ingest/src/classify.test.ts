@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Breadcrumb, ErrorEvent } from "@debugkit/schema";
-import { classify, issueCauses, withIssueCauses } from "./classify";
+import { classify, hostOwner, issueCauses, withIssueCauses } from "./classify";
 import { resumeIncident } from "./fixtures/resume-incident";
 
 const TS = "2026-11-14T10:00:10.000Z";
@@ -194,5 +194,31 @@ describe("review fixes", () => {
   it("a merged repeat of the same failure counts as a burst", () => {
     const own = { ...net("GET", "api.x/v1/feed", null, 20, 0), data: { status: null, durationMs: 20, repeated: 2 } };
     expect(classify({ ...failed("api.x/v1/feed", 20), breadcrumbs: [own] }).causes).toContain("burst");
+  });
+});
+
+describe("classify: owners from host names in Settings", () => {
+  const hosts = [
+    { match: "api.x", name: "Accounts", owner: "third_party" as const },
+    { match: "api.x/v1/feed", name: "Feed", owner: "backend" as const },
+  ];
+
+  it("a named host's owner owns its server errors", () => {
+    expect(classify(http(503), { hosts }).owner).toBe("third_party");
+    expect(classify(http(503)).owner).toBe("backend");
+  });
+
+  it("and the failures the rules can't place, but never the app's own or a many-host outage", () => {
+    expect(classify(failed("api.x/v1/feed", 400), { hosts }).owner).toBe("backend");
+    expect(classify(http(403), { hosts }).owner).toBe("third_party");
+    expect(classify(failed("api.x/v1/feed", 20), { hosts }).owner).toBe("app"); // never sent
+    expect(classify(http(422), { hosts }).owner).toBe("app");
+    const many = { ...failed("api.x/v1/feed", 400), breadcrumbs: [net("GET", "cdn.y/img", null, 400, 2)] };
+    expect(classify(many, { hosts }).owner).toBe("infrastructure");
+  });
+
+  it("leaves owners alone for hosts without one", () => {
+    expect(hostOwner({ category: "server", owner: "backend" }, "api.x/v1/me", [{ match: "api.x", name: "Accounts" }])).toBe("backend");
+    expect(hostOwner({ category: "server", owner: "backend" }, undefined, hosts)).toBe("backend");
   });
 });

@@ -1,15 +1,17 @@
 import type { ReadStore } from "@debugkit/adapters";
-import { classify, isRequestCategory, parseIncidentIssueKey, parseIncidentKey, withIssueCauses } from "@debugkit/ingest";
+import { classify, hostOwner, isRequestCategory, parseIncidentIssueKey, parseIncidentKey, withIssueCauses } from "@debugkit/ingest";
 import {
   CATEGORY_INFO,
   CAUSE_INFO,
   compareVersions,
+  nameUrlsIn,
   percentileMs,
   SEVERITY_ORDER,
   severityFromCount,
   type Category,
   type Cause,
   type Classification,
+  type HostName,
   type Issue,
   type IssueStatus,
   type RollupRow,
@@ -44,6 +46,7 @@ function hours(now: number, n: number) {
 
 export interface IssueRow {
   fingerprint: string;
+  /** With hosts named in Settings shown by their names. */
   title: string;
   culprit?: string;
   flow?: string;
@@ -125,6 +128,8 @@ export interface StepRow {
 
 export interface EndpointTiming {
   endpoint: string;
+  /** The endpoint with its host's name from Settings ("POST Balance service · /getBalances"), when it has one. */
+  label?: string;
   requests: number;
   failed: number;
   errorRate: number;
@@ -198,7 +203,7 @@ export interface Health {
   /** Newest releases first (by version order), at most 8. */
   releases: ReleaseHealth[];
   /** Endpoints with the most failed requests (5xx, timeouts, network failures) in the range. */
-  endpoints: { endpoint: string; failuresRange: number; failures24h: number }[];
+  endpoints: { endpoint: string; label?: string; failuresRange: number; failures24h: number }[];
   /** Distinct users (or installs) active since the start of the range, and how many of them crashed. */
   users: number;
   crashedUsers: number;
@@ -219,6 +224,7 @@ export const SUMMARY_FIELDS = {
   "flows[].failureRate": "failures/(failures+successes) in the range from events logged with an outcome. null when the app logs no outcomes for that flow.",
   "issues[]": "Grouped errors seen in the range. Sorted by severity, then count24h, then countRange.",
   "issues[].severity": "Derived from count24h using thresholds critical/high/medium.",
+  "issues[].title": "Error name and message, with hosts named in Settings shown by their names.",
   "issues[].culprit": "Top in-app stack frame: function (file:line).",
   "incidents[]": "Issues that failed together for the same reason (a cause such as resumed_from_background or burst, a category and an OS), folded into one recurring problem across users and days. Most errors first. Key is stable across builds.",
   "incidents[].episodes": "Separate times it happened in the range (one per batch of events the SDK sent).",
@@ -238,6 +244,7 @@ export const SUMMARY_FIELDS = {
   "health.errorFreeRate": "Share of sessions in the range with no unhandled error.",
   "health.releases[]": "Crash-free and error-free rates per app version.",
   "health.endpoints[]": "HTTP endpoints whose requests failed most (5xx, timeouts, network errors), from automatic network capture.",
+  "health.endpoints[].label": "The endpoint with its host's name from Settings, when it has one; endpoint stays the raw method and URL. Same for timings[].label.",
   "health.users": "Distinct users active since the start of the range (user id when set, else the install's anonymous id; stored hashed).",
   "health.crashFreeUsersRate": "Share of those users who didn't crash.",
   "issues[].status": "open, resolved, ignored, or regressed (seen again in the fixed release or later).",
@@ -314,6 +321,7 @@ export async function buildSummary(
     store.getRollups(app, "incidentIssue", from, to),
   ]);
   const criticalFlows = appSettings?.criticalFlows ?? [];
+  const hosts = appSettings?.hosts ?? [];
   const critical = new Set(criticalFlows);
   const usersSince = hourly ? dayKey(now - DAY) : from;
   const [users, crashedUsers] = await Promise.all([countUsersSafe(store, app, "app", usersSince), countUsersSafe(store, app, "crash", usersSince)]);
@@ -359,14 +367,14 @@ export async function buildSummary(
   const latestVersion = versionsInRange[versionsInRange.length - 1] ?? null;
   const issueRows: IssueRow[] = issues
     .filter((i) => i.lastSeen >= rangeStart && i.firstSeen <= `${to}T23:59:59.999Z`)
-    .map((i) => toIssueRow(i, issue24h.get(i.fingerprint) ?? 0, hourly ? (issue24h.get(i.fingerprint) ?? 0) : (issueRange.get(i.fingerprint) ?? 0), thresholds, latestVersion, criticalFlows))
+    .map((i) => toIssueRow(i, issue24h.get(i.fingerprint) ?? 0, hourly ? (issue24h.get(i.fingerprint) ?? 0) : (issueRange.get(i.fingerprint) ?? 0), thresholds, latestVersion, criticalFlows, hosts))
     .sort(bySeverityThenCount);
   // Users affected: one count per issue, so only for the issues people look at first.
   const active = issueRows.filter((i) => i.status !== "ignored" && i.status !== "resolved");
   await Promise.all(active.slice(0, 10).map(async (i) => (i.users = await countUsersSafe(store, app, `issue:${i.fingerprint}`, usersSince))));
   const lastEvents = new Map(issues.map((i) => [i.fingerprint, i.lastEvent]));
   for (const row of issueRows)
-    if (row.labels) row.explanation = explain({ issue: row, labels: row.labels, lastEvent: lastEvents.get(row.fingerprint), users: row.users, rangeLabel: range.label, now });
+    if (row.labels) row.explanation = explain({ issue: row, labels: row.labels, lastEvent: lastEvents.get(row.fingerprint), users: row.users, hosts, rangeLabel: range.label, now });
 
   // Incident counts follow the issue table: for 24h, each issue's hourly count caps its daily rollup.
   const incidents = await buildIncidents(incidentRows, incidentIssueRows, issueRows, hourly, (key) => countUsersSafe(store, app, `incident:${key}`, usersSince));
@@ -448,9 +456,9 @@ export async function buildSummary(
       impact: top(impactRows),
     },
     steps: buildSteps(stepRows),
-    timings: buildTimings(requestRows, latencyRows),
+    timings: buildTimings(requestRows, latencyRows, hosts),
     criticalFlows,
-    health: { ...buildHealth(sessionRows, endpointRows, dayKey(now)), users, crashedUsers, crashFreeUsersRate: users > 0 ? Math.max(0, 1 - crashedUsers / users) : null },
+    health: { ...buildHealth(sessionRows, endpointRows, dayKey(now), hosts), users, crashedUsers, crashFreeUsersRate: users > 0 ? Math.max(0, 1 - crashedUsers / users) : null },
     releases,
     latestVersion,
   };
@@ -531,7 +539,13 @@ const rate = (bad: number, total: number) => (total > 0 ? Math.max(0, 1 - bad / 
 
 export { compareVersions };
 
-function buildHealth(sessionRows: RollupRow[], endpointRows: RollupRow[], today: string): Omit<Health, "users" | "crashedUsers" | "crashFreeUsersRate"> {
+/** An endpoint key ("POST host/path") with its host's name, or undefined when the host has none. */
+function endpointLabel(endpoint: string, hosts: readonly HostName[]): string | undefined {
+  const named = nameUrlsIn(endpoint, hosts);
+  return named === endpoint ? undefined : named;
+}
+
+function buildHealth(sessionRows: RollupRow[], endpointRows: RollupRow[], today: string, hosts: readonly HostName[] = []): Omit<Health, "users" | "crashedUsers" | "crashFreeUsersRate"> {
   const byVersion = new Map<string, ReleaseHealth>();
   for (const r of sessionRows) {
     const [version = "unknown", status] = r.key.split("|");
@@ -548,10 +562,10 @@ function buildHealth(sessionRows: RollupRow[], endpointRows: RollupRow[], today:
     .slice(0, 8);
   const sum = (k: "sessions" | "errored" | "crashed") => [...byVersion.values()].reduce((a, v) => a + v[k], 0);
 
-  const eps = new Map<string, { endpoint: string; failuresRange: number; failures24h: number }>();
+  const eps = new Map<string, { endpoint: string; label?: string; failuresRange: number; failures24h: number }>();
   for (const r of endpointRows) {
     let e = eps.get(r.key);
-    if (!e) eps.set(r.key, (e = { endpoint: r.key, failuresRange: 0, failures24h: 0 }));
+    if (!e) eps.set(r.key, (e = { endpoint: r.key, label: endpointLabel(r.key, hosts), failuresRange: 0, failures24h: 0 }));
     e.failuresRange += r.errors;
     if (r.day === today) e.failures24h += r.errors;
   }
@@ -583,7 +597,7 @@ function buildSteps(rows: RollupRow[]): StepRow[] {
     .slice(0, 30);
 }
 
-function buildTimings(requestRows: RollupRow[], latencyRows: RollupRow[]): EndpointTiming[] {
+function buildTimings(requestRows: RollupRow[], latencyRows: RollupRow[], hosts: readonly HostName[] = []): EndpointTiming[] {
   const totals = new Map<string, { requests: number; failed: number }>();
   for (const r of requestRows) {
     const t = totals.get(r.key) ?? { requests: 0, failed: 0 };
@@ -603,7 +617,7 @@ function buildTimings(requestRows: RollupRow[], latencyRows: RollupRow[]): Endpo
   return [...totals.entries()]
     .map(([endpoint, t]) => {
       const b = hist.get(endpoint) ?? [];
-      return { endpoint, requests: t.requests, failed: t.failed, errorRate: t.requests ? t.failed / t.requests : 0, p50: percentileMs(b, 0.5), p95: percentileMs(b, 0.95) };
+      return { endpoint, label: endpointLabel(endpoint, hosts), requests: t.requests, failed: t.failed, errorRate: t.requests ? t.failed / t.requests : 0, p50: percentileMs(b, 0.5), p95: percentileMs(b, 0.95) };
     })
     .sort((a, b) => b.requests - a.requests)
     .slice(0, 10);
@@ -613,10 +627,14 @@ function buildTimings(requestRows: RollupRow[], latencyRows: RollupRow[]): Endpo
  * An issue's labels: those ingest stored with its latest occurrence, or worked out now for
  * occurrences stored before the classifier existed, plus the causes that come from the issue.
  */
-export function issueLabels(i: Issue, latestVersion: string | null, criticalFlows: readonly string[] = []): Classification | undefined {
+export function issueLabels(i: Issue, latestVersion: string | null, criticalFlows: readonly string[] = [], hosts: readonly HostName[] = []): Classification | undefined {
   const ev = i.lastEvent?.event;
-  const own = i.lastEvent?.labels ?? (ev?.type === "error" ? classify(ev, { criticalFlows }) : undefined);
-  return own && withIssueCauses(own, { status: i.status, firstVersion: i.firstVersion, latestVersion });
+  const stored = i.lastEvent?.labels ?? (ev?.type === "error" ? classify(ev, { criticalFlows, hosts }) : undefined);
+  if (!stored) return undefined;
+  // Host owners apply as soon as they're saved, to issues seen before too.
+  const owner = hostOwner(stored, ev?.type === "error" ? ev.request?.url : undefined, hosts);
+  const own = owner === stored.owner ? stored : { ...stored, owner };
+  return withIssueCauses(own, { status: i.status, firstVersion: i.firstVersion, latestVersion });
 }
 
 function toIssueRow(
@@ -626,11 +644,12 @@ function toIssueRow(
   t: SeverityThresholds,
   latestVersion: string | null = null,
   criticalFlows: readonly string[] = [],
+  hosts: readonly HostName[] = [],
 ): IssueRow {
   const base = severityFromCount(count24h, t);
   const critical = new Set(criticalFlows);
   return {
-    labels: issueLabels(i, latestVersion, criticalFlows),
+    labels: issueLabels(i, latestVersion, criticalFlows, hosts),
     incident: i.lastEvent?.incident,
     incidentTitle: i.lastEvent?.incident ? incidentTitle(i.lastEvent.incident) : undefined,
     status: i.status ?? "open",
@@ -639,7 +658,7 @@ function toIssueRow(
     lastVersion: i.lastVersion,
     newInLatest: !!latestVersion && i.firstVersion === latestVersion,
     fingerprint: i.fingerprint,
-    title: i.title,
+    title: nameUrlsIn(i.title, hosts),
     culprit: i.culprit,
     flow: i.flow,
     // Issues in a critical flow rank one level higher (only once they've happened in the last 24h).
@@ -696,7 +715,7 @@ function narrate(s: Summary): string[] {
     out.push(`${latest.version} is ${pctOne(latest.crashFreeRate)} crash-free across ${plural(latest.sessions, "session")}${vs}.`);
   }
   const ep = h.endpoints[0];
-  if (ep && ep.failuresRange > 0) out.push(`${ep.endpoint} is the most failing endpoint: ${plural(ep.failuresRange, "failed request")} in ${r.label}.`);
+  if (ep && ep.failuresRange > 0) out.push(`${ep.label ?? ep.endpoint} is the most failing endpoint: ${plural(ep.failuresRange, "failed request")} in ${r.label}.`);
   const net = s.breakdowns.network.filter((r) => r.key !== "unknown");
   const netTotal = net.reduce((a, b) => a + b.errors, 0);
   if (net[0] && netTotal >= 20 && net[0].errors / netTotal > 0.6 && net[0].key !== "wifi")
@@ -781,7 +800,8 @@ export async function buildIssueDetail(
   const affectedUsers = counted || new Set(events.map((e) => e.user?.id ?? e.user?.anonymousId ?? e.sessionId)).size;
 
   const criticalFlows = settings?.criticalFlows ?? [];
-  const row = toIssueRow(issue, count24h, countRange, thresholds, null, criticalFlows);
+  const hosts = settings?.hosts ?? [];
+  const row = toIssueRow(issue, count24h, countRange, thresholds, null, criticalFlows, hosts);
   // Recent occurrences say whether it's one device model.
   if (row.labels) row.labels = withIssueCauses(row.labels, { deviceModels: events.map((e) => e.context.device.model) });
   // The explanation covers request failures; for other categories the hints still add something.
@@ -794,6 +814,7 @@ export async function buildIssueDetail(
         labels: row.labels,
         lastEvent: issue.lastEvent,
         users: affectedUsers,
+        hosts,
         platforms: [...new Set(errorEvents.map((e) => e.context.os.name))],
         durations: errorEvents.flatMap((e) => (e.event.type === "error" && e.event.request?.durationMs !== undefined ? [e.event.request.durationMs] : [])),
         rangeLabel: range.label,
@@ -817,7 +838,7 @@ export async function buildIssueDetail(
       os: `${e.context.os.name} ${e.context.os.version ?? ""}`.trim(),
       appVersion: e.context.app.version,
       device: e.context.device.model,
-      message: e.event.type === "error" ? e.event.error.message : e.event.type === "event" ? e.event.name : e.event.type === "session" ? `session ${e.event.status}` : `requests to ${e.event.key}`,
+      message: e.event.type === "error" ? nameUrlsIn(e.event.error.message, hosts) : e.event.type === "event" ? e.event.name : e.event.type === "session" ? `session ${e.event.status}` : `requests to ${e.event.key}`,
       userId: e.user?.id,
     })),
     hints,

@@ -160,7 +160,7 @@ function Overview() {
         </Card>
         <Card title="Failing endpoints" subtitle={`Requests that returned 5xx, timed out or failed in ${range.label}. Captured automatically from fetch and XHR.`}>
           {summary.health.endpoints.length ? (
-            <ShareBars rows={summary.health.endpoints.map((e) => ({ key: e.endpoint, value: e.failuresRange }))} />
+            <ShareBars rows={summary.health.endpoints.map((e) => ({ key: e.endpoint, label: e.label, value: e.failuresRange }))} />
           ) : (
             <p className="text-sm text-muted">No failed requests.</p>
           )}
@@ -211,7 +211,7 @@ function Overview() {
                   <tbody>
                     {summary.timings.map((t) => (
                       <tr key={t.endpoint} className="border-b border-line last:border-0">
-                        <td className="max-w-[220px] truncate px-4 py-2 font-mono text-xs sm:px-2" title={t.endpoint}>{t.endpoint}</td>
+                        <td className={`max-w-[220px] truncate px-4 py-2 text-xs sm:px-2 ${t.label ? "" : "font-mono"}`} title={t.endpoint}>{t.label ?? t.endpoint}</td>
                         <td className="px-2 py-2 text-right text-muted">{t.requests.toLocaleString()}</td>
                         <td className="px-2 py-2 text-right">{ms(t.p50)}</td>
                         <td className={`px-2 py-2 text-right font-semibold ${t.p95 !== null && t.p95 >= 3000 ? "text-sev-high" : ""}`}>{ms(t.p95)}</td>

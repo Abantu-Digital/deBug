@@ -345,3 +345,36 @@ describe("explanations", () => {
     expect(d.hints.map((h) => h.title)).not.toContain("Network failure");
   });
 });
+
+describe("host names", () => {
+  it("show in issue titles, endpoint lists and response times, and give server errors their owner", async () => {
+    const store = new MemoryStore();
+    const ts = "2026-11-14T10:00:00.000Z";
+    const url = "pay.example.com/v1/charge";
+    const env = {
+      sdk: { name: "t", version: "1" },
+      context: { app: { id: "a", version: "1.0.0" }, os: { name: "ios" }, runtime: { name: "react-native" }, device: {} },
+      session: { id: "s", startedAt: ts },
+      events: [
+        { id: "evt-00000001", ts, type: "error", handled: true, tags: { source: "network" }, error: { name: "HttpError", message: `POST ${url} responded 503` }, request: { method: "POST", url, status: 503, durationMs: 120 } },
+        { id: "evt-00000002", ts, type: "metric", name: "http", key: `POST ${url}`, count: 4, errors: 1, buckets: [0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+      ],
+    };
+    expect((await ingest(JSON.stringify(env), "k", { store, keys: { k: "a" }, now: () => new Date(ts) })).status).toBe(202);
+    const before = (await buildSummary(store, "a", DEFAULT_SEVERITY_THRESHOLDS, Date.parse(ts)))!;
+    expect(before.issues[0]!.labels?.owner).toBe("backend");
+    expect(before.health.endpoints[0]!.label).toBeUndefined();
+
+    // Saved after the error arrived: names and the owner apply to it straight away.
+    await store.putSettings("a", { hosts: [{ match: "pay.example.com", name: "Payments", owner: "third_party" }] });
+    const s = (await buildSummary(store, "a", DEFAULT_SEVERITY_THRESHOLDS, Date.parse(ts)))!;
+    expect(s.issues[0]!.title).toBe("HttpError: POST Payments · /v1/charge responded 503");
+    expect(s.issues[0]!.labels?.owner).toBe("third_party");
+    expect(s.issues[0]!.explanation?.summary).toMatch(/Pass to: whoever manages that third-party service \(Payments\)\.$/);
+    expect(s.health.endpoints[0]).toMatchObject({ endpoint: `POST ${url}`, label: "POST Payments · /v1/charge" });
+    expect(s.timings[0]).toMatchObject({ endpoint: `POST ${url}`, label: "POST Payments · /v1/charge" });
+    const d = (await buildIssueDetail(store, "a", s.issues[0]!.fingerprint, DEFAULT_SEVERITY_THRESHOLDS, Date.parse(ts)))!;
+    expect(d.issue.title).toBe(s.issues[0]!.title);
+    expect(d.recent[0]!.message).toBe("POST Payments · /v1/charge responded 503");
+  });
+});

@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { teamAction } from "./team";
 import { MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, type AlertSettings, type AppSettings, type WriteStore } from "@debugkit/adapters";
+import { validHostNames } from "@debugkit/schema";
 import { SLACK_WEBHOOK } from "./alerts";
 
 /** Used when neither the app's settings nor the deployment set a retention period. */
@@ -68,6 +69,11 @@ function settingsPatch(body: Record<string, unknown>, current: AppSettings | nul
     }
     patch.alerts = next;
   }
+  if (body.hosts !== undefined) {
+    const hosts = validHostNames(body.hosts);
+    if (typeof hosts === "string") return hosts;
+    patch.hosts = hosts;
+  }
   return Object.keys(patch).length ? patch : "nothing to change";
 }
 
@@ -96,7 +102,7 @@ const APP_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
  * data. Mounted under /admin on the ingest function:
  *
  *   GET  /admin/settings?app=…              { settings, retentionDays }
- *   PUT  /admin/settings   { app, retentionDays?, criticalFlows?, alerts? }
+ *   PUT  /admin/settings   { app, retentionDays?, criticalFlows?, alerts?, hosts? }
  *   POST /admin/alert-test { app }           send a test message to the app's Slack webhook
  *   POST /admin/restamp    { app, cursor? }  re-stamp existing events' expiry, one page per call
  *   PUT  /admin/issue      { app, fingerprint, status: open|resolved|ignored, resolvedIn? }

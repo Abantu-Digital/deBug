@@ -1,4 +1,4 @@
-import type { Breadcrumb, Category, Cause, Classification, ErrorEvent, Impact, Owner } from "@debugkit/schema";
+import { hostNameFor, type Breadcrumb, type Category, type Cause, type Classification, type ErrorEvent, type HostName, type Impact, type Owner } from "@debugkit/schema";
 
 /**
  * Labels for one error: category, likely owner, user impact and cause patterns. The rules, and
@@ -11,6 +11,8 @@ import type { Breadcrumb, Category, Cause, Classification, ErrorEvent, Impact, O
 export interface ClassifyOptions {
   /** Flows marked critical in Settings: an error in one blocks the user. */
   criticalFlows?: readonly string[];
+  /** Host names from Settings: a named host's owner is the owner of its server errors. */
+  hosts?: readonly HostName[];
 }
 
 const FOREGROUND = "App came to the foreground";
@@ -195,6 +197,20 @@ function owner(cat: Category, causes: Cause[], burstHosts: readonly string[]): O
   }
 }
 
+/**
+ * The owner Settings gives the request's host, where the rules can't tell on their own: server
+ * errors (the backend by default, but the host may be a third party's), and failed, timed-out
+ * or refused requests the rules leave as unknown. Never overrides "app" (the request didn't reach the
+ * server, or the app sent it wrong) or "infrastructure" (many hosts failed at once).
+ */
+export function hostOwner(labels: Pick<Classification, "category" | "owner">, url: string | undefined, hosts: readonly HostName[] | undefined): Owner {
+  const named = url ? hostNameFor(url, hosts)?.host.owner : undefined;
+  if (!named) return labels.owner;
+  if (labels.category === "server") return named;
+  if ((labels.category === "network.timeout" || labels.category === "network.failed" || labels.category === "auth") && labels.owner === "unknown") return named;
+  return labels.owner;
+}
+
 function impact(e: ErrorEvent, cat: Category, ev: Evidence, critical: ReadonlySet<string>): Impact {
   if (cat === "crash" || (e.flow && critical.has(e.flow))) return "blocked";
   if (ev.inBackground) return "silent";
@@ -213,7 +229,7 @@ export function classify(e: ErrorEvent, opts: ClassifyOptions = {}): Classificat
   const causes = eventCauses(cat, ev);
   return {
     category: cat,
-    owner: owner(cat, causes, ev.failedHosts),
+    owner: hostOwner({ category: cat, owner: owner(cat, causes, ev.failedHosts) }, e.request?.url, opts.hosts),
     impact: impact(e, cat, ev, new Set(opts.criticalFlows ?? [])),
     causes,
   };

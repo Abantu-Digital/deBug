@@ -3,11 +3,12 @@ import { redirect } from "@tanstack/react-router";
 import { canManage, checkCredentials, demoLoginEnabled, DEMO_USER, endSession, readSession, recordFailure, startSession, tooManyAttempts, type SessionUser } from "./auth";
 import { config } from "./config";
 import { buildIssueDetail, buildSummary } from "./queries";
-import { readSettings, restampStep, settingsWriter, testAlert, validRetention, writeIssueStatus, writeRetention, writeSettings } from "./settings";
+import { readSettings, restampStep, seenHosts, settingsWriter, testAlert, validRetention, writeIssueStatus, writeRetention, writeSettings } from "./settings";
 import { getStore } from "./store";
 import { acceptInvite, changeRole, createInvite, readTeam, removeMember, revokeInvite } from "./team";
 import { hashInviteToken } from "@debugkit/ingest";
 import { TEAM_ROLES, type TeamRole } from "@debugkit/adapters";
+import { validHostNames } from "@debugkit/schema";
 
 export const getSessionUser = createServerFn({ method: "GET" }).handler(async () => readSession());
 
@@ -92,7 +93,8 @@ export const getSettings = createServerFn({ method: "GET" })
     await requireUser();
     const apps = await (await getStore()).listApps();
     const app = data.app && apps.includes(data.app) ? data.app : apps[0];
-    return { apps, settings: app ? await readSettings(app) : null };
+    const [settings, hosts] = app ? await Promise.all([readSettings(app), seenHosts(app)]) : [null, []];
+    return { apps, settings, seenHosts: hosts };
   });
 
 export const saveRetention = createServerFn({ method: "POST" })
@@ -109,13 +111,16 @@ export const saveRetention = createServerFn({ method: "POST" })
 const FLOW = /^[a-z0-9_]+(\.[a-z0-9_]+)*$/;
 
 export const saveAppSettings = createServerFn({ method: "POST" })
-  .validator((d: { app: string; criticalFlows?: string[]; alerts?: { slackWebhookUrl?: string; newIssues?: boolean; regressions?: boolean; onlyCriticalFlows?: boolean; dashboardUrl?: string } }) => {
+  .validator((d: { app: string; criticalFlows?: string[]; hosts?: { match: string; name: string; owner?: string }[]; alerts?: { slackWebhookUrl?: string; newIssues?: boolean; regressions?: boolean; onlyCriticalFlows?: boolean; dashboardUrl?: string } }) => {
     const flows = Array.isArray(d?.criticalFlows) ? d.criticalFlows.map((f) => String(f).trim().toLowerCase()).filter(Boolean) : undefined;
     if (flows && (flows.length > 30 || !flows.every((f) => FLOW.test(f) && f.length <= 64))) throw new Error("Flows are dotted lowercase names like checkout.payment (up to 30).");
     const a = d?.alerts;
+    const hosts = d?.hosts === undefined ? undefined : validHostNames(d.hosts);
+    if (typeof hosts === "string") throw new Error(hosts);
     return {
       app: String(d?.app ?? ""),
       criticalFlows: flows,
+      hosts,
       alerts: a
         ? {
             slackWebhookUrl: typeof a.slackWebhookUrl === "string" ? a.slackWebhookUrl.trim().slice(0, 300) : undefined,
@@ -130,7 +135,7 @@ export const saveAppSettings = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     await requireManager();
     try {
-      return { ok: true as const, settings: await writeSettings(data.app, { criticalFlows: data.criticalFlows, alerts: data.alerts }) };
+      return { ok: true as const, settings: await writeSettings(data.app, { criticalFlows: data.criticalFlows, alerts: data.alerts, hosts: data.hosts }) };
     } catch (err) {
       return { ok: false as const, error: (err as Error).message };
     }

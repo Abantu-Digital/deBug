@@ -1,5 +1,6 @@
 import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
+import { OWNER_INFO, OWNERS, type HostName, type Owner } from "@debugkit/schema";
 import { Card } from "~/components/ui";
 import { getSettings, restampExisting, saveAppSettings, saveRetention, sendTestAlert } from "~/server/fns";
 
@@ -13,7 +14,7 @@ export const Route = createFileRoute("/_authed/settings")({
 const CHOICES = [30, 60, 90, 180, 365];
 
 function SettingsPage() {
-  const { apps, settings } = Route.useLoaderData();
+  const { apps, settings, seenHosts } = Route.useLoaderData();
   const navigate = useNavigate({ from: Route.fullPath });
   const router = useRouter();
   const [days, setDays] = useState(String(settings?.retentionDays ?? 60));
@@ -128,6 +129,8 @@ function SettingsPage() {
 
       {canEdit && <FlowsAndAlerts key={settings.app + (settings.updatedAt ?? "")} settings={settings} onStatus={setStatus} />}
 
+      {canEdit && <HostNames key={`hosts-${settings.app}${settings.updatedAt ?? ""}`} app={settings.app} hosts={settings.hosts} seen={seenHosts} onStatus={setStatus} />}
+
       {status && (
         <p role="status" className={`rounded-lg border px-3 py-2 text-sm ${status.tone === "error" ? "border-sev-critical text-sev-critical" : status.tone === "ok" ? "border-line bg-panel-2" : "border-line text-muted"}`}>
           {status.text}
@@ -204,5 +207,106 @@ function FlowsAndAlerts({
         )}
       </div>
     </>
+  );
+}
+
+interface HostRow {
+  id: number;
+  match: string;
+  name: string;
+  owner: Owner | "";
+}
+
+/** Owners a host can be given; leaving it unset lets the classifier decide. */
+const HOST_OWNERS = OWNERS.filter((o) => o !== "unknown");
+
+function HostNames({
+  app,
+  hosts,
+  seen,
+  onStatus,
+}: {
+  app: string;
+  hosts: HostName[];
+  seen: string[];
+  onStatus: (s: { tone: "ok" | "error" | "info"; text: string } | null) => void;
+}) {
+  const router = useRouter();
+  const [nextId, setNextId] = useState(hosts.length + 1);
+  const [rows, setRows] = useState<HostRow[]>(() =>
+    hosts.length ? hosts.map((h, i) => ({ id: i, match: h.match, name: h.name, owner: h.owner ?? "" })) : [{ id: 0, match: "", name: "", owner: "" }],
+  );
+  const [busy, setBusy] = useState(false);
+  const named = new Set(rows.map((r) => r.match.trim().toLowerCase()));
+  const unnamed = seen.filter((h) => !named.has(h));
+
+  const update = (id: number, patch: Partial<HostRow>) => setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const add = (match = "") => {
+    setRows((rs) => [...rs.filter((r) => r.match || r.name), { id: nextId, match, name: "", owner: "" }]);
+    setNextId((n) => n + 1);
+  };
+  const save = async () => {
+    setBusy(true);
+    onStatus(null);
+    const out = await saveAppSettings({
+      data: { app, hosts: rows.map((r) => ({ match: r.match, name: r.name, ...(r.owner ? { owner: r.owner } : {}) })) },
+    }).catch((e: Error) => ({ ok: false as const, error: e.message }));
+    setBusy(false);
+    if (!out.ok) return onStatus({ tone: "error", text: out.error });
+    onStatus({ tone: "ok", text: "Saved. Names show straight away; owners apply to new errors within about a minute, and to existing issues now." });
+    await router.invalidate();
+  };
+  const box = "rounded-md border border-line bg-panel px-2 py-1.5 text-sm";
+  return (
+    <Card title="Host names" subtitle="Give the servers your app calls a name people recognise, and say who looks after each one.">
+      <div className="space-y-3">
+        {rows.map((r) => (
+          <div key={r.id} className="grid gap-2 rounded-lg border border-line p-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto_auto] sm:items-end sm:border-0 sm:p-0">
+            <label className="min-w-0 text-xs text-muted">
+              Host, or host and path
+              <input value={r.match} onChange={(e) => update(r.id, { match: e.target.value })} list="seen-hosts" placeholder="api.example.com/payments" className={`mt-1 w-full font-mono text-xs text-ink ${box}`} />
+            </label>
+            <label className="min-w-0 text-xs text-muted">
+              Name
+              <input value={r.name} onChange={(e) => update(r.id, { name: e.target.value })} placeholder="Balance service" maxLength={60} className={`mt-1 w-full text-ink ${box}`} />
+            </label>
+            <label className="text-xs text-muted">
+              Looked after by
+              <select value={r.owner} onChange={(e) => update(r.id, { owner: e.target.value as Owner | "" })} className={`mt-1 w-full text-ink ${box}`}>
+                <option value="">Work it out</option>
+                {HOST_OWNERS.map((o) => (
+                  <option key={o} value={o}>{OWNER_INFO[o].name}</option>
+                ))}
+              </select>
+            </label>
+            <button type="button" onClick={() => setRows((rs) => rs.filter((x) => x.id !== r.id))} aria-label={`Remove ${r.match || "this host"}`} className="justify-self-start rounded-md border border-line px-2.5 py-1.5 text-sm hover:bg-panel-2">
+              Remove
+            </button>
+          </div>
+        ))}
+        <datalist id="seen-hosts">
+          {unnamed.map((h) => <option key={h} value={h} />)}
+        </datalist>
+        {unnamed.length > 0 && (
+          <div className="text-xs text-muted">
+            <p>Called in the last 30 days and not named yet:</p>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {unnamed.slice(0, 8).map((h) => (
+                <button key={h} type="button" onClick={() => add(h)} className="max-w-full truncate rounded-md border border-line px-2 py-0.5 font-mono hover:bg-panel-2" title={`Name ${h}`}>
+                  + {h}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <p className="text-xs text-muted">
+          A path names part of a host: api.example.com/payments covers /payments/… only; the longest match wins. The owner decides who server errors from that host are passed to.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => add()} className="rounded-md border border-line px-3 py-1.5 text-sm hover:bg-panel-2">Add a host</button>
+          <button type="button" onClick={() => void save()} disabled={busy} className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40">Save host names</button>
+        </div>
+      </div>
+    </Card>
   );
 }

@@ -77,7 +77,7 @@ export function DataTable({ columns, rows }: { columns: string[]; rows: (string 
 }
 
 /** Horizontal share bars — used for small categorical breakdowns where a full chart is overkill. */
-export function ShareBars({ rows, total }: { rows: { key: string; value: number }[]; total?: number }) {
+export function ShareBars({ rows, total }: { rows: { key: string; label?: string; value: number }[]; total?: number }) {
   const sum = total ?? rows.reduce((a, r) => a + r.value, 0);
   if (!rows.length) return <p className="text-xs text-muted">No data.</p>;
   return (
@@ -87,7 +87,7 @@ export function ShareBars({ rows, total }: { rows: { key: string; value: number 
         return (
           <li key={r.key}>
             <div className="flex justify-between gap-2 text-xs">
-              <span className="truncate">{r.key}</span>
+              <span className="truncate" title={r.label ? r.key : undefined}>{r.label ?? r.key}</span>
               <span className="tabular shrink-0 text-muted">
                 {r.value.toLocaleString()} · {Math.round(share * 100)}%
               </span>
