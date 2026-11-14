@@ -227,24 +227,24 @@ function Overview() {
         </div>
       )}
 
-      {!flow && summary.incidents.length > 0 && (
+      {!flow && summary.incidents.some((inc) => inc.active) && (
         <Card title="Incidents" subtitle={`Issues that failed together for the same reason in ${range.label}, folded into one problem.`}>
           <ul className="space-y-3">
-            {summary.incidents.map((inc) => (
+            {summary.incidents.filter((inc) => inc.active).map((inc) => (
               <li key={inc.key} className="rounded-lg border border-line p-3">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="font-medium">{inc.title}</span>
                   <span className="text-xs text-muted">
-                    {inc.errors.toLocaleString()} error{inc.errors === 1 ? "" : "s"} · {inc.issues.length} issue{inc.issues.length === 1 ? "" : "s"} · {inc.users || "—"} user{inc.users === 1 ? "" : "s"}
+                    {plural(inc.errors, "error")} · {plural(inc.issues.length, "issue")} · {inc.users ? plural(inc.users, "user") : "users —"} · happened {plural(inc.episodes, "time")}
                   </span>
                 </div>
                 <ul className="mt-2 space-y-1 text-sm">
                   {inc.issues.map((i) => (
                     <li key={i.fingerprint} className="flex items-baseline justify-between gap-3">
-                      <Link to="/issues/$fingerprint" params={{ fingerprint: i.fingerprint }} search={issueSearch} className="truncate text-muted hover:text-accent">
+                      <Link to="/issues/$fingerprint" params={{ fingerprint: i.fingerprint }} search={issueSearch} className="block min-w-0 truncate text-muted hover:text-accent">
                         {i.title}
                       </Link>
-                      <span className="shrink-0 text-xs text-muted">{i.errors}</span>
+                      <span className="shrink-0 text-xs text-muted">{i.errors.toLocaleString()}</span>
                     </li>
                   ))}
                 </ul>
@@ -335,6 +335,8 @@ function healthTone(rate: number | null) {
   if (rate === null) return "";
   return rate < 0.98 ? "text-sev-critical" : rate < 0.995 ? "text-sev-high" : "";
 }
+
+const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
 
 const WHAT_YOU_WILL_SEE: { title: string; when: string; detail: string }[] = [
   { title: "A written summary", when: "after the first error", detail: "How many errors in the last 24 hours, the worst part of the app, the top issue and the release that's struggling, in plain sentences." },

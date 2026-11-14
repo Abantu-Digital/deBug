@@ -5,12 +5,12 @@ import { cachedSettings, effectiveRetention } from "./admin";
 import { sendAlerts } from "./alerts";
 import { countryOf } from "./country";
 import { classify } from "./classify";
-import { assignIncidents, type BatchError } from "./incidents";
+import { assignIncidents, incidentIssueKey, type BatchError } from "./incidents";
 import { culpritOf, fingerprint, titleOf } from "./fingerprint";
 
 export * from "./fingerprint";
 export { classify, issueCauses, withIssueCauses, type ClassifyOptions, type IssueFacts } from "./classify";
-export { incidentKey, parseIncidentKey, INCIDENT_WINDOW_MS, type IncidentKey } from "./incidents";
+export { incidentKey, incidentIssueKey, isRequestCategory, parseIncidentIssueKey, parseIncidentKey, type IncidentKey } from "./incidents";
 export { handleAdmin, effectiveRetention, cachedSettings, type AdminOptions } from "./admin";
 export { countryOf } from "./country";
 export { sendAlerts, SLACK_WEBHOOK } from "./alerts";
@@ -190,14 +190,20 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
     stored.push(se ?? storedEvent(day, event, fp, labels));
   }
 
-  // Incidents: one per cause, category and OS. Counted per error, per issue in it, and per user.
+  // Incidents: one per cause, category and OS. Counted per error, per issue in it, per user, and
+  // once per batch as an episode (how many separate times it happened, roughly).
   assignIncidents(batchErrors, context.os.name);
-  for (const b of batchErrors) {
-    if (!b.incident) continue;
-    b.se.incident = b.incident;
-    rollups.push({ app, day: b.se.day, dimension: "incident", key: b.incident, kind: "error", by: 1 });
-    rollups.push({ app, day: b.se.day, dimension: "incidentIssue", key: `${b.incident}|${b.fp}`, kind: "error", by: 1 });
-    scopes.add(`incident:${b.incident}`);
+  const episodes = new Set<string>();
+  for (const err of batchErrors) {
+    if (!err.incident) continue;
+    err.se.incident = err.incident;
+    rollups.push({ app, day: err.se.day, dimension: "incident", key: err.incident, kind: "error", by: 1 });
+    rollups.push({ app, day: err.se.day, dimension: "incidentIssue", key: incidentIssueKey(err.incident, err.fp), kind: "error", by: 1 });
+    if (!episodes.has(err.incident)) {
+      episodes.add(err.incident);
+      rollups.push({ app, day: err.se.day, dimension: "incident", key: err.incident, kind: "event", by: 1 });
+    }
+    scopes.add(`incident:${err.incident}`);
   }
 
   await opts.store.registerApp(app);

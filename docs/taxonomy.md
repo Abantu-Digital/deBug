@@ -126,14 +126,20 @@ worked out when the dashboard reads the issue, so they're always current.
 
 Issues that fail together for the same reason are one problem. An incident is keyed by a
 grouping cause, the category and the OS, e.g. `resumed_from_background|network.never_sent|ios`.
-The key never includes a fingerprint, so it stays the same across builds and releases.
+The key never includes a fingerprint or a session, so it stays the same across builds and
+releases: an incident is a recurring problem across users and days, not one episode. Each
+incident also counts its **episodes**, the separate times it happened (one per batch of events
+the SDK sent), and its users.
 
 - **Grouping causes:** `resumed_from_background`, then `burst`. A burst only makes an incident for
   request categories (`network.*`, `server`, `auth`, `client_request`).
-- **The first failure of a burst:** it can't carry `burst` itself, so at ingest an error with no
-  incident joins one of the same category that starts within 5 s after it, in the same batch.
+- **The first failure of a burst:** it can't carry `burst` itself, so at ingest a failed request
+  with no incident joins a burst incident of the same category that starts within 5 s after it,
+  in the same batch. Never a resume incident: an error before the app reopened didn't fail on
+  resume.
 - **Issues stay the unit** for resolving and regressions. Incidents sit above them: the overview
-  lists each incident with its issues, and each error stores its incident key.
+  lists each incident with its issues, each issue page names its incident, and each error stores
+  its incident key. An incident whose issues are all resolved or ignored leaves the overview.
 
 ## Worked example: Cell C staging, 14 Nov
 

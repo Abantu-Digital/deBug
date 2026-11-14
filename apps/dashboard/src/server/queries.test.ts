@@ -295,10 +295,28 @@ describe("incidents", () => {
     const s = (await buildSummary(store, "cell-c", DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last)))!;
 
     expect(s.incidents).toHaveLength(1);
-    expect(s.incidents[0]).toMatchObject({ key: "resumed_from_background|network.never_sent|ios", title: "Requests failed on app resume (iOS)", errors: 6, users: 1 });
+    expect(s.incidents[0]).toMatchObject({
+      key: "resumed_from_background|network.never_sent|ios",
+      title: "Requests failed on app resume (iOS)",
+      errors: 6,
+      users: 1,
+      episodes: 1,
+      firstDay: "2026-11-14",
+      lastDay: "2026-11-14",
+      active: true,
+    });
     expect(s.incidents[0]!.issues).toHaveLength(4);
     expect(s.incidents[0]!.issues.map((i) => i.errors).sort()).toEqual([1, 1, 2, 2]);
     expect(s.issues.every((i) => i.incident === s.incidents[0]!.key)).toBe(true);
+
+    // The issue page links back up to it.
+    const d = (await buildIssueDetail(store, "cell-c", s.issues[0]!.fingerprint, DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last)))!;
+    expect(d.issue.incidentTitle).toBe("Requests failed on app resume (iOS)");
+
+    // Once every issue in it is resolved, it's no longer active, and the 24h view counts the same way.
+    for (const i of s.issues) await store.setIssueStatus("cell-c", i.fingerprint, { status: "resolved", resolvedIn: "10.1.30" });
+    const after = (await buildSummary(store, "cell-c", DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last), { range: { range: "24h" } }))!;
+    expect(after.incidents[0]).toMatchObject({ errors: 6, active: false });
   });
 
   it("titles incidents in plain words", async () => {

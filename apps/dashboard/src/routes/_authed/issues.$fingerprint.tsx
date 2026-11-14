@@ -42,6 +42,14 @@ function IssuePage() {
         <h1 className="mt-2 break-words text-xl font-semibold tracking-tight sm:text-2xl">{issue.title}</h1>
         {issue.culprit && <p className="mt-1 font-mono text-sm text-muted">{issue.culprit}</p>}
         <IssueLabels issue={issue} />
+        {issue.incidentTitle && (
+          <p className="mt-2 text-sm text-muted">
+            Part of an incident:{" "}
+            <Link to="/" search={{ app: d.app }} className="font-medium text-ink hover:text-accent">
+              {issue.incidentTitle}
+            </Link>
+          </p>
+        )}
       </div>
 
       <IssueActions app={d.app} issue={issue} canChange={d.canChangeStatus} links={d.links} />
