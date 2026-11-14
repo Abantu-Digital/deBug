@@ -146,6 +146,17 @@ function gather(e: ErrorEvent, crumbs: Breadcrumb[], repeatedFailure: boolean): 
   };
 }
 
+/** Evidence for when there's no error event to measure (e.g. it has expired). */
+export const NO_EVIDENCE: Evidence = {
+  workedSinceForeground: false,
+  inBackground: false,
+  failedBefore: 0,
+  failedHosts: [],
+  repeatedFailure: false,
+  slowRecent: 0,
+  sameHostWorkedBefore: false,
+};
+
 /** The evidence behind an error's labels. */
 export function evidenceOf(e: ErrorEvent): Evidence {
   const { crumbs, repeatedFailure } = earlierCrumbs(e);

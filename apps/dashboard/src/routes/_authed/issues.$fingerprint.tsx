@@ -1,8 +1,9 @@
 import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { HourlyChart, TrendChart } from "~/components/charts";
 import { RangePicker, rangeSearch, RetentionNote, type RangeSearch } from "~/components/range-picker";
 import { Card, DataTable, IssueLabels, SeverityBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
+import { copyText } from "~/lib/copy";
 import { getIssueDetail, updateIssueStatus } from "~/server/fns";
 
 export const Route = createFileRoute("/_authed/issues/$fingerprint")({
@@ -66,21 +67,21 @@ function IssuePage() {
           <Card title="What happened" subtitle="In plain words, for support." right={d.ticketMarkdown ? <CopyButton text={d.ticketMarkdown} /> : undefined}>
             <p className="text-sm leading-relaxed">{issue.explanation.summary}</p>
           </Card>
-          <Card title="For developers" subtitle={issue.explanation.technical.headline}>
+          <Card title="For developers" subtitle={plain(issue.explanation.technical.headline)}>
             <ul className="list-disc space-y-1 pl-5 text-sm">
               {issue.explanation.technical.evidence.map((line, i) => (
-                <li key={i}>{line}</li>
+                <li key={i} className="break-words">{plain(line)}</li>
               ))}
             </ul>
             {issue.explanation.technical.where && (
               <p className="mt-3 text-sm">
                 <span className="font-medium">Where: </span>
-                <span className="break-words font-mono text-xs">{issue.explanation.technical.where.replaceAll("`", "")}</span>
+                <span className="break-words font-mono text-xs">{plain(issue.explanation.technical.where)}</span>
               </p>
             )}
             <p className="mt-3 text-sm">
               <span className="font-medium">Suggested fix: </span>
-              {issue.explanation.technical.fix.replaceAll("`", "")}
+              {plain(issue.explanation.technical.fix)}
             </p>
           </Card>
         </div>
@@ -247,32 +248,11 @@ function IssueActions({
   );
 }
 
-/** Copy text: the Clipboard API, or a hidden textarea where that's blocked (embedded browsers, plain http). */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    const area = document.createElement("textarea");
-    area.value = text;
-    area.setAttribute("readonly", "");
-    area.style.position = "fixed";
-    area.style.opacity = "0";
-    document.body.appendChild(area);
-    area.select();
-    try {
-      return document.execCommand("copy");
-    } catch {
-      return false;
-    } finally {
-      area.remove();
-    }
-  }
-}
-
 /** Copies the explanation as Markdown, for a Jira or Linear ticket made by hand. */
 function CopyButton({ text }: { text: string }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
   return (
     <button
       type="button"
@@ -280,7 +260,8 @@ function CopyButton({ text }: { text: string }) {
       onClick={() => {
         void copyText(text).then((ok) => {
           setState(ok ? "copied" : "failed");
-          setTimeout(() => setState("idle"), 2500);
+          clearTimeout(timer.current);
+          timer.current = setTimeout(() => setState("idle"), 2500);
         });
       }}
     >
@@ -288,3 +269,6 @@ function CopyButton({ text }: { text: string }) {
     </button>
   );
 }
+
+/** Explanations mark code with backticks for Markdown; on the page they read as plain text. */
+const plain = (s: string) => s.replaceAll("`", "");

@@ -17,7 +17,7 @@ import {
   type SeverityThresholds,
   type StoredEvent,
 } from "@debugkit/schema";
-import { explain, explanationMarkdown, type Explanation } from "./explain";
+import { explain, explanationLines, explanationMarkdown, type Explanation } from "./explain";
 import { daysBetween, resolveRange, weekOf, type DateRange } from "./range";
 
 /**
@@ -366,7 +366,7 @@ export async function buildSummary(
   await Promise.all(active.slice(0, 10).map(async (i) => (i.users = await countUsersSafe(store, app, `issue:${i.fingerprint}`, usersSince))));
   const lastEvents = new Map(issues.map((i) => [i.fingerprint, i.lastEvent]));
   for (const row of issueRows)
-    if (row.labels) row.explanation = explain({ ...row, labels: row.labels, lastEvent: lastEvents.get(row.fingerprint), rangeLabel: range.label, now });
+    if (row.labels) row.explanation = explain({ issue: row, labels: row.labels, lastEvent: lastEvents.get(row.fingerprint), users: row.users, rangeLabel: range.label, now });
 
   // Incident counts follow the issue table: for 24h, each issue's hourly count caps its daily rollup.
   const incidents = await buildIncidents(incidentRows, incidentIssueRows, issueRows, hourly, (key) => countUsersSafe(store, app, `incident:${key}`, usersSince));
@@ -784,10 +784,23 @@ export async function buildIssueDetail(
   const row = toIssueRow(issue, count24h, countRange, thresholds, null, criticalFlows);
   // Recent occurrences say whether it's one device model.
   if (row.labels) row.labels = withIssueCauses(row.labels, { deviceModels: events.map((e) => e.context.device.model) });
-  const hints = hintsFor(issue, breakdowns, events, !!row.labels);
+  // The explanation covers request failures; for other categories the hints still add something.
+  const hints = hintsFor(issue, breakdowns, events, !!row.labels && isRequestCategory(row.labels.category));
+  // The same occurrence the labels came from, so the evidence can't contradict them.
+  const errorEvents = events.filter((e) => e.event.type === "error");
   row.explanation = row.labels
-    ? explain({ ...row, labels: row.labels, lastEvent: events[0] ?? issue.lastEvent, users: affectedUsers, rangeLabel: range.label, now })
+    ? explain({
+        issue: row,
+        labels: row.labels,
+        lastEvent: issue.lastEvent,
+        users: affectedUsers,
+        platforms: [...new Set(errorEvents.map((e) => e.context.os.name))],
+        durations: errorEvents.flatMap((e) => (e.event.type === "error" && e.event.request?.durationMs !== undefined ? [e.event.request.durationMs] : [])),
+        rangeLabel: range.label,
+        now,
+      })
     : undefined;
+  const link = issueUrl(opts.trackers?.dashboardUrl, app, fingerprint);
   const detail = {
     app,
     range,
@@ -808,10 +821,9 @@ export async function buildIssueDetail(
       userId: e.user?.id,
     })),
     hints,
-    ticketMarkdown: undefined as string | undefined,
+    ticketMarkdown: row.explanation ? explanationMarkdown(row.title, row.explanation, link) : undefined,
   } satisfies IssueDetail;
   detail.links = trackerLinks(detail, opts.trackers ?? {});
-  if (row.explanation) detail.ticketMarkdown = explanationMarkdown(row.title, row.explanation, issueUrl(opts.trackers?.dashboardUrl, app, fingerprint));
   return detail;
 }
 
@@ -826,10 +838,10 @@ export interface Trackers {
   dashboardUrl?: string;
 }
 
-/** The issue as a ticket: what, where, how often, what to look at. Kept short enough for a URL. */
 const issueUrl = (dashboardUrl: string | undefined, app: string, fp: string) =>
   dashboardUrl ? `${dashboardUrl.replace(/\/+$/, "")}/issues/${fp}?app=${encodeURIComponent(app)}` : undefined;
 
+/** The issue as a ticket: what, where, how often, what to look at. Kept short enough for a URL. */
 export function issueStory(d: Omit<IssueDetail, "links">, dashboardUrl?: string): { title: string; body: string } {
   const i = d.issue;
   const x = i.explanation;
@@ -838,7 +850,9 @@ export function issueStory(d: Omit<IssueDetail, "links">, dashboardUrl?: string)
   const body = [
     `**${i.title}**`,
     i.culprit ? `At \`${i.culprit}\`${i.flow ? ` in flow \`${i.flow}\`` : ""}.` : i.flow ? `In flow \`${i.flow}\`.` : "",
-    ...(x ? ["", x.summary, "", `**${x.technical.headline}**`, ...x.technical.evidence.map((l) => `- ${l}`), `**Suggested fix:** ${x.technical.fix}`] : []),
+    // The link first, so the body's length limit can't cut it off.
+    ...(dashboardUrl ? ["", `deBug: ${issueUrl(dashboardUrl, d.app, i.fingerprint)}`] : []),
+    ...(x ? ["", ...explanationLines(x)] : []),
     "",
     `- ${i.countRange.toLocaleString()} occurrences in ${d.range.label}, ${i.count24h} in the last 24h (severity: ${i.severity})`,
     `- ${d.affectedUsers.toLocaleString()} users affected`,
@@ -846,8 +860,7 @@ export function issueStory(d: Omit<IssueDetail, "links">, dashboardUrl?: string)
     `- Versions: ${top(d.breakdowns.appVersion)}`,
     `- OS: ${top(d.breakdowns.os)}; devices: ${top(d.breakdowns.deviceModel)}`,
     ...(frames.length ? ["", "Stack (in-app frames):", ...frames.map((f) => `- \`${f.fn ?? "?"}\` ${f.file ?? ""}:${f.line ?? ""}`)] : []),
-    ...(d.hints.length ? ["", "What to look at:", ...d.hints.slice(0, 3).map((h) => `- ${h.title}: ${h.detail}`)] : []),
-    ...(dashboardUrl ? ["", `deBug: ${issueUrl(dashboardUrl, d.app, i.fingerprint)}`] : []),
+    ...(d.hints.length ? ["", x ? "Also worth checking:" : "What to look at:", ...d.hints.slice(0, 3).map((h) => `- ${h.title}: ${h.detail}`)] : []),
   ]
     .filter((l, n, all) => !(l === "" && all[n - 1] === ""))
     .join("\n");

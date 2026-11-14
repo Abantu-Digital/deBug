@@ -1,14 +1,16 @@
-import { cleanFnName, CATEGORY_INFO, CAUSE_INFO, IMPACT_INFO, OWNER_INFO, type Category, type Classification, type StackFrame, type StoredEvent } from "@debugkit/schema";
-import { evidenceOf, type Evidence } from "@debugkit/ingest";
+import { cleanFnName, CATEGORY_INFO, CAUSE_INFO, IMPACT_INFO, OWNER_INFO, type Category, type Cause, type Classification, type StackFrame, type StoredEvent } from "@debugkit/schema";
+import { evidenceOf, NO_EVIDENCE, type Evidence } from "@debugkit/ingest";
 
 /**
  * Two explanations for every issue, built from its labels, the evidence behind them and the
- * stack. No LLM: one template per category, adjusted by the causes. See docs/taxonomy.md.
+ * stack. No LLM: one template per category, and a line per cause pattern. See docs/taxonomy.md.
  *
  * - summary: for support. What the user saw, where, how many people, whether it's still
  *   happening, and who should look at it. No jargon.
- * - technical: for a developer. The category and owner, the evidence, where in the code, what
+ * - technical: for a developer. The category and owner, the evidence, where in the code and what
  *   started it, and a suggested fix.
+ *
+ * Text may contain `code` in backticks: Markdown keeps it, the page strips it.
  */
 export interface Explanation {
   summary: string;
@@ -21,134 +23,168 @@ export interface Explanation {
   };
 }
 
-export interface ExplainInput {
-  labels: Classification;
-  lastEvent?: StoredEvent;
+/** The issue facts an explanation needs. */
+export interface ExplainIssue {
   culprit?: string;
-  /** Occurrences and users, for the summary. */
   count24h: number;
   countRange: number;
-  rangeLabel: string;
-  users?: number;
   lastSeen: string;
   status: string;
   incidentTitle?: string;
+}
+
+export interface ExplainInput {
+  issue: ExplainIssue;
+  labels: Classification;
+  /** The occurrence the labels came from. */
+  lastEvent?: StoredEvent;
+  rangeLabel: string;
+  /** Distinct users affected, when counted. */
+  users?: number;
+  /** Platforms seen in recent occurrences (e.g. ["ios", "android"]), when known. */
+  platforms?: string[];
+  /** Request durations of recent occurrences, for a range ("3–49 ms"). */
+  durations?: number[];
   now?: number;
 }
 
 /** Handlers whose name says what the user did. Matched on the cleaned Hermes name. */
 const USER_ACTIONS: [RegExp, string][] = [
   [/^_?onRefresh$/, "pull to refresh"],
-  [/^_?onPress(In|Out)?$|^handlePress$/, "a tap"],
+  [/^_?onPress([A-Z]\w*)?$|^_?handlePress([A-Z]\w*)?$/, "a tap"],
   [/^_?onLongPress$/, "a long press"],
-  [/^_?onSubmit(Editing)?$|^handleSubmit$/, "submitting a form"],
+  [/^_?onSubmit(Editing)?$|^_?handleSubmit([A-Z]\w*)?$/, "submitting a form"],
   [/^_?onChangeText$/, "typing"],
   [/^_?onEndReached$/, "scrolling to the end of a list"],
-  [/^_?onScroll$/, "scrolling"],
   [/^_?onValueChange$/, "changing a setting"],
 ];
 
-/** The first app frame that is an event handler, and what the user did, e.g. `_onRefresh` → "pull to refresh". */
-export function userAction(frames: StackFrame[] | undefined): { fn: string; action?: string } | undefined {
+/** The first app frame that is a known user-action handler: `_onRefresh` → "pull to refresh". */
+export function userAction(frames: StackFrame[] | undefined): { fn: string; action: string } | undefined {
   for (const f of frames ?? []) {
     if (f.inApp === false) continue;
     const fn = cleanFnName(f.fn);
-    if (!fn) continue;
-    const known = USER_ACTIONS.find(([re]) => re.test(fn));
-    if (known) return { fn, action: known[1] };
-    if (/^_?(on|handle)[A-Z]/.test(fn)) return { fn };
+    const known = fn && USER_ACTIONS.find(([re]) => re.test(fn));
+    if (fn && known) return { fn, action: known[1] };
   }
   return undefined;
 }
 
 const seconds = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
 const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
-const osName = (os?: string) => (os === "ios" ? "iPhone" : os === "android" ? "Android" : os || "their device");
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const PLATFORM: Record<string, string> = { ios: "iPhone", android: "Android", web: "the web", macos: "Mac", windows: "Windows" };
+const platformName = (os: string) => PLATFORM[os] ?? os;
 
-/** "the getBalances request" from "POST api.x/api/balance/getBalances". */
-function requestName(url: string): string {
-  const last = url.split("?")[0]!.split("/").filter((p) => p && p !== ":id").pop();
-  return last ? `the ${last} request` : "a request";
+/** A durations range: "16 ms", or "3–49 ms" across occurrences. */
+function durationText(ds: number[]): string | undefined {
+  const xs = ds.filter((d) => Number.isFinite(d) && d >= 0);
+  if (!xs.length) return undefined;
+  const lo = Math.min(...xs);
+  const hi = Math.max(...xs);
+  if (lo === hi || hi < 1000) return lo === hi ? seconds(lo) : `${Math.round(lo)}–${Math.round(hi)} ms`;
+  return `${seconds(lo)}–${seconds(hi)}`;
 }
 
-function stillHappening(i: ExplainInput): string {
-  const now = i.now ?? Date.now();
+const VERB = /^(get|fetch|load|list|read|find|create|add|update|set|save|post|put|patch|delete|remove|check|validate|send|submit|sync)(?=[A-Z_-]|$)/;
+
+/**
+ * What a request was for, in plain words, from its path: "/api/balance/getBalances" → "balances",
+ * "/api/app-force-update" → "app force update". Undefined when the path says nothing.
+ */
+export function thingOf(url: string): string | undefined {
+  const last = url.split("?")[0]!.split("/").filter((p) => p && p !== ":id" && !/^v\d+$/.test(p)).pop();
+  if (!last || last.includes(".")) return undefined; // a bare host
+  const words = last
+    .replace(VERB, "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[-_]+/g, " ")
+    .trim()
+    .toLowerCase();
+  return words || undefined;
+}
+
+/** "Balances", "The app" — the subject of the summary. */
+function subject(e: { request?: { url: string } } | undefined): { name: string; plural: boolean } {
+  const thing = e?.request ? thingOf(e.request.url) : undefined;
+  if (!thing) return { name: e?.request ? "a request" : "the app", plural: false };
+  return { name: thing, plural: /s$/.test(thing) && !/ss$/.test(thing) };
+}
+
+function stillHappening(i: ExplainIssue, rangeLabel: string, now: number): string {
   if (i.status === "resolved") return "It's marked fixed.";
   if (i.status === "ignored") return "It's marked as ignored.";
-  const ago = now - Date.parse(i.lastSeen);
-  if (i.count24h > 0) return ago < 3_600_000 ? "It's still happening: last seen within the hour." : `It happened ${plural(i.count24h, "time")} in the last 24 hours.`;
-  return `It hasn't happened in the last 24 hours (${plural(i.countRange, "time")} in ${i.rangeLabel}).`;
+  if (i.count24h > 0) return now - Date.parse(i.lastSeen) < 3_600_000 ? "It's still happening: last seen within the hour." : `It happened ${plural(i.count24h, "time")} in the last 24 hours.`;
+  return `It hasn't happened in the last 24 hours (${plural(i.countRange, "time")} in ${rangeLabel}).`;
 }
 
 const PASS_TO: Record<string, string> = {
-  app: "the app team",
-  backend: "the backend team",
+  app: "app team",
+  backend: "backend team",
   infrastructure: "whoever runs the network and hosting",
   third_party: "whoever manages that third-party service",
-  unknown: "the app team first, to find out whose it is",
+  unknown: "app team first, to find out whose it is",
 };
 
 interface Template {
-  /** What the user saw, without the who/where/when. */
-  saw: (name: string, ev: Evidence) => string;
+  /** What the user saw: `name` is the thing that failed ("balances"), `are` its verb. */
+  saw: (name: string, are: string) => string;
   /** Why, in plain words. */
-  why: (ev: Evidence, causes: Classification["causes"]) => string;
-  /** One-line diagnosis for developers. */
-  diagnosis: (ev: Evidence) => string;
-  fix: (ev: Evidence, causes: Classification["causes"]) => string;
+  why: (ev: Evidence, causes: readonly Cause[]) => string;
+  /** One-line diagnosis for developers; `took` is the duration text, if any. */
+  diagnosis: (ev: Evidence, took: string | undefined) => string;
+  fix: (ev: Evidence, causes: readonly Cause[]) => string;
 }
 
 const TEMPLATES: Record<Category, Template> = {
   "network.offline": {
-    saw: (name) => `${cap(name)} failed`,
+    saw: (n, are) => `${cap(n)} ${are === "are" ? "weren't" : "wasn't"} available`,
     why: () => "The phone was offline.",
     diagnosis: () => "No connection when the request was made.",
     fix: () => "Check connectivity before sending (NetInfo), queue the request until the phone is back online, and show an offline state.",
   },
   "network.never_sent": {
-    saw: (name) => `${cap(name)} didn't load`,
+    saw: (n) => `${cap(n)} didn't load`,
     why: (_ev, causes) =>
       causes.includes("resumed_from_background")
-        ? "The app had just been reopened and the phone hadn't reconnected yet, so the request never left the phone. Not a server outage."
+        ? "The app had just been reopened and the phone hadn't reconnected yet. Not a server outage."
         : "The request failed on the phone before reaching the server. Not a server outage.",
-    diagnosis: (ev) => `No HTTP status after ${seconds(ev.durationMs ?? 0)}: too fast to have reached a server.`,
+    diagnosis: (_ev, took) => (took ? `No HTTP status after ${took}: too fast to have reached a server.` : "No HTTP status, and too fast to have reached a server."),
     fix: (_ev, causes) =>
       causes.includes("resumed_from_background")
         ? "Wait for the connection when the app returns to the foreground (NetInfo `isConnected` on AppState `active`) before sending, or retry idempotent requests once with a short backoff."
         : "Check connectivity before sending, and retry idempotent requests once with a short backoff.",
   },
   "network.timeout": {
-    saw: (name) => `${cap(name)} took too long and gave up`,
+    saw: (n) => `${cap(n)} took too long and gave up`,
     why: () => "The request was sent but no answer came back in time: a slow network or a slow server.",
-    diagnosis: (ev) => `Timed out${ev.durationMs ? ` after ${seconds(ev.durationMs)}` : ""} with no response.`,
+    diagnosis: (_ev, took) => `Timed out${took ? ` after ${took}` : ""} with no response.`,
     fix: () => "Check this endpoint's p95 under Response times. If the server is slow, fix it there; otherwise raise the timeout, retry idempotent requests, and show a retry state.",
   },
   "network.failed": {
-    saw: (name) => `${cap(name)} couldn't connect`,
+    saw: (n) => `${cap(n)} couldn't connect`,
     why: (ev) => (ev.failedHosts.length > 1 ? "Several servers were unreachable at once, which points at the network." : "The phone couldn't reach the server."),
-    diagnosis: (ev) => `No HTTP status after ${seconds(ev.durationMs ?? 0)}: DNS, TLS or a refused connection.`,
+    diagnosis: (_ev, took) => `No HTTP status${took ? ` after ${took}` : ""}: DNS, TLS or a refused connection.`,
     fix: (ev) =>
       ev.failedHosts.length > 1
         ? "Several hosts failed together: check the network path (VPN, proxy, carrier) before the servers."
         : "Check the host resolves and its certificate is valid from the phone's network, and retry once with backoff.",
   },
   auth: {
-    saw: (name) => `${cap(name)} was refused`,
+    saw: (n, are) => `${cap(n)} ${are === "are" ? "were" : "was"} refused`,
     why: (_ev, causes) => (causes.includes("auth_expired") ? "The user's sign-in had expired." : "The server didn't accept the user's sign-in for this."),
     diagnosis: (ev) => `HTTP ${ev.status ?? "401/403"}.${ev.sameHostWorkedBefore ? " An earlier request to the same server succeeded, so the session ran out." : ""}`,
     fix: (_ev, causes) =>
-      causes.includes("auth_expired")
-        ? "Refresh the token before it expires, or on a 401 refresh it and retry the request once."
-        : "Check the token is sent with this request and is allowed for this endpoint.",
+      causes.includes("auth_expired") ? "Refresh the token before it expires, or on a 401 refresh it and retry the request once." : "Check the token is sent with this request and is allowed for this endpoint.",
   },
   server: {
-    saw: (name) => `${cap(name)} failed with a server error`,
+    saw: (n) => `${cap(n)} failed with a server error`,
     why: () => "The server received the request and failed. The problem is on the server side.",
     diagnosis: (ev) => `HTTP ${ev.status ?? "5xx"} from the server.`,
     fix: () => "Check the backend logs for this endpoint at the times above. In the app, show a friendly error and let the user retry.",
   },
   client_request: {
-    saw: (name) => `${cap(name)} was rejected`,
+    saw: (n, are) => `${cap(n)} ${are === "are" ? "were" : "was"} rejected`,
     why: () => "The server refused what the app sent as invalid.",
     diagnosis: (ev) => `HTTP ${ev.status ?? "4xx"}: the request didn't match what the API expects.`,
     fix: () => "Compare the request the app sends (fields, types, headers) with what the API expects, and validate input before sending.",
@@ -191,60 +227,72 @@ const TEMPLATES: Record<Category, Template> = {
   },
 };
 
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+/** What each cause adds: a plain sentence for support, a step for the fix. */
+const CAUSE_LINES: Partial<Record<Cause, { summary?: (x: { model?: string; firstVersion?: string }) => string; fix?: string }>> = {
+  burst: { summary: () => "Several requests failed at the same moment." },
+  slow_network: { summary: () => "The connection was slow.", fix: "Test on a throttled connection." },
+  new_in_release: { summary: () => "It started in the latest version of the app.", fix: "Look at what changed in the latest release around the culprit." },
+  regressed: { summary: () => "It was marked fixed, but it has come back.", fix: "The earlier fix didn't hold: compare with the release it was resolved in." },
+  single_device: { summary: (x) => `It's only been seen on one phone model${x.model ? ` (${x.model})` : ""}.`, fix: "Reproduce on that model first." },
+};
 
-export function explain(i: ExplainInput): Explanation {
-  const ev0 = i.lastEvent?.event;
+export function explain(input: ExplainInput): Explanation {
+  const { issue, labels, rangeLabel } = input;
+  const now = input.now ?? Date.now();
+  const ev0 = input.lastEvent?.event;
   const e = ev0?.type === "error" ? ev0 : undefined;
-  const ev: Evidence = e
-    ? evidenceOf(e)
-    : { workedSinceForeground: false, inBackground: false, failedBefore: 0, failedHosts: [], repeatedFailure: false, slowRecent: 0, sameHostWorkedBefore: false };
-  const { labels } = i;
+  const ev = e ? evidenceOf(e) : NO_EVIDENCE;
   const t = TEMPLATES[labels.category] ?? TEMPLATES.other;
-  const name = e?.request ? requestName(e.request.url) : "it";
-  const os = i.lastEvent?.context.os.name;
+  const causes = labels.causes;
+  const model = input.lastEvent?.context.device.model;
 
-  // Summary: what, who, where, when, why, still happening, who to pass it to.
-  const who = i.users ? ` for ${plural(i.users, "user")}` : "";
-  const where = ` on ${osName(os)}`;
-  const when = labels.causes.includes("resumed_from_background") ? " right after reopening the app" : "";
+  // Summary: what, who, where, when, why, causes, still happening, who to pass it to.
+  const s = subject(e);
+  const who = input.users ? ` for ${plural(input.users, "user")}` : "";
+  // Name the platform only when it's known for all of them: recent occurrences, or a single user.
+  const platforms = input.platforms?.length ? input.platforms : input.users === 1 && input.lastEvent ? [input.lastEvent.context.os.name] : [];
+  const where = platforms.length ? ` on ${platforms.map(platformName).join(" and ")}` : "";
+  const when = causes.includes("resumed_from_background") ? " right after reopening the app" : "";
   const action = userAction(e?.error.frames);
-  const doing = action?.action ? ` (after ${action.action})` : "";
+  const doing = action ? ` (after ${action.action})` : "";
+  const causeSentences = causes.flatMap((c) => CAUSE_LINES[c]?.summary?.({ model }) ?? []);
   const summary = [
-    `${t.saw(name, ev)}${who}${where}${when}${doing}.`,
-    t.why(ev, labels.causes),
-    stillHappening(i),
+    `${t.saw(s.name, s.plural ? "are" : "is")}${who}${where}${when}${doing}.`,
+    t.why(ev, causes),
+    ...causeSentences,
+    stillHappening(issue, rangeLabel, now),
     `Pass to: ${PASS_TO[labels.owner] ?? PASS_TO.unknown}.`,
   ].join(" ");
 
   // Technical: category and owner, evidence, where, fix.
-  const evidence = [t.diagnosis(ev)];
-  if (labels.causes.includes("resumed_from_background") && ev.msSinceForeground !== undefined)
+  const took = durationText(input.durations?.length ? input.durations : ev.durationMs !== undefined ? [ev.durationMs] : []);
+  const evidence = [t.diagnosis(ev, took)];
+  if (e?.request) evidence.push(`Request: \`${e.request.method.toUpperCase()} ${e.request.url}\`.`);
+  if (causes.includes("resumed_from_background") && ev.msSinceForeground !== undefined)
     evidence.push(`The app came to the foreground ${seconds(ev.msSinceForeground)} before; no request has succeeded since.`);
   if (ev.failedBefore > 0) evidence.push(`${plural(ev.failedBefore, "other request")} failed in the 5 s before${ev.failedHosts.length > 1 ? `, across ${ev.failedHosts.length} hosts` : ""}.`);
   else if (ev.repeatedFailure) evidence.push("The same request had already failed just before.");
-  if (labels.causes.includes("slow_network")) evidence.push(`${ev.slowRecent} of the last 5 requests were slow.`);
+  if (causes.includes("slow_network")) evidence.push(`${ev.slowRecent} of the last 5 requests were slow.`);
   if (ev.inBackground) evidence.push("The app was in the background, so the user probably didn't see it.");
-  for (const c of labels.causes) if (["new_in_release", "regressed", "single_device"].includes(c)) evidence.push(`${CAUSE_INFO[c].name}: ${CAUSE_INFO[c].description}`);
-  if (i.incidentTitle) evidence.push(`Part of the incident "${i.incidentTitle}".`);
+  for (const c of causes) if (CAUSE_LINES[c]?.fix) evidence.push(`${CAUSE_INFO[c].name}: ${CAUSE_INFO[c].description}`);
+  if (issue.incidentTitle) evidence.push(`Part of the incident "${issue.incidentTitle}".`);
 
-  const whereParts = [i.culprit ? `\`${i.culprit}\`` : undefined, action ? `started by \`${action.fn}\`${action.action ? ` (${action.action})` : ""}` : undefined].filter(Boolean);
+  const whereParts = [issue.culprit ? `\`${issue.culprit}\`` : undefined, action ? `started by \`${action.fn}\` (${action.action})` : undefined].filter(Boolean);
+  const fixSteps = [t.fix(ev, causes), ...causes.flatMap((c) => CAUSE_LINES[c]?.fix ?? [])];
   return {
     summary,
     technical: {
       headline: `${CATEGORY_INFO[labels.category]?.name ?? labels.category} · owner: ${OWNER_INFO[labels.owner]?.name ?? labels.owner} · impact: ${IMPACT_INFO[labels.impact]?.name ?? labels.impact}`,
       evidence,
       where: whereParts.length ? whereParts.join(", ") : undefined,
-      fix: t.fix(ev, labels.causes),
+      fix: fixSteps.join(" "),
     },
   };
 }
 
-/** The explanation as Markdown, for pasting into a Jira or Linear ticket by hand. */
-export function explanationMarkdown(title: string, x: Explanation, link?: string): string {
+/** The explanation as Markdown lines, without a title: for tickets and prefilled links. */
+export function explanationLines(x: Explanation): string[] {
   return [
-    `## ${title}`,
-    "",
     "### What happened",
     x.summary,
     "",
@@ -255,6 +303,10 @@ export function explanationMarkdown(title: string, x: Explanation, link?: string
     ...(x.technical.where ? ["", `**Where:** ${x.technical.where}`] : []),
     "",
     `**Suggested fix:** ${x.technical.fix}`,
-    ...(link ? ["", `deBug: ${link}`] : []),
-  ].join("\n");
+  ];
+}
+
+/** The explanation as Markdown, for pasting into a Jira or Linear ticket by hand. */
+export function explanationMarkdown(title: string, x: Explanation, link?: string): string {
+  return [`## ${title}`, ...(link ? ["", `deBug: ${link}`] : []), "", ...explanationLines(x)].join("\n");
 }

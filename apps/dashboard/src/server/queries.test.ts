@@ -335,7 +335,7 @@ describe("explanations", () => {
     await ingest(JSON.stringify(env), "k", { store, keys: { k: "cell-c" }, now: () => new Date(last) });
     const s = (await buildSummary(store, "cell-c", DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last)))!;
     for (const i of s.issues) {
-      expect(i.explanation?.summary).toMatch(/right after reopening the app.*Not a server outage.*Pass to: the app team\.$/);
+      expect(i.explanation?.summary).toMatch(/right after reopening the app.*Not a server outage.*Pass to: app team\.$/);
       expect(i.explanation?.technical.fix).toMatch(/NetInfo/);
     }
     const d = (await buildIssueDetail(store, "cell-c", s.issues[0]!.fingerprint, DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last), { trackers: { dashboardUrl: "https://debug.example" } }))!;
