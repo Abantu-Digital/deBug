@@ -35,7 +35,7 @@ These are the facts the rules below are built on:
   - error `name`: `NetworkError` (no status) or `HttpError` (has a status);
   - `request`: method, path, status, duration;
   - `tags.source`: `network`;
-  - the message ends in `timed out` when the request timed out;
+  - the message is `<METHOD> <url> timed out` (optionally `: <cause>`) when the request timed out;
   - aborted requests are never reported.
 - **Which statuses count as failures:** by default only 5xx. A 4xx becomes an error only when the
   app sets `network.isFailure`, and Node's `http-server` capture only reports 5xx. So `auth` and
@@ -53,6 +53,10 @@ These are the facts the rules below are built on:
   `App went to the background`.
 - **Slow requests:** network breadcrumbs at level `warning`, i.e. slower than the app's `slowMs`
   (3 s by default).
+- **Repeats:** identical breadcrumbs in a row are merged into one, with `data.repeated` counting
+  them and `ts` moved to the latest.
+- **Clocks:** breadcrumbs and the error carry the device's time. Ingest stores a skewed clock as
+  the server's time, so the classifier runs on the time the device sent.
 
 ## Category
 
@@ -62,7 +66,7 @@ as `CATEGORIES`.
 | Id | Plain label | Rule |
 |---|---|---|
 | `network.offline` | Phone offline | `request` with no `status`, and the phone was offline. *Later*: needs the network state, so nothing gets this label yet. |
-| `network.timeout` | Request timed out | `request` with no `status`, and the message ends in `timed out`. |
+| `network.timeout` | Request timed out | `request` with no `status`, and the message is the SDK's `<METHOD> <url> timed out`, optionally followed by `: <cause>`. |
 | `network.never_sent` | Request never sent | `request` with no `status`, and `durationMs` < 100 ms: too fast to have reached a server. |
 | `network.failed` | Connection failed | `request` with no `status`, anything else: DNS, TLS or a refused connection. |
 | `auth` | Sign-in problem | `request.status` is 401 or 403. Opt-in, see above. |
@@ -105,18 +109,24 @@ several.
 
 | Id | Plain label | Rule |
 |---|---|---|
-| `resumed_from_background` | Right after reopening the app | The last lifecycle breadcrumb is `App came to the foreground`, at most 2 s before the error. *Later*: the SDK sends the exact time since foreground. |
-| `burst` | Several failures at once | At least one other failed-request breadcrumb in the 1 s before the error. The first failure of a burst doesn't get it; incidents group the whole burst. |
+| `resumed_from_background` | Right after reopening the app | The last lifecycle breadcrumb is `App came to the foreground`, at most 10 s before the error, and no request has succeeded (status under 400) since. On Cell C staging the failures went on for 6 s after reopening, so a short window misses most of them. *Later*: the SDK sends the exact time since foreground. |
+| `burst` | Several failures at once | At least one other failed-request breadcrumb in the 5 s before the error, or the error's own breadcrumb is a merged repeat (`data.repeated` > 1). The first failure of a burst doesn't get it; incidents group the whole burst. |
 | `slow_network` | Slow network | At least 2 of the last 5 network breadcrumbs are slow (level `warning`). |
-| `auth_expired` | Sign-in expired | Category `auth`, and an earlier request in the breadcrumbs to the same host succeeded. |
+| `auth_expired` | Sign-in expired | Category `auth`, and an earlier request in the breadcrumbs to the same host succeeded (status under 400). |
 | `new_in_release` | New in this version | The issue's `firstVersion` is the latest version seen for the app. |
 | `regressed` | Came back | The issue's status is `regressed`. |
-| `single_device` | One device model | At least 5 occurrences, all on the same `device.model`. |
+| `single_device` | One device model | At least 5 occurrences, all on the same `device.model`. Only on the issue page, which reads the recent occurrences; the issue list doesn't. |
+
+**When labels are set.** Category, owner, impact and the breadcrumb causes are stored with each
+error when it arrives, using the Settings of that moment: marking a flow critical later doesn't
+relabel earlier errors. The issue causes (`new_in_release`, `regressed`, `single_device`) are
+worked out when the dashboard reads the issue, so they're always current.
 
 ## Worked example: Cell C staging, 14 Nov
 
-The app came back to the foreground on an iPhone. Seconds earlier, the same endpoints had returned
-200. Then five requests failed, each within 3–49 ms of being sent. The last of the five was:
+The app came back to the foreground on an iPhone at 12:59:55.45. Seconds earlier, the same
+endpoints had returned 200. Over the next 6 s, six requests failed, each within 3–49 ms of being
+sent, and none succeeded. One of them, 5.9 s after reopening:
 
 `POST …/balance/getBalances → failed (16ms)`
 
@@ -125,11 +135,10 @@ The app came back to the foreground on an iPhone. Seconds earlier, the same endp
 | Category | `network.never_sent` | no status, 16 ms |
 | Owner | `app` | the app sent the request before the phone had reconnected |
 | Impact | `degraded` | the app was in the foreground |
-| Causes | `resumed_from_background`, `burst` | the last lifecycle breadcrumb is the foreground; 4 failed requests just before it |
+| Causes | `resumed_from_background`, `burst` | reopened 5.9 s before, nothing has worked since; 2 other failures in the 5 s before |
 
-The other four failures get the same category, owner and impact. All of them get
-`resumed_from_background`; the first one doesn't get `burst`. Incidents fold all five into one:
-"Requests failed on app resume (iOS)".
+All six get the same category, owner and impact, and all get `resumed_from_background`. The first
+one doesn't get `burst`. Incidents fold all six into one: "Requests failed on app resume (iOS)".
 
 Plain version: "Balance didn't load right after reopening the app; the phone hadn't reconnected.
 Not a server outage. Pass to: app team."

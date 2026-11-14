@@ -4,9 +4,11 @@ import type { IssueUpsert, UserMark, WriteStore } from "@debugkit/adapters";
 import { cachedSettings, effectiveRetention } from "./admin";
 import { sendAlerts } from "./alerts";
 import { countryOf } from "./country";
+import { classify } from "./classify";
 import { culpritOf, fingerprint, titleOf } from "./fingerprint";
 
 export * from "./fingerprint";
+export { classify, issueCauses, withIssueCauses, type ClassifyOptions, type IssueFacts } from "./classify";
 export { handleAdmin, effectiveRetention, cachedSettings, type AdminOptions } from "./admin";
 export { countryOf } from "./country";
 export { sendAlerts, SLACK_WEBHOOK } from "./alerts";
@@ -89,6 +91,20 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
   const issues = new Map<string, IssueUpsert>();
   /** Where this envelope's user counts: "app", "crash", "issue:<fp>". */
   const scopes = new Set<string>();
+  const storedEvent = (day: string, event: Event, fingerprint?: string, labels?: StoredEvent["labels"]): StoredEvent => ({
+    app,
+    day,
+    fingerprint,
+    labels,
+    event,
+    context,
+    user: env.user,
+    sessionId: env.session.id,
+    receivedAt,
+  });
+  // Critical flows decide whether an error blocks the user. Cached, and only read when there are errors.
+  const settings = env.events.some((e) => e.type === "error") ? await cachedSettings(opts.store, app) : null;
+  const criticalFlows = settings?.criticalFlows ?? [];
 
   for (const raw of env.events) {
     const event = { ...raw, ts: sanitiseTs(raw.ts, now) } as Event;
@@ -117,10 +133,13 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
       rollups.push({ app, day, dimension, key: key || "unknown", kind, by: 1 });
 
     let fp: string | undefined;
+    let labels: StoredEvent["labels"];
     if (event.type === "error") {
       fp = fingerprint(event);
+      // The device's own clock: breadcrumbs use it too, and sanitiseTs may have replaced event.ts.
+      labels = classify({ ...event, ts: raw.ts }, { criticalFlows });
       const cur = issues.get(fp);
-      const se: StoredEvent = { app, day, fingerprint: fp, event, context, user: env.user, sessionId: env.session.id, receivedAt };
+      const se = storedEvent(day, event, fp, labels);
       issues.set(fp, {
         app,
         fingerprint: fp,
@@ -151,9 +170,14 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
     if (event.type === "error") {
       inc("network", context.network?.type);
       inc("country", countryOf(context));
+      if (labels) {
+        inc("category", labels.category);
+        inc("owner", labels.owner);
+        inc("impact", labels.impact);
+      }
     }
 
-    stored.push({ app, day, fingerprint: fp, event, context, user: env.user, sessionId: env.session.id, receivedAt });
+    stored.push(storedEvent(day, event, fp, labels));
   }
 
   await opts.store.registerApp(app);
@@ -165,7 +189,7 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
     markUsers(opts.store, app, env.user?.id ?? env.user?.anonymousId ?? env.session.id, scopes, dayOf(receivedAt)),
   ]);
 
-  if (outcome && (outcome.created.length || outcome.regressed.length)) await sendAlerts(app, outcome, issues, await cachedSettings(opts.store, app));
+  if (outcome && (outcome.created.length || outcome.regressed.length)) await sendAlerts(app, outcome, issues, settings);
 
   return { status: 202, body: { ok: true, accepted: env.events.length } };
 }

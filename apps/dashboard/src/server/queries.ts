@@ -1,9 +1,11 @@
 import type { ReadStore } from "@debugkit/adapters";
+import { classify, withIssueCauses } from "@debugkit/ingest";
 import {
   compareVersions,
   percentileMs,
   SEVERITY_ORDER,
   severityFromCount,
+  type Classification,
   type Issue,
   type IssueStatus,
   type RollupRow,
@@ -57,6 +59,8 @@ export interface IssueRow {
   newInLatest: boolean;
   /** Distinct users affected since the start of the range. Filled for the top issues only. */
   users?: number;
+  /** Category, likely owner, user impact and causes (docs/taxonomy.md), from the latest occurrence plus the issue. */
+  labels?: Classification;
 }
 
 export interface FlowRow {
@@ -126,7 +130,7 @@ export interface Summary {
   trend: { day: string; errors: number; events: number }[];
   flows: FlowRow[];
   issues: IssueRow[];
-  breakdowns: Record<"os" | "appVersion" | "deviceModel" | "network" | "country", { key: string; errors: number }[]>;
+  breakdowns: Record<"os" | "appVersion" | "deviceModel" | "network" | "country" | "category" | "owner" | "impact", { key: string; errors: number }[]>;
   /** track() steps with the most failures in the range. */
   steps: StepRow[];
   /** Response times of the busiest endpoints (from the SDK's per-minute request summaries). */
@@ -179,8 +183,12 @@ export const SUMMARY_FIELDS = {
   "issues[]": "Grouped errors seen in the range. Sorted by severity, then count24h, then countRange.",
   "issues[].severity": "Derived from count24h using thresholds critical/high/medium.",
   "issues[].culprit": "Top in-app stack frame: function (file:line).",
+  "issues[].labels": "What kind of problem (category), who likely fixes it (owner), how badly it hurts users (impact: blocked, degraded, silent) and why (causes). Ids and rules: docs/taxonomy.md in the deBug repo.",
+  "breakdowns.category": "Errors in the range by category (e.g. network.never_sent, server, crash).",
+  "breakdowns.owner": "Errors in the range by likely owner: app, backend, infrastructure, third_party, unknown.",
+  "breakdowns.impact": "Errors in the range by user impact: blocked, degraded, silent.",
   "trend[]": "Errors and non-error events per hour (24h), UTC day (up to 90 days) or week (longer).",
-  breakdowns: "Errors in the range split by OS, app version and device model.",
+  breakdowns: "Errors in the range split by OS, app version, device model, network, country, and the labels category, owner and impact.",
   narrative: "Plain-language summary of what is going wrong in the range.",
   "health.crashFreeRate": "Share of sessions in the range with no fatal crash. Sessions are recorded automatically by the SDK.",
   "health.errorFreeRate": "Share of sessions in the range with no unhandled error.",
@@ -247,7 +255,7 @@ export async function buildSummary(
     retentionFor(store, app, opts.retentionDays, now),
   ]);
   // A year of release rows, to know which releases first appeared inside the range.
-  const [releaseRows, stepRows, requestRows, latencyRows, networkRows, countryRows, appSettings] = await Promise.all([
+  const [releaseRows, stepRows, requestRows, latencyRows, networkRows, countryRows, appSettings, categoryRows, ownerRows, impactRows] = await Promise.all([
     store.getRollups(app, "release", dayKey(Date.parse(`${from}T00:00:00Z`) - 365 * DAY), to),
     store.getRollups(app, "flowStep", from, to),
     store.getRollups(app, "requests", from, to),
@@ -255,6 +263,9 @@ export async function buildSummary(
     store.getRollups(app, "network", from, to),
     store.getRollups(app, "country", from, to),
     store.getSettings(app).catch(() => null),
+    store.getRollups(app, "category", from, to),
+    store.getRollups(app, "owner", from, to),
+    store.getRollups(app, "impact", from, to),
   ]);
   const criticalFlows = appSettings?.criticalFlows ?? [];
   const critical = new Set(criticalFlows);
@@ -302,7 +313,7 @@ export async function buildSummary(
   const latestVersion = versionsInRange[versionsInRange.length - 1] ?? null;
   const issueRows: IssueRow[] = issues
     .filter((i) => i.lastSeen >= rangeStart && i.firstSeen <= `${to}T23:59:59.999Z`)
-    .map((i) => toIssueRow(i, issue24h.get(i.fingerprint) ?? 0, hourly ? (issue24h.get(i.fingerprint) ?? 0) : (issueRange.get(i.fingerprint) ?? 0), thresholds, latestVersion, critical))
+    .map((i) => toIssueRow(i, issue24h.get(i.fingerprint) ?? 0, hourly ? (issue24h.get(i.fingerprint) ?? 0) : (issueRange.get(i.fingerprint) ?? 0), thresholds, latestVersion, criticalFlows))
     .sort(bySeverityThenCount);
   // Users affected: one count per issue, so only for the issues people look at first.
   const active = issueRows.filter((i) => i.status !== "ignored" && i.status !== "resolved");
@@ -373,7 +384,16 @@ export async function buildSummary(
     trend,
     flows,
     issues: issueRows,
-    breakdowns: { os: top(os), appVersion: top(appVersion), deviceModel: top(deviceModel), network: top(networkRows), country: top(countryRows) },
+    breakdowns: {
+      os: top(os),
+      appVersion: top(appVersion),
+      deviceModel: top(deviceModel),
+      network: top(networkRows),
+      country: top(countryRows),
+      category: top(categoryRows),
+      owner: top(ownerRows),
+      impact: top(impactRows),
+    },
     steps: buildSteps(stepRows),
     timings: buildTimings(requestRows, latencyRows),
     criticalFlows,
@@ -467,9 +487,28 @@ function buildTimings(requestRows: RollupRow[], latencyRows: RollupRow[]): Endpo
     .slice(0, 10);
 }
 
-function toIssueRow(i: Issue, count24h: number, countRange: number, t: SeverityThresholds, latestVersion: string | null = null, critical: Set<string> = new Set()): IssueRow {
+/**
+ * An issue's labels: those ingest stored with its latest occurrence, or worked out now for
+ * occurrences stored before the classifier existed, plus the causes that come from the issue.
+ */
+export function issueLabels(i: Issue, latestVersion: string | null, criticalFlows: readonly string[] = []): Classification | undefined {
+  const ev = i.lastEvent?.event;
+  const own = i.lastEvent?.labels ?? (ev?.type === "error" ? classify(ev, { criticalFlows }) : undefined);
+  return own && withIssueCauses(own, { status: i.status, firstVersion: i.firstVersion, latestVersion });
+}
+
+function toIssueRow(
+  i: Issue,
+  count24h: number,
+  countRange: number,
+  t: SeverityThresholds,
+  latestVersion: string | null = null,
+  criticalFlows: readonly string[] = [],
+): IssueRow {
   const base = severityFromCount(count24h, t);
+  const critical = new Set(criticalFlows);
   return {
+    labels: issueLabels(i, latestVersion, criticalFlows),
     status: i.status ?? "open",
     resolvedIn: i.resolvedIn,
     firstVersion: i.firstVersion,
@@ -580,11 +619,12 @@ export async function buildIssueDetail(
   if (!issue) return null;
   const range = resolveRange(opts.range ?? {}, now);
   const hs = hours(now, 48);
-  const [hourRows, dayRows, events, retention] = await Promise.all([
+  const [hourRows, dayRows, events, retention, settings] = await Promise.all([
     store.getRollups(app, "issueHour", hs[0]!, hs[hs.length - 1]!),
     store.getRollups(app, "issue", range.from, range.to),
     store.listIssueEvents(app, fingerprint, { limit: 200 }),
     retentionFor(store, app, opts.retentionDays, now),
+    store.getSettings(app).catch(() => null),
   ]);
   const hourly = hs.map((hour) => ({ hour, count: hourRows.filter((r) => r.key === fingerprint && r.day === hour).reduce((a, r) => a + r.errors, 0) }));
   const daily = daysBetween(range.from, range.to).map((day) => ({ day, count: dayRows.filter((r) => r.key === fingerprint && r.day === day).reduce((a, r) => a + r.errors, 0) }));
@@ -614,7 +654,10 @@ export async function buildIssueDetail(
   // Data from before 0.6 has no user marks: fall back to the users in recent events.
   const affectedUsers = counted || new Set(events.map((e) => e.user?.id ?? e.user?.anonymousId ?? e.sessionId)).size;
 
-  const row = toIssueRow(issue, count24h, countRange, thresholds);
+  const criticalFlows = settings?.criticalFlows ?? [];
+  const row = toIssueRow(issue, count24h, countRange, thresholds, null, criticalFlows);
+  // Recent occurrences say whether it's one device model.
+  if (row.labels) row.labels = withIssueCauses(row.labels, { deviceModels: events.map((e) => e.context.device.model) });
   const hints = hintsFor(issue, breakdowns, events);
   const detail = {
     app,

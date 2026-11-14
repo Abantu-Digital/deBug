@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SCHEMA_VERSION } from "./core";
+import { SCHEMA_VERSION, type Classification } from "./core";
 
 // Everything that does not need zod lives in ./core so client bundles stay small.
 export * from "./core";
@@ -175,6 +175,8 @@ export interface StoredEvent {
   app: string;
   day: string; // YYYY-MM-DD (UTC)
   fingerprint?: string; // error events only
+  /** Category, owner, impact and causes, set by the ingest classifier. Error events only. */
+  labels?: Classification;
   event: Event;
   context: Context;
   user?: Envelope["user"];
@@ -231,7 +233,11 @@ export type RollupDimension =
   /** Errors by network type (wifi, cellular, …). */
   | "network"
   /** Errors by country (ISO 3166 code from the device's timezone or locale; never from IP). */
-  | "country";
+  | "country"
+  /** Errors by label (see docs/taxonomy.md): key is the category, owner or impact id. */
+  | "category"
+  | "owner"
+  | "impact";
 
 export interface RollupIncrement {
   app: string;
