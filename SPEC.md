@@ -127,6 +127,8 @@ Event =
 
   The thresholds are configurable. Phase 2 also weights by distinct affected
   users and by the flow's importance.
+- **Labels**: every error also gets a category, a likely owner, a user impact
+  and cause patterns, set by rules at ingest. See [docs/taxonomy.md](docs/taxonomy.md).
 
 ## 4. Storage layout (adapter interface)
 
