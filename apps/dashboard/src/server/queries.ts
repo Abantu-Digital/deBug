@@ -1,10 +1,14 @@
 import type { ReadStore } from "@debugkit/adapters";
-import { classify, withIssueCauses } from "@debugkit/ingest";
+import { classify, isRequestCategory, parseIncidentIssueKey, parseIncidentKey, withIssueCauses } from "@debugkit/ingest";
 import {
+  CATEGORY_INFO,
+  CAUSE_INFO,
   compareVersions,
   percentileMs,
   SEVERITY_ORDER,
   severityFromCount,
+  type Category,
+  type Cause,
   type Classification,
   type Issue,
   type IssueStatus,
@@ -61,6 +65,35 @@ export interface IssueRow {
   users?: number;
   /** Category, likely owner, user impact and causes (docs/taxonomy.md), from the latest occurrence plus the issue. */
   labels?: Classification;
+  /** The incident the latest occurrence belonged to, if any (see Summary.incidents), and its title. */
+  incident?: string;
+  incidentTitle?: string;
+}
+
+/**
+ * Issues that fail together for the same reason, folded into one problem. A recurring problem
+ * across users and days, not one episode.
+ */
+export interface IncidentRow {
+  /** "<cause>|<category>|<os>": stable across builds. */
+  key: string;
+  title: string;
+  cause: Cause;
+  category: Category;
+  os: string;
+  /** Errors in the range, from the issues listed. */
+  errors: number;
+  /** Separate times it happened in the range: one per batch the SDK sent. */
+  episodes: number;
+  /** Distinct users affected since the start of the range. */
+  users: number;
+  /** UTC days of the first and last error in the range. */
+  firstDay: string;
+  lastDay: string;
+  /** False when every issue in it is resolved or ignored. */
+  active: boolean;
+  /** The issues in it seen in the range, most errors first. */
+  issues: { fingerprint: string; title: string; errors: number }[];
 }
 
 export interface FlowRow {
@@ -130,6 +163,7 @@ export interface Summary {
   trend: { day: string; errors: number; events: number }[];
   flows: FlowRow[];
   issues: IssueRow[];
+  incidents: IncidentRow[];
   breakdowns: Record<"os" | "appVersion" | "deviceModel" | "network" | "country" | "category" | "owner" | "impact", { key: string; errors: number }[]>;
   /** track() steps with the most failures in the range. */
   steps: StepRow[];
@@ -183,6 +217,11 @@ export const SUMMARY_FIELDS = {
   "issues[]": "Grouped errors seen in the range. Sorted by severity, then count24h, then countRange.",
   "issues[].severity": "Derived from count24h using thresholds critical/high/medium.",
   "issues[].culprit": "Top in-app stack frame: function (file:line).",
+  "incidents[]": "Issues that failed together for the same reason (a cause such as resumed_from_background or burst, a category and an OS), folded into one recurring problem across users and days. Most errors first. Key is stable across builds.",
+  "incidents[].episodes": "Separate times it happened in the range (one per batch of events the SDK sent).",
+  "incidents[].active": "false when every issue in it is resolved or ignored; the overview hides those.",
+  "incidents[].issues": "The issues in the incident with their errors in the range.",
+  "issues[].incident": "Key of the incident the latest occurrence belonged to, if any.",
   "issues[].labels": "What kind of problem (category), who likely fixes it (owner), how badly it hurts users (impact: blocked, degraded, silent) and why (causes). Ids and rules: docs/taxonomy.md in the deBug repo.",
   "breakdowns.category": "Errors in the range by category (e.g. network.never_sent, server, crash).",
   "breakdowns.owner": "Errors in the range by likely owner: app, backend, infrastructure, third_party, unknown.",
@@ -255,7 +294,7 @@ export async function buildSummary(
     retentionFor(store, app, opts.retentionDays, now),
   ]);
   // A year of release rows, to know which releases first appeared inside the range.
-  const [releaseRows, stepRows, requestRows, latencyRows, networkRows, countryRows, appSettings, categoryRows, ownerRows, impactRows] = await Promise.all([
+  const [releaseRows, stepRows, requestRows, latencyRows, networkRows, countryRows, appSettings, categoryRows, ownerRows, impactRows, incidentRows, incidentIssueRows] = await Promise.all([
     store.getRollups(app, "release", dayKey(Date.parse(`${from}T00:00:00Z`) - 365 * DAY), to),
     store.getRollups(app, "flowStep", from, to),
     store.getRollups(app, "requests", from, to),
@@ -266,6 +305,8 @@ export async function buildSummary(
     store.getRollups(app, "category", from, to),
     store.getRollups(app, "owner", from, to),
     store.getRollups(app, "impact", from, to),
+    store.getRollups(app, "incident", from, to),
+    store.getRollups(app, "incidentIssue", from, to),
   ]);
   const criticalFlows = appSettings?.criticalFlows ?? [];
   const critical = new Set(criticalFlows);
@@ -318,6 +359,9 @@ export async function buildSummary(
   // Users affected: one count per issue, so only for the issues people look at first.
   const active = issueRows.filter((i) => i.status !== "ignored" && i.status !== "resolved");
   await Promise.all(active.slice(0, 10).map(async (i) => (i.users = await countUsersSafe(store, app, `issue:${i.fingerprint}`, usersSince))));
+
+  // Incident counts follow the issue table: for 24h, each issue's hourly count caps its daily rollup.
+  const incidents = await buildIncidents(incidentRows, incidentIssueRows, issueRows, hourly, (key) => countUsersSafe(store, app, `incident:${key}`, usersSince));
 
   const firstDay = new Map<string, { day: string; sessions: number }>();
   for (const r of releaseRows) {
@@ -384,6 +428,7 @@ export async function buildSummary(
     trend,
     flows,
     issues: issueRows,
+    incidents,
     breakdowns: {
       os: top(os),
       appVersion: top(appVersion),
@@ -403,6 +448,75 @@ export async function buildSummary(
   };
   summary.narrative = narrate(summary);
   return summary;
+}
+
+/** "Requests failed on app resume (iOS)", from an incident key. */
+export function incidentTitle(key: string): string {
+  const k = parseIncidentKey(key);
+  if (!k) return key;
+  const os = k.os === "ios" ? "iOS" : k.os === "android" ? "Android" : k.os;
+  const requests = isRequestCategory(k.category);
+  const what = CATEGORY_INFO[k.category]?.name ?? k.category;
+  if (k.cause === "resumed_from_background") return `${requests ? "Requests failed" : what} on app resume (${os})`;
+  if (k.cause === "burst") return `${what}: several requests at once (${os})`;
+  return `${what}: ${CAUSE_INFO[k.cause]?.name.toLowerCase() ?? k.cause} (${os})`;
+}
+
+async function buildIncidents(
+  rows: RollupRow[],
+  issueRows: RollupRow[],
+  issues: IssueRow[],
+  hourly: boolean,
+  users: (key: string) => Promise<number>,
+): Promise<IncidentRow[]> {
+  const shown = new Map(issues.map((i) => [i.fingerprint, i]));
+  const members = new Map<string, Map<string, number>>();
+  for (const r of issueRows) {
+    const k = parseIncidentIssueKey(r.key);
+    if (!k || !shown.has(k.fingerprint)) continue; // only issues seen in the range
+    const m = members.get(k.incident) ?? new Map<string, number>();
+    m.set(k.fingerprint, (m.get(k.fingerprint) ?? 0) + r.errors);
+    members.set(k.incident, m);
+  }
+  const days = new Map<string, { episodes: number; first: string; last: string }>();
+  for (const r of rows) {
+    const d = days.get(r.key) ?? { episodes: 0, first: r.day, last: r.day };
+    d.episodes += r.events;
+    if (r.errors > 0 && r.day < d.first) d.first = r.day;
+    if (r.errors > 0 && r.day > d.last) d.last = r.day;
+    days.set(r.key, d);
+  }
+  const out: IncidentRow[] = [];
+  for (const [key, m] of members) {
+    const k = parseIncidentKey(key);
+    if (!k) continue;
+    const list = [...m.entries()]
+      .map(([fingerprint, n]) => {
+        const i = shown.get(fingerprint)!;
+        return { fingerprint, title: i.title, errors: hourly ? Math.min(n, i.count24h) : n, status: i.status };
+      })
+      .filter((i) => i.errors > 0)
+      .sort((a, b) => b.errors - a.errors);
+    if (!list.length) continue;
+    const d = days.get(key);
+    out.push({
+      key,
+      title: incidentTitle(key),
+      ...k,
+      errors: list.reduce((a, i) => a + i.errors, 0),
+      episodes: d?.episodes ?? 0,
+      users: 0,
+      firstDay: d?.first ?? "",
+      lastDay: d?.last ?? "",
+      active: list.some((i) => i.status !== "resolved" && i.status !== "ignored"),
+      issues: list.map(({ fingerprint, title, errors }) => ({ fingerprint, title, errors })),
+    });
+  }
+  out.sort((a, b) => b.errors - a.errors);
+  const top = out.slice(0, 20);
+  // One user count per incident, like the top issues: at most 20 reads.
+  await Promise.all(top.map(async (i) => (i.users = await users(i.key))));
+  return top;
 }
 
 const rate = (bad: number, total: number) => (total > 0 ? Math.max(0, 1 - bad / total) : null);
@@ -509,6 +623,8 @@ function toIssueRow(
   const critical = new Set(criticalFlows);
   return {
     labels: issueLabels(i, latestVersion, criticalFlows),
+    incident: i.lastEvent?.incident,
+    incidentTitle: i.lastEvent?.incident ? incidentTitle(i.lastEvent.incident) : undefined,
     status: i.status ?? "open",
     resolvedIn: i.resolvedIn,
     firstVersion: i.firstVersion,

@@ -18,7 +18,7 @@ const BACKGROUND = "App went to the background";
 const NEVER_SENT_MS = 100;
 /** How long after reopening a failure still counts as "on resume", if nothing has succeeded since. */
 const RESUME_WINDOW_MS = 10_000;
-const BURST_WINDOW_MS = 5_000;
+export const BURST_WINDOW_MS = 5_000;
 
 const CRASH_SOURCES = new Set(["global-handler", "uncaughtException"]);
 const REJECTION_SOURCES = new Set(["unhandled-rejection", "unhandledrejection", "unhandledRejection"]);

@@ -177,6 +177,8 @@ export interface StoredEvent {
   fingerprint?: string; // error events only
   /** Category, owner, impact and causes, set by the ingest classifier. Error events only. */
   labels?: Classification;
+  /** The incident this error belongs to, "<cause>|<category>|<os>", when it's part of one. */
+  incident?: string;
   event: Event;
   context: Context;
   user?: Envelope["user"];
@@ -237,7 +239,11 @@ export type RollupDimension =
   /** Errors by label (see docs/taxonomy.md): key is the category, owner or impact id. */
   | "category"
   | "owner"
-  | "impact";
+  | "impact"
+  /** Errors per incident: key "<cause>|<category>|<os>". */
+  | "incident"
+  /** Errors per issue within an incident: key "<cause>|<category>|<os>|<fingerprint>". */
+  | "incidentIssue";
 
 export interface RollupIncrement {
   app: string;
