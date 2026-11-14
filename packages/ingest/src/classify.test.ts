@@ -217,6 +217,15 @@ describe("classify: owners from host names in Settings", () => {
     expect(classify(many, { hosts }).owner).toBe("infrastructure");
   });
 
+  it("puts owners back when the host's owner changes or goes", () => {
+    const set = classify(failed("api.x/v1/feed", 400), { hosts });
+    expect(set.owner).toBe("backend");
+    expect(hostOwner(set, "api.x/v1/feed", [])).toBe("unknown");
+    expect(hostOwner(set, "api.x/v1/feed", [{ match: "api.x", name: "Accounts", owner: "third_party" }])).toBe("third_party");
+    const server = classify(http(503), { hosts });
+    expect(hostOwner(server, "api.x/v1/me", [])).toBe("backend");
+  });
+
   it("leaves owners alone for hosts without one", () => {
     expect(hostOwner({ category: "server", owner: "backend" }, "api.x/v1/me", [{ match: "api.x", name: "Accounts" }])).toBe("backend");
     expect(hostOwner({ category: "server", owner: "backend" }, undefined, hosts)).toBe("backend");

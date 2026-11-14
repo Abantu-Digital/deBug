@@ -805,7 +805,7 @@ export async function buildIssueDetail(
   // Recent occurrences say whether it's one device model.
   if (row.labels) row.labels = withIssueCauses(row.labels, { deviceModels: events.map((e) => e.context.device.model) });
   // The explanation covers request failures; for other categories the hints still add something.
-  const hints = hintsFor(issue, breakdowns, events, !!row.labels && isRequestCategory(row.labels.category));
+  const hints = hintsFor(issue, breakdowns, events, !!row.labels && isRequestCategory(row.labels.category), hosts);
   // The same occurrence the labels came from, so the evidence can't contradict them.
   const errorEvents = events.filter((e) => e.event.type === "error");
   row.explanation = row.labels
@@ -898,7 +898,7 @@ function trackerLinks(d: Omit<IssueDetail, "links">, t: Trackers): IssueDetail["
 }
 
 /** Rule-based "what to look at" hints. Phase 2 replaces/augments these with an LLM over the same data. */
-function hintsFor(issue: Issue, b: IssueDetail["breakdowns"], events: StoredEvent[], explained = false): IssueDetail["hints"] {
+function hintsFor(issue: Issue, b: IssueDetail["breakdowns"], events: StoredEvent[], explained = false, hosts: readonly HostName[] = []): IssueDetail["hints"] {
   const hints: IssueDetail["hints"] = [];
   const text = `${issue.title} ${events[0]?.event.type === "error" ? (events[0].event.error.stack ?? "") : ""}`.toLowerCase();
   const crumbs = events.flatMap((e) => (e.event.type === "error" ? (e.event.breadcrumbs ?? []) : []));
@@ -932,7 +932,7 @@ function hintsFor(issue: Issue, b: IssueDetail["breakdowns"], events: StoredEven
     const m = new Map<string, number>();
     for (const c of failingRequests) m.set(c.message, (m.get(c.message) ?? 0) + 1);
     const [msg] = [...m.entries()].sort((a, b) => b[1] - a[1])[0]!;
-    hints.push({ title: "A request fails right before the error", detail: `Most common: ${msg}` });
+    hints.push({ title: "A request fails right before the error", detail: `Most common: ${nameUrlsIn(msg, hosts)}` });
   }
   if (hints.length === 0 && !explained) hints.push({ title: "Start at the culprit frame", detail: `Open ${issue.culprit ?? "the top stack frame"} and use the breadcrumbs below to replay what the user did.` });
   return hints;

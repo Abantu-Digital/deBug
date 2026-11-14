@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
-import { OWNER_INFO, OWNERS, type HostName, type Owner } from "@debugkit/schema";
+import { normaliseHostMatch, OWNER_INFO, OWNERS, type HostName, type Owner } from "@debugkit/schema";
 import { Card } from "~/components/ui";
 import { getSettings, restampExisting, saveAppSettings, saveRetention, sendTestAlert } from "~/server/fns";
 
@@ -127,9 +127,9 @@ function SettingsPage() {
         </Card>
       )}
 
-      {canEdit && <FlowsAndAlerts key={settings.app + (settings.updatedAt ?? "")} settings={settings} onStatus={setStatus} />}
+      {canEdit && <FlowsAndAlerts key={settings.app + JSON.stringify([settings.criticalFlows, settings.alerts])} settings={settings} onStatus={setStatus} />}
 
-      {canEdit && <HostNames key={`hosts-${settings.app}${settings.updatedAt ?? ""}`} app={settings.app} hosts={settings.hosts} seen={seenHosts} onStatus={setStatus} />}
+      {canEdit && <HostNames key={settings.app + JSON.stringify(settings.hosts)} app={settings.app} hosts={settings.hosts} seen={seenHosts} onStatus={setStatus} />}
 
       {status && (
         <p role="status" className={`rounded-lg border px-3 py-2 text-sm ${status.tone === "error" ? "border-sev-critical text-sev-critical" : status.tone === "ok" ? "border-line bg-panel-2" : "border-line text-muted"}`}>
@@ -237,7 +237,7 @@ function HostNames({
     hosts.length ? hosts.map((h, i) => ({ id: i, match: h.match, name: h.name, owner: h.owner ?? "" })) : [{ id: 0, match: "", name: "", owner: "" }],
   );
   const [busy, setBusy] = useState(false);
-  const named = new Set(rows.map((r) => r.match.trim().toLowerCase()));
+  const named = new Set(rows.map((r) => normaliseHostMatch(r.match)));
   const unnamed = seen.filter((h) => !named.has(h));
 
   const update = (id: number, patch: Partial<HostRow>) => setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -260,8 +260,8 @@ function HostNames({
   return (
     <Card title="Host names" subtitle="Give the servers your app calls a name people recognise, and say who looks after each one.">
       <div className="space-y-3">
-        {rows.map((r) => (
-          <div key={r.id} className="grid gap-2 rounded-lg border border-line p-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto_auto] sm:items-end sm:border-0 sm:p-0">
+        {rows.map((r, i) => (
+          <div key={r.id} role="group" aria-label={`Host ${i + 1}`} className="grid gap-2 rounded-lg border border-line p-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto_auto] sm:items-end sm:border-0 sm:p-0">
             <label className="min-w-0 text-xs text-muted">
               Host, or host and path
               <input value={r.match} onChange={(e) => update(r.id, { match: e.target.value })} list="seen-hosts" placeholder="api.example.com/payments" className={`mt-1 w-full font-mono text-xs text-ink ${box}`} />

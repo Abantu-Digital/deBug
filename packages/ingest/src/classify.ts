@@ -200,15 +200,19 @@ function owner(cat: Category, causes: Cause[], burstHosts: readonly string[]): O
 /**
  * The owner Settings gives the request's host, where the rules can't tell on their own: server
  * errors (the backend by default, but the host may be a third party's), and failed, timed-out
- * or refused requests the rules leave as unknown. Never overrides "app" (the request didn't reach the
- * server, or the app sent it wrong) or "infrastructure" (many hosts failed at once).
+ * or refused requests the rules leave as unknown. Never overrides "app" (the request didn't reach
+ * the server, or the app sent it wrong) or "infrastructure" (many hosts failed at once).
+ *
+ * Safe to run again on labels it already changed: an owner no rule gives these categories came
+ * from a host, so it's reset first. Changing or removing the host's owner later takes effect.
  */
 export function hostOwner(labels: Pick<Classification, "category" | "owner">, url: string | undefined, hosts: readonly HostName[] | undefined): Owner {
+  const { category, owner } = labels;
+  const fromHost = category === "server" || category === "network.timeout" || category === "network.failed" || category === "auth";
+  if (!fromHost) return owner;
+  const rule: Owner = category === "server" ? "backend" : owner === "app" || owner === "infrastructure" ? owner : "unknown";
   const named = url ? hostNameFor(url, hosts)?.host.owner : undefined;
-  if (!named) return labels.owner;
-  if (labels.category === "server") return named;
-  if ((labels.category === "network.timeout" || labels.category === "network.failed" || labels.category === "auth") && labels.owner === "unknown") return named;
-  return labels.owner;
+  return named && (category === "server" || rule === "unknown") ? named : rule;
 }
 
 function impact(e: ErrorEvent, cat: Category, ev: Evidence, critical: ReadonlySet<string>): Impact {

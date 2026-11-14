@@ -17,25 +17,34 @@ export interface HostName {
 
 export const MAX_HOST_NAMES = 50;
 
-/** "https://API.example.com/v1/" → "api.example.com/v1". Lowercases the host only. */
-export function normaliseHostMatch(s: string): string {
-  const bare = s.trim().replace(/^[a-z]+:\/\//i, "").replace(/[?#].*$/, "").replace(/\/+$/, "");
-  const cut = bare.indexOf("/");
-  return cut < 0 ? bare.toLowerCase() : bare.slice(0, cut).toLowerCase() + bare.slice(cut);
+/** Split a URL into host (lowercase, no scheme or port), path, and query/hash. */
+function parts(s: string): { host: string; path: string; suffix: string } {
+  const bare = s.trim().replace(/^[a-z]+:\/\//i, "");
+  const q = bare.search(/[?#]/);
+  const [main, suffix] = q < 0 ? [bare, ""] : [bare.slice(0, q), bare.slice(q)];
+  const cut = main.indexOf("/");
+  const host = (cut < 0 ? main : main.slice(0, cut)).toLowerCase().replace(/:\d+$/, "");
+  return { host, path: cut < 0 ? "" : main.slice(cut), suffix };
 }
 
-/** The entry for a URL, and the rest of the URL after the matched part ("" or "/…"). */
+/** "https://API.example.com:443/v1/?x" → "api.example.com/v1". Lowercases the host only. */
+export function normaliseHostMatch(s: string): string {
+  const { host, path } = parts(s);
+  return host + path.replace(/\/+$/, "");
+}
+
+/** The entry for a URL, and the rest of the URL after the matched part ("", "/…" or "?…"). */
 export function hostNameFor(url: string, hosts: readonly HostName[] | undefined): { host: HostName; rest: string } | undefined {
   if (!hosts?.length || !url) return undefined;
-  const u = normaliseHostMatch(url);
+  const { host, path, suffix } = parts(url);
+  const u = host + path;
   let best: HostName | undefined;
   for (const h of hosts) {
     const m = h.match;
     // Whole path segments only: "api.x/pay" doesn't match "api.x/payments".
-    const hit = u === m || (u.startsWith(m) && (u[m.length] === "/" || (!m.includes("/") && u[m.length] === ":")));
-    if (hit && (!best || m.length > best.match.length)) best = h;
+    if ((u === m || (u.startsWith(m) && u[m.length] === "/")) && (!best || m.length > best.match.length)) best = h;
   }
-  return best ? { host: best, rest: u.slice(best.match.length).replace(/^:\d+/, "") } : undefined;
+  return best ? { host: best, rest: u.slice(best.match.length) + suffix } : undefined;
 }
 
 /** "api.x/v1/me" → "Accounts · /v1/me". Unnamed URLs come back as they are. */
@@ -44,8 +53,8 @@ export function nameUrl(url: string, hosts: readonly HostName[] | undefined): st
   return hit ? `${hit.host.name}${hit.rest ? ` · ${hit.rest}` : ""}` : url;
 }
 
-/** A host as it appears in free text: a dotted name, optionally with a port and path. */
-const URL_IN_TEXT = /\b(?:[a-z]+:\/\/)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?:\/[^\s"'`)]*)?/gi;
+/** A host as it appears in free text: a dotted name, optionally with a port and path. Not the domain of an email address. */
+const URL_IN_TEXT = /(?<![\w@.-])(?:[a-z]+:\/\/)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?:[/?#][^\s"'`)]*)?/gi;
 
 /** Name every URL in a title or message: "GET api.x/v1/me failed" → "GET Accounts · /v1/me failed". */
 export function nameUrlsIn(text: string, hosts: readonly HostName[] | undefined): string {
@@ -53,8 +62,10 @@ export function nameUrlsIn(text: string, hosts: readonly HostName[] | undefined)
   return text.replace(URL_IN_TEXT, (u) => nameUrl(u, hosts));
 }
 
-const OWNER_SET = new Set<string>(OWNERS);
-const MATCH = /^(?:[a-z0-9-]+\.)*[a-z0-9-]+(?::\d{1,5})?(?:\/[^\s?#]*)?$/;
+/** Owners a host can be given: "unknown" is what leaving it unset means. */
+const OWNER_SET = new Set<string>(OWNERS.filter((o) => o !== "unknown"));
+/** A dotted host name, optionally with a path. Ports are dropped by normaliseHostMatch. */
+const MATCH = /^(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s?#]*)?$/;
 
 /** Check host names from Settings. Returns the cleaned list, or what's wrong with it. */
 export function validHostNames(x: unknown): HostName[] | string {
@@ -67,7 +78,7 @@ export function validHostNames(x: unknown): HostName[] | string {
     const match = typeof r.match === "string" ? normaliseHostMatch(r.match) : "";
     const name = typeof r.name === "string" ? r.name.trim() : "";
     if (!match && !name) continue; // an empty row
-    if (!match || match.length > 200 || !MATCH.test(match)) return `"${String(r.match ?? "")}" isn't a host, like api.example.com or api.example.com/payments`;
+    if (!match || match.length > 200 || !MATCH.test(match)) return `"${String(r.match ?? "")}" isn't a host name, like api.example.com or api.example.com/payments`;
     if (!name || name.length > 60) return `Give ${match} a name of up to 60 characters`;
     if (r.owner !== undefined && r.owner !== "" && !OWNER_SET.has(String(r.owner))) return `Unknown owner "${String(r.owner)}"`;
     if (seen.has(match)) return `${match} is listed twice`;

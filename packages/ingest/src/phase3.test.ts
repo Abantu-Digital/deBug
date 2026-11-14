@@ -96,6 +96,15 @@ describe("alerts", () => {
     expect(await sendAlerts("shop", { created: ["abc"], regressed: [] }, issues, { alerts: { slackWebhookUrl: "https://evil.example/hook" } }, post)).toBe(0);
     expect(posts).toHaveLength(0);
   });
+
+  it("names hosts from Settings in the title", async () => {
+    const posts: string[] = [];
+    const post = async (_url: string, body: unknown) => void posts.push((body as { text: string }).text);
+    const named = { ...issue, fingerprint: "hosts1", title: "HttpError: POST pay.example.com/v1/charge responded 503" };
+    const settings = { alerts: { slackWebhookUrl: HOOK }, hosts: [{ match: "pay.example.com", name: "Payments" }] };
+    expect(await sendAlerts("shop", { created: ["hosts1"], regressed: [] }, new Map([["hosts1", named]]), settings, post)).toBe(1);
+    expect(posts[0]).toContain("HttpError: POST Payments · /v1/charge responded 503");
+  });
 });
 
 describe("settings for flows and alerts", () => {

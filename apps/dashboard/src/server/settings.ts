@@ -1,5 +1,5 @@
 import type { AlertSettings, AppSettings, RestampResult } from "@debugkit/adapters";
-import { validHostNames, type HostName } from "@debugkit/schema";
+import { normaliseHostMatch, validHostNames, type HostName } from "@debugkit/schema";
 import { MAX_RETENTION_DAYS, MIN_RETENTION_DAYS } from "@debugkit/adapters";
 import { config } from "./config";
 import { getLocalWriteStore, getStore } from "./store";
@@ -89,7 +89,7 @@ export async function seenHosts(app: string, now = Date.now()): Promise<string[]
   const [timed, failed] = await Promise.all([store.getRollups(app, "requests", from, to).catch(() => []), store.getRollups(app, "endpoint", from, to).catch(() => [])]);
   const counts = new Map<string, number>();
   for (const r of [...timed, ...failed]) {
-    const host = r.key.split(" ")[1]?.replace(/^[a-z]+:\/\//i, "").split("/")[0]?.toLowerCase();
+    const host = normaliseHostMatch(r.key.split(" ")[1] ?? "").split("/")[0];
     if (host) counts.set(host, (counts.get(host) ?? 0) + r.events + r.errors);
   }
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([h]) => h);

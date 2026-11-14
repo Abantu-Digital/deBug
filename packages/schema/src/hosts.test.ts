@@ -32,6 +32,15 @@ describe("host names", () => {
     expect(nameUrlsIn(`GET ${GATEWAY}/x`, [])).toBe(`GET ${GATEWAY}/x`);
   });
 
+  it("review fixes: keeps queries, ignores ports, leaves emails alone", () => {
+    expect(nameUrlsIn(`GET ${GATEWAY}/prod/api/balance/x?page=2 failed`, hosts)).toBe("GET Balance service · /x?page=2 failed");
+    expect(hostNameFor(`${GATEWAY}:443/prod/api/balance/x`, hosts)?.host.name).toBe("Balance service");
+    expect(nameUrlsIn("No account for support@maps.googleapis.com", hosts)).toBe("No account for support@maps.googleapis.com");
+    expect(validHostNames([{ match: "localhost", name: "Local" }])).toMatch(/isn't a host/);
+    expect(validHostNames([{ match: "api.x.com", name: "A", owner: "unknown" }])).toMatch(/owner/);
+    expect(validHostNames([{ match: "api.x.com:8443/v1", name: "A" }])).toEqual([{ match: "api.x.com/v1", name: "A" }]);
+  });
+
   it("validates Settings: skips empty rows, rejects bad hosts, names, owners and repeats", () => {
     expect(validHostNames([{ match: "https://api.x.com/", name: " Accounts ", owner: "backend" }, { match: "", name: "" }])).toEqual([{ match: "api.x.com", name: "Accounts", owner: "backend" }]);
     expect(validHostNames([{ match: "api.x.com", name: "A", owner: "" }])).toEqual([{ match: "api.x.com", name: "A" }]);
