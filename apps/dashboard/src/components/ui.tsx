@@ -117,6 +117,9 @@ export function ShareBars({ rows, total, onSelect, selected }: { rows: { key: st
   );
 }
 
+/** A small chip under an issue's title. */
+const CHIP = "mt-1 mr-1 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide";
+
 const IMPACT_STYLE: Record<Impact, string> = {
   blocked: "bg-sev-critical text-white",
   degraded: "bg-sev-medium text-black",
@@ -126,11 +129,10 @@ const IMPACT_STYLE: Record<Impact, string> = {
 /** An issue's impact and category as badges, and its likely owner, from docs/taxonomy.md. */
 export function LabelBadges({ labels }: { labels?: Pick<Classification, "category" | "owner" | "impact"> }) {
   if (!labels) return null;
-  const chip = "mt-1 mr-1 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide";
   return (
     <>
-      <span className={`${chip} ${IMPACT_STYLE[labels.impact]}`} title={IMPACT_INFO[labels.impact].description}>{IMPACT_INFO[labels.impact].name}</span>
-      <span className={`${chip} bg-panel-2 text-ink/80`} title={CATEGORY_INFO[labels.category].description}>{CATEGORY_INFO[labels.category].name}</span>
+      <span className={`${CHIP} ${IMPACT_STYLE[labels.impact]}`} title={IMPACT_INFO[labels.impact].description}>{IMPACT_INFO[labels.impact].name}</span>
+      <span className={`${CHIP} bg-panel-2 text-ink/80`} title={CATEGORY_INFO[labels.category].description}>{CATEGORY_INFO[labels.category].name}</span>
       <span className="mt-1 mr-1 inline-flex text-[11px] text-muted" title={OWNER_INFO[labels.owner].description}>{OWNER_INFO[labels.owner].name}</span>
     </>
   );
@@ -146,13 +148,12 @@ export function timeAgo(iso: string, now = Date.now()) {
 
 /** Small labels under an issue: regressed, new in the latest release, resolved, ignored. */
 export function IssueLabels({ issue }: { issue: { status: string; resolvedIn?: string; firstVersion?: string; newInLatest: boolean } }) {
-  const chip = "mt-1 mr-1 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide";
   return (
     <>
-      {issue.status === "regressed" && <span className={`${chip} bg-sev-critical text-white`}>Regressed{issue.resolvedIn ? ` after ${issue.resolvedIn}` : ""}</span>}
-      {issue.newInLatest && <span className={`${chip} bg-accent-soft text-accent`}>New in {issue.firstVersion}</span>}
-      {issue.status === "resolved" && <span className={`${chip} border border-line text-muted`}>Resolved{issue.resolvedIn ? ` in ${issue.resolvedIn}` : ""}</span>}
-      {issue.status === "ignored" && <span className={`${chip} border border-line text-muted`}>Ignored</span>}
+      {issue.status === "regressed" && <span className={`${CHIP} bg-sev-critical text-white`}>Regressed{issue.resolvedIn ? ` after ${issue.resolvedIn}` : ""}</span>}
+      {issue.newInLatest && <span className={`${CHIP} bg-accent-soft text-accent`}>New in {issue.firstVersion}</span>}
+      {issue.status === "resolved" && <span className={`${CHIP} border border-line text-muted`}>Resolved{issue.resolvedIn ? ` in ${issue.resolvedIn}` : ""}</span>}
+      {issue.status === "ignored" && <span className={`${CHIP} border border-line text-muted`}>Ignored</span>}
     </>
   );
 }

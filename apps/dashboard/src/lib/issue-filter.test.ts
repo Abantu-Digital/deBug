@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { filterIssues, labelCounts, labelFilterOf, matchesStatus } from "./issue-filter";
+import type { Category, Impact, Owner } from "@debugkit/schema";
+import { filterIssues, issueFilterFromQuery, labelCounts, labelFilterOf, matchesStatus } from "./issue-filter";
 
-const issue = (id: string, status: string, labels?: { category: string; owner: string; impact: string }, flow?: string) =>
-  ({ id, status, flow, labels }) as { id: string; status: string; flow?: string; labels?: { category: never; owner: never; impact: never } };
+const issue = (id: string, status: string, labels?: { category: Category; owner: Owner; impact: Impact }, flow?: string) => ({ id, status, flow, labels });
 
 const issues = [
   issue("crash", "open", { category: "crash", owner: "app", impact: "blocked" }, "auth.login"),
@@ -41,5 +41,15 @@ describe("issue filters", () => {
     const q = new URLSearchParams("category=server&owner=nobody&impact=blocked");
     expect(labelFilterOf((k) => q.get(k))).toEqual({ category: "server", impact: "blocked" });
     expect(labelFilterOf(() => 3)).toEqual({});
+  });
+
+  it("reads /api/summary filters: every status by default, and rejects what it doesn't know", () => {
+    const q = (s: string) => issueFilterFromQuery(new URLSearchParams(s));
+    expect(q("")).toEqual({ status: "all" });
+    expect(q("status=open&impact=blocked&owner=backend&flow=auth.login")).toEqual({ status: "open", flow: "auth.login", impact: "blocked", owner: "backend" });
+    expect(q("status=opne")).toMatch(/^status must be one of open, resolved, ignored, all/);
+    expect(q("owner=nobody")).toMatch(/^Unknown owner "nobody"/);
+    const f = q("impact=blocked");
+    expect(typeof f === "object" && ids(filterIssues(issues, f))).toEqual(["crash", "server"]);
   });
 });

@@ -146,14 +146,18 @@ worked out when the dashboard reads the issue, so they're always current.
 - **Breakdown:** "Who it hurts and whose it is" splits the range's errors by impact, owner and
   category, from the rollups. Click a bar to filter the issue list.
 - **Filters:** the issue list has a filter per label, next to the status and flow filters, and
-  each option shows how many issues it would leave. They combine: "Blocked" and "Backend team"
-  answers "what's blocking users, and is it the backend's?". Filters live in the URL, so a
-  filtered view can be shared.
+  each option shows how many issues it would leave. They combine, and a filtered list says whose
+  its issues are: clicking "Blocked" answers "what's blocking users, and whose is it?". Filters
+  live in the URL, so a filtered view can be shared.
 - **API:** `GET /api/summary` takes the same filters: `?category=`, `?owner=`, `?impact=`, plus
-  `?status=` and `?flow=`.
+  `?status=` (`open`, `resolved`, `ignored` or `all`) and `?flow=`. Unlike the page, it lists
+  every status unless `?status=` is given, as it did before filters existed. An unknown id or
+  status is a 400.
 
-The breakdown counts errors with the labels they got when they arrived; the badges and filters
-use each issue's labels now, including host owners saved since (see Host names).
+The breakdown counts every error in the range, with the labels it got when it arrived, whatever
+its issue's status. The badges and filters use each issue's labels now, including host owners
+saved since (see Host names). So a bar can count errors whose issues are resolved: the list then
+offers to show the other statuses.
 
 ## Incidents
 

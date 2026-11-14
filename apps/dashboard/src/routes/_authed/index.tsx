@@ -1,23 +1,32 @@
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { FlowChart, TrendChart } from "~/components/charts";
-import { CATEGORY_INFO, IMPACT_INFO, OWNER_INFO } from "@debugkit/schema";
 import { Card, DataTable, IssueLabels, LabelBadges, SeverityBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
-import { filterIssues, labelCounts, labelFilterOf, LABEL_FILTER_KEYS, type IssueFilter, type LabelFilterKey } from "~/lib/issue-filter";
+import {
+  filterIssues,
+  isStatusFilter,
+  labelCounts,
+  labelFilterOf,
+  LABEL_FILTER_KEYS,
+  LABEL_FILTERS,
+  NO_LABEL_FILTERS,
+  STATUS_FILTERS,
+  type IssueFilter,
+  type LabelFilterKey,
+  type StatusFilter,
+} from "~/lib/issue-filter";
 import { RangePicker, rangeSearch, RetentionNote, type RangeSearch } from "~/components/range-picker";
 import { getOverview } from "~/server/fns";
 
-type Search = { app?: string; flow?: string; status?: string } & Pick<IssueFilter, LabelFilterKey> & RangeSearch;
+type Search = { app?: string; flow?: string; status?: StatusFilter } & Pick<IssueFilter, LabelFilterKey> & RangeSearch;
 
-/** Plain names for label ids, for the filters and the breakdown. */
-const LABEL_NAMES: Record<LabelFilterKey, Record<string, { name: string }>> = { category: CATEGORY_INFO, owner: OWNER_INFO, impact: IMPACT_INFO };
-const LABEL_TITLES: Record<LabelFilterKey, string> = { impact: "Impact", owner: "Owner", category: "Category" };
+const labelName = (k: LabelFilterKey, id: string) => LABEL_FILTERS[k].info[id]?.name ?? id;
 
 export const Route = createFileRoute("/_authed/")({
   validateSearch: (s: Record<string, unknown>): Search => ({
     app: typeof s.app === "string" ? s.app : undefined,
     flow: typeof s.flow === "string" ? s.flow : undefined,
-    status: typeof s.status === "string" ? s.status : undefined,
+    status: isStatusFilter(s.status) ? s.status : undefined,
     ...labelFilterOf((k) => s[k]),
     ...rangeSearch(s),
   }),
@@ -41,13 +50,16 @@ function Overview() {
   const statusFilter = search.status ?? "open";
   const filter: IssueFilter = { status: statusFilter, flow, category: search.category, owner: search.owner, impact: search.impact };
   const issues = filterIssues(summary.issues, filter);
-  const countFor = (st: string) => filterIssues(summary.issues, { ...filter, status: st }).length;
+  const countFor = (st: StatusFilter) => filterIssues(summary.issues, { ...filter, status: st }).length;
   const labelFiltered = LABEL_FILTER_KEYS.filter((k) => filter[k]);
-  const toggleLabel = (k: LabelFilterKey, v: string | undefined) => navigate({ search: (s) => ({ ...s, [k]: s[k] === v ? undefined : v }), resetScroll: false });
-  const issuesTitle = [
-    labelFiltered.length ? labelFiltered.map((k) => LABEL_NAMES[k][filter[k]!]?.name).join(" · ") : "Issues by severity",
-    flow ? `in ${flow}` : "",
-  ].filter(Boolean).join(" ");
+  const toggleLabel = (k: LabelFilterKey, v: string) => navigate({ search: (s) => ({ ...s, [k]: s[k] === v ? undefined : v }), resetScroll: false });
+  /** "Whose is it" for a label-filtered list: its issues by owner, worst first. */
+  const owners = labelFiltered.length && !filter.owner ? [...labelCounts(summary.issues, filter, "owner")].sort((a, b) => b[1] - a[1]) : [];
+  /** Issues hidden only by the status filter: a bar's errors can all belong to resolved issues. */
+  const otherStatuses = issues.length === 0 && statusFilter !== "all" ? countFor("all") : 0;
+  const issuesTitle = labelFiltered.length
+    ? `Issues: ${labelFiltered.map((k) => labelName(k, filter[k]!)).join(" · ")}${flow ? ` in ${flow}` : ""}`
+    : flow ? `Issues in ${flow}` : "Issues by severity";
   const change = totals.changePct;
 
   return (
@@ -268,18 +280,20 @@ function Overview() {
       {summary.breakdowns.impact.length > 0 && (
         <Card title="Who it hurts and whose it is" subtitle={`Errors in ${range.label}, by how badly they hurt users, who likely fixes them, and what kind of problem. Click one to filter issues.`}>
           <div className="grid gap-5 md:grid-cols-3">
-            {(["impact", "owner", "category"] as const).map((k) => (
+            {LABEL_FILTER_KEYS.map((k) => (
               <div key={k} className="min-w-0">
-                <h3 className="mb-2 text-xs font-medium text-muted">{LABEL_TITLES[k]}</h3>
+                <h3 className="mb-2 text-xs font-medium text-muted">{LABEL_FILTERS[k].title}</h3>
                 <ShareBars
-                  rows={summary.breakdowns[k].map((r) => ({ key: r.key, label: LABEL_NAMES[k][r.key]?.name, value: r.errors }))}
+                  rows={summary.breakdowns[k].map((r) => ({ key: r.key, label: labelName(k, r.key), value: r.errors }))}
                   selected={filter[k]}
                   onSelect={(v) => toggleLabel(k, v)}
                 />
               </div>
             ))}
           </div>
-          <p className="mt-3 text-xs text-muted">Owner counts errors as labelled when they arrived; the issue list uses the owners set in Settings now.</p>
+          <p className="mt-3 text-xs text-muted">
+            Bars count every error in the range, as labelled when it arrived, whatever its issue's status. The list below shows each issue's labels now, including host owners set in Settings since.
+          </p>
         </Card>
       )}
 
@@ -288,13 +302,15 @@ function Overview() {
         subtitle={`Grouped errors seen in ${range.label}. Severity is set by occurrences in the last 24 hours.`}
         right={
           <div className="flex flex-wrap items-center justify-end gap-1 text-xs">
-            {flow && <button className="mr-2 text-accent" onClick={() => navigate({ search: (s) => ({ ...s, flow: undefined }), resetScroll: false })}>Clear flow ×</button>}
+            {flow && <button type="button" className="mr-2 text-accent" onClick={() => navigate({ search: (s) => ({ ...s, flow: undefined }), resetScroll: false })}>Clear flow ×</button>}
             {labelFiltered.length > 0 && (
-              <button className="mr-2 text-accent" onClick={() => navigate({ search: (s) => ({ ...s, category: undefined, owner: undefined, impact: undefined }), resetScroll: false })}>Clear labels ×</button>
+              <button type="button" className="mr-2 text-accent" onClick={() => navigate({ search: (s) => ({ ...s, ...NO_LABEL_FILTERS }), resetScroll: false })}>Clear labels ×</button>
             )}
-            {(["open", "resolved", "ignored", "all"] as const).map((st) => (
+            {STATUS_FILTERS.map((st) => (
               <button
                 key={st}
+                type="button"
+                aria-pressed={statusFilter === st}
                 onClick={() => navigate({ search: (s) => ({ ...s, status: st === "open" ? undefined : st }), resetScroll: false })}
                 className={`rounded-md border px-2 py-1 capitalize ${statusFilter === st ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:bg-panel-2"}`}
               >
@@ -311,13 +327,13 @@ function Overview() {
             return (
               <select
                 key={k}
-                aria-label={`Filter by ${LABEL_TITLES[k].toLowerCase()}`}
+                aria-label={`Filter by ${LABEL_FILTERS[k].title.toLowerCase()}`}
                 value={filter[k] ?? ""}
                 onChange={(e) => navigate({ search: (s) => ({ ...s, [k]: e.target.value || undefined }), resetScroll: false })}
                 className={`rounded-md border bg-panel px-2 py-1 text-xs ${filter[k] ? "border-accent text-accent" : "border-line"}`}
               >
-                <option value="">Any {LABEL_TITLES[k].toLowerCase()}</option>
-                {Object.entries(LABEL_NAMES[k])
+                <option value="">Any {LABEL_FILTERS[k].title.toLowerCase()}</option>
+                {Object.entries(LABEL_FILTERS[k].info)
                   .filter(([id]) => counts.has(id) || filter[k] === id)
                   .map(([id, info]) => (
                     <option key={id} value={id}>{info.name} ({counts.get(id) ?? 0})</option>
@@ -326,6 +342,17 @@ function Overview() {
             );
           })}
         </div>
+        {owners.length > 0 && (
+          <p className="mb-3 text-sm">
+            <span className="text-muted">Whose: </span>
+            {owners.map(([o, n], idx) => (
+              <span key={o}>
+                {idx > 0 && ", "}
+                <button type="button" className="text-accent hover:underline" onClick={() => toggleLabel("owner", o)}>{labelName("owner", o)}</button> {n}
+              </span>
+            ))}
+          </p>
+        )}
         <div className="-mx-4 overflow-x-auto sm:mx-0">
           <table className="tabular w-full min-w-[640px] text-left text-sm">
             <thead className="text-xs text-muted">
@@ -358,7 +385,14 @@ function Overview() {
                 </tr>
               ))}
               {!issues.length && (
-                <tr><td colSpan={7} className="px-2 py-6 text-center text-muted">{labelFiltered.length || flow ? "No issues match these filters." : "No issues."}</td></tr>
+                <tr><td colSpan={7} className="px-2 py-6 text-center text-muted">{otherStatuses > 0 ? (
+                  <>
+                    No {statusFilter} issues match.{" "}
+                    <button type="button" className="text-accent hover:underline" onClick={() => navigate({ search: (s) => ({ ...s, status: "all" }), resetScroll: false })}>
+                      Show {otherStatuses} in other statuses
+                    </button>
+                  </>
+                ) : labelFiltered.length || flow ? "No issues match these filters." : "No issues."}</td></tr>
               )}
             </tbody>
           </table>

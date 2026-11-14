@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { filterIssues, labelFilterOf } from "~/lib/issue-filter";
+import { filterIssues, issueFilterFromQuery } from "~/lib/issue-filter";
 import { authorizeApi } from "~/server/auth";
 import { config } from "~/server/config";
 import { buildSummary, SUMMARY_FIELDS } from "~/server/queries";
@@ -19,7 +19,8 @@ export const Route = createFileRoute("/api/summary")({
         const range = { range: q.get("range") ?? undefined, from: q.get("from") ?? undefined, to: q.get("to") ?? undefined };
         const summary = await buildSummary(await getStore(), app, config().severity, Date.now(), { range, retentionDays: config().retentionDays });
         if (!summary) return Response.json({ error: "no data" }, { status: 404 });
-        const filter = { status: q.get("status") ?? "all", flow: q.get("flow") ?? undefined, ...labelFilterOf((k) => q.get(k)) };
+        const filter = issueFilterFromQuery(q);
+        if (typeof filter === "string") return Response.json({ error: filter }, { status: 400 });
         const issues = filterIssues(summary.issues, filter);
         return Response.json({ ...summary, issues, _filter: filter, _fields: SUMMARY_FIELDS, _severityThresholds24h: config().severity });
       },
