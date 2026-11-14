@@ -29,7 +29,7 @@ describe("initExpo", () => {
     await c.flush();
     expect(sent[0]!.context.device).toMatchObject({ model: "Pixel 8", brand: "google", type: "phone", screen: { width: 393 } });
     expect(sent[0]!.context.app).toMatchObject({ version: "4.2.0", build: "420" });
-    expect(sent[0]!.events[0]!.tags).toMatchObject({ "device.mobileServices": "gms", "network.carrier": "Vodacom" });
+    expect(sent[0]!.events[0]!.tags).toMatchObject({ "device.mobileServices": "gms", "network.carrier": "Vodacom", "device.details": "full" });
   });
 
   it("merges context without letting undefined wipe a value", () => {

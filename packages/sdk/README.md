@@ -186,7 +186,7 @@ app needs a new native build once it's added.
 | Tag `device.freeDisk` | free storage as a band: `<500MB`, `500MB-2GB`, `2GB-8GB`, `8GB+` | first event |
 | Tags `network.carrier`, `app.installer` | mobile operator; where the app was installed from | first event |
 | Tag `network.airplaneMode` | airplane mode (Android; iOS can't read it) | every event |
-| Tag `device.details` | `full`, or `limited` when react-native-device-info isn't linked | first event |
+| Tag `device.details` | `full`, or `limited` when react-native-device-info isn't linked (`collect: { details: false }` leaves it out) | first event |
 
 - **Never collected:** unique ids, Android id, serial number, MAC or IP address, device name.
 - **Without the native half** (Expo Go, or an app not rebuilt since it was added): deBug

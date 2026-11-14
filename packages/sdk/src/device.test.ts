@@ -9,7 +9,7 @@ const rn = vi.hoisted(() => ({
 }));
 vi.mock("react-native", () => rn);
 
-const { setDeviceInfoLoader, staticDeviceTags, liveDeviceTags, freeDiskBand } = await import("./device");
+const { setDeviceInfoLoader, staticDeviceTags, liveDeviceTags, freeDiskBand, detailsTag } = await import("./device");
 const { initReactNative, mmkvStorage } = await import("./react-native");
 const { DebugClient } = await import("./client");
 
@@ -99,6 +99,24 @@ describe("device facts, read by the SDK", () => {
     expect(loader).not.toHaveBeenCalled();
     expect(sent[0]!.events[0]!.tags).not.toHaveProperty("device.details");
     await c.close();
+  });
+
+  it("tags device.details full for a module passed in, and leaves session markers untagged", async () => {
+    rn.NativeModules.RNDeviceInfo = undefined; // the override is used as-is
+    const { c, sent, fetch } = client();
+    initReactNative({ ...opts, fetch, deviceInfo: huawei, autoCapture: { sessions: true } }, c);
+    c.error(new Error("x"));
+    await c.flush();
+    const events = sent.flatMap((b) => b.events);
+    expect(events.find((e) => e.type === "error")!.tags).toHaveProperty("device.details", "full");
+    expect(events.find((e) => e.type === "session")?.tags?.["device.details"]).toBeUndefined();
+    await c.close();
+  });
+
+  it("leaves device.details out with collect: { details: false }", () => {
+    expect(detailsTag(undefined, false)).toEqual({ "device.details": "limited" });
+    expect(detailsTag(undefined, false, { details: false })).toEqual({});
+    expect(detailsTag(undefined, true)).toEqual({});
   });
 
   it("survives a loader that throws even with the native half present", () => {

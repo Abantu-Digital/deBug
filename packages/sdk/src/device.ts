@@ -50,6 +50,8 @@ export interface CollectOptions {
   installer?: boolean;
   /** Airplane mode at the time of each event, Android (tag `network.airplaneMode`). */
   airplaneMode?: boolean;
+  /** Whether react-native-device-info was linked: full or limited (tag `device.details`). */
+  details?: boolean;
 }
 
 const on = (c: CollectOptions | undefined, k: keyof CollectOptions) => c?.[k] !== false;
@@ -132,6 +134,16 @@ export function deviceContext(di: DeviceInfoModule | undefined, collect?: Collec
     },
     app: { version: known(read(di?.getVersion?.bind(di))), build: known(read(di?.getBuildNumber?.bind(di))) } as ContextPatch["app"],
   };
+}
+
+/**
+ * `device.details`: full when react-native-device-info is loaded, limited when it isn't (Expo Go,
+ * an app not rebuilt), so a release build missing it shows on the dashboard. `di` is undefined
+ * both when it's missing and when the app opted out; pass `optedOut` to tell them apart.
+ */
+export function detailsTag(di: DeviceInfoModule | undefined, optedOut: boolean, collect?: CollectOptions): Record<string, string> {
+  if (optedOut || !on(collect, "details")) return {};
+  return { "device.details": di ? "full" : "limited" };
 }
 
 /** Facts that don't change while the app runs, as tags. */
