@@ -84,10 +84,27 @@ as `CATEGORIES`.
 | Id | Rule |
 |---|---|
 | `app` | Categories `network.never_sent`, `client_request`, `crash`, `screen_crash`, `unhandled_rejection`, `uncaught` and `app_reported`. Also `auth` with the cause `auth_expired`: the app should refresh the sign-in. |
-| `backend` | `server`. Once hosts can be named in Settings, the team set for that host wins. |
+| `backend` | `server`, unless Settings gives the host another owner (see Host names below). |
 | `infrastructure` | `network.timeout` or `network.failed` with the cause `burst`, when the failed requests went to more than one host. |
-| `third_party` | A failed request to a host marked as third party in Settings. *Later*: needs named hosts. |
+| `third_party` | A request to a host Settings marks as third party: its `server` errors, and the `network.timeout`, `network.failed` and `auth` errors the rules leave as `unknown`. |
 | `unknown` | Everything else: `network.offline`, a single `network.timeout` or `network.failed` (the network or the server), `auth` without `auth_expired`, and `other`. |
+
+### Host names
+
+In Settings, a host (`api.example.com`) or a host and path prefix (`api.example.com/payments`)
+can get a name ("Payments") and an owner. The longest match wins, on whole path segments. Ports
+are ignored.
+
+- The name replaces the host in issue titles, Slack alerts, failing endpoints, response times,
+  the issue page's hints and both explanations ("Balances (Balance service) didn't load…").
+  Breadcrumbs and the sample event keep the raw URL, for developers.
+- The owner replaces `backend` for `server` errors, and `unknown` for `network.timeout`,
+  `network.failed` and `auth`. It never replaces `app` (the request didn't reach the server, or
+  the app sent it wrong) or `infrastructure` (many hosts failed at once).
+- Names and owners apply on the dashboard as soon as they're saved, to issues seen before too.
+  The owner breakdown counts errors as they were labelled when they arrived, so it follows from
+  the next error on (ingest reads settings about once a minute). Changing or removing a host's
+  owner later puts its errors back to the rule's owner.
 
 ## Impact
 

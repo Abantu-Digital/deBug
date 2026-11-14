@@ -30,6 +30,7 @@ export type {
 } from "./index";
 
 export { cleanFnName, markLibraryFrames } from "./frames";
+export { hostNameFor, MAX_HOST_NAMES, nameUrl, nameUrlsIn, normaliseHostMatch, validHostNames, type HostName } from "./hosts";
 export {
   CATEGORIES,
   CATEGORY_INFO,

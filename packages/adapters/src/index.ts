@@ -1,4 +1,4 @@
-import type { Issue, IssueStatus, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debugkit/schema";
+import type { HostName, Issue, IssueStatus, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debugkit/schema";
 
 export interface IssueUpsert {
   app: string;
@@ -37,6 +37,8 @@ export interface AppSettings {
   /** Flows that matter most (e.g. checkout.payment): their issues rank one severity level higher. */
   criticalFlows?: string[];
   alerts?: AlertSettings;
+  /** Friendly names and owners for the hosts the app calls. */
+  hosts?: HostName[];
   updatedAt?: string;
 }
 

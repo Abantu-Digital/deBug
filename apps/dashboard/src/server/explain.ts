@@ -1,4 +1,4 @@
-import { cleanFnName, CATEGORY_INFO, CAUSE_INFO, IMPACT_INFO, OWNER_INFO, type Category, type Cause, type Classification, type StackFrame, type StoredEvent } from "@debugkit/schema";
+import { cleanFnName, hostNameFor, CATEGORY_INFO, CAUSE_INFO, IMPACT_INFO, OWNER_INFO, type Category, type Cause, type Classification, type HostName, type StackFrame, type StoredEvent } from "@debugkit/schema";
 import { evidenceOf, NO_EVIDENCE, type Evidence } from "@debugkit/ingest";
 
 /**
@@ -45,6 +45,8 @@ export interface ExplainInput {
   platforms?: string[];
   /** Request durations of recent occurrences, for a range ("3–49 ms"). */
   durations?: number[];
+  /** Host names from Settings: the request's host is named in both blocks. */
+  hosts?: readonly HostName[];
   now?: number;
 }
 
@@ -104,11 +106,11 @@ export function thingOf(url: string): string | undefined {
   return words || undefined;
 }
 
-/** "Balances", "The app" — the subject of the summary. */
-function subject(e: { request?: { url: string } } | undefined): { name: string; plural: boolean } {
+/** "Balances", "Balances (Balance service)", "The app" — the subject of the summary. */
+function subject(e: { request?: { url: string } } | undefined, service: string | undefined): { name: string; plural: boolean } {
   const thing = e?.request ? thingOf(e.request.url) : undefined;
-  if (!thing) return { name: e?.request ? "a request" : "the app", plural: false };
-  return { name: thing, plural: /s$/.test(thing) && !/ss$/.test(thing) };
+  if (!thing) return { name: service ? `a request to ${service}` : e?.request ? "a request" : "the app", plural: false };
+  return { name: service ? `${thing} (${service})` : thing, plural: /s$/.test(thing) && !/ss$/.test(thing) };
 }
 
 function stillHappening(i: ExplainIssue, rangeLabel: string, now: number): string {
@@ -245,9 +247,10 @@ export function explain(input: ExplainInput): Explanation {
   const t = TEMPLATES[labels.category] ?? TEMPLATES.other;
   const causes = labels.causes;
   const model = input.lastEvent?.context.device.model;
+  const service = e?.request ? hostNameFor(e.request.url, input.hosts)?.host.name : undefined;
 
   // Summary: what, who, where, when, why, causes, still happening, who to pass it to.
-  const s = subject(e);
+  const s = subject(e, service);
   const who = input.users ? ` for ${plural(input.users, "user")}` : "";
   // Name the platform only when it's known for all of them: recent occurrences, or a single user.
   const platforms = input.platforms?.length ? input.platforms : input.users === 1 && input.lastEvent ? [input.lastEvent.context.os.name] : [];
@@ -261,13 +264,13 @@ export function explain(input: ExplainInput): Explanation {
     t.why(ev, causes),
     ...causeSentences,
     stillHappening(issue, rangeLabel, now),
-    `Pass to: ${PASS_TO[labels.owner] ?? PASS_TO.unknown}.`,
+    `Pass to: ${PASS_TO[labels.owner] ?? PASS_TO.unknown}${service && (labels.owner === "backend" || labels.owner === "third_party") ? ` (${service})` : ""}.`,
   ].join(" ");
 
   // Technical: category and owner, evidence, where, fix.
   const took = durationText(input.durations?.length ? input.durations : ev.durationMs !== undefined ? [ev.durationMs] : []);
   const evidence = [t.diagnosis(ev, took)];
-  if (e?.request) evidence.push(`Request: \`${e.request.method.toUpperCase()} ${e.request.url}\`.`);
+  if (e?.request) evidence.push(`Request: \`${e.request.method.toUpperCase()} ${e.request.url}\`${service ? ` (${service})` : ""}.`);
   if (causes.includes("resumed_from_background") && ev.msSinceForeground !== undefined)
     evidence.push(`The app came to the foreground ${seconds(ev.msSinceForeground)} before; no request has succeeded since.`);
   if (ev.failedBefore > 0) evidence.push(`${plural(ev.failedBefore, "other request")} failed in the 5 s before${ev.failedHosts.length > 1 ? `, across ${ev.failedHosts.length} hosts` : ""}.`);

@@ -9,7 +9,7 @@ import { assignIncidents, incidentIssueKey, type BatchError } from "./incidents"
 import { culpritOf, fingerprint, titleOf } from "./fingerprint";
 
 export * from "./fingerprint";
-export { classify, evidenceOf, NO_EVIDENCE, issueCauses, withIssueCauses, type ClassifyOptions, type Evidence, type IssueFacts } from "./classify";
+export { classify, evidenceOf, hostOwner, NO_EVIDENCE, issueCauses, withIssueCauses, type ClassifyOptions, type Evidence, type IssueFacts } from "./classify";
 export { incidentKey, incidentIssueKey, isRequestCategory, parseIncidentIssueKey, parseIncidentKey, type IncidentKey } from "./incidents";
 export { handleAdmin, effectiveRetention, cachedSettings, type AdminOptions } from "./admin";
 export { countryOf } from "./country";
@@ -107,6 +107,7 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
   // Critical flows decide whether an error blocks the user. Cached, and only read when there are errors.
   const settings = env.events.some((e) => e.type === "error") ? await cachedSettings(opts.store, app) : null;
   const criticalFlows = settings?.criticalFlows ?? [];
+  const hosts = settings?.hosts ?? [];
   /** This batch's errors, to group into incidents once they're all labelled. */
   const batchErrors: (BatchError & { se: StoredEvent; fp: string })[] = [];
 
@@ -146,7 +147,7 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
     if (event.type === "error") {
       fp = fingerprint(event);
       // The device's own clock: breadcrumbs use it too, and sanitiseTs may have replaced event.ts.
-      labels = classify({ ...event, ts: raw.ts }, { criticalFlows });
+      labels = classify({ ...event, ts: raw.ts }, { criticalFlows, hosts });
       const cur = issues.get(fp);
       se = storedEvent(day, event, fp, labels);
       batchErrors.push({ ts: raw.ts, labels, se, fp });

@@ -120,3 +120,27 @@ describe("plain words", () => {
     expect(userAction(parseStack("Error: x\n    at onLayout (main.jsbundle:1:1)"))).toBeUndefined();
   });
 });
+
+describe("explain: host names from Settings", () => {
+  const hosts = [{ match: "api-b.example.com/api/balance", name: "Balance service", owner: "backend" as const }];
+
+  it("names the service in the summary and the request line", () => {
+    const e = resumeIncident[4]!;
+    const x = explain({ ...base, labels: classify(e, { hosts }), lastEvent: stored(e), users: 1, hosts });
+    expect(x.summary).toMatch(/^Balances \(Balance service\) didn't load for 1 user on iPhone/);
+    expect(x.summary).toMatch(/Pass to: app team\.$/); // never sent: still the app's, whoever owns the host
+    expect(x.technical.evidence).toContain("Request: `POST api-b.example.com/api/balance/getBalances` (Balance service).");
+  });
+
+  it("passes server errors to the host's owner, by name", () => {
+    const e = {
+      ...resumeIncident[4]!,
+      error: { name: "HttpError", message: "POST api-b.example.com/api/balance/getBalances responded 503" },
+      request: { method: "POST", url: "api-b.example.com/api/balance/getBalances", status: 503, durationMs: 220 },
+      breadcrumbs: [],
+    };
+    const x = explain({ ...base, labels: classify(e, { hosts }), lastEvent: stored(e), hosts });
+    expect(x.summary).toMatch(/^Balances \(Balance service\) failed with a server error\./);
+    expect(x.summary).toMatch(/Pass to: backend team \(Balance service\)\.$/);
+  });
+});
