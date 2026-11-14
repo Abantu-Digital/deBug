@@ -14,52 +14,89 @@ The types and the plain-language text are in [`packages/schema/src/taxonomy.ts`]
 Ids are stable, because saved filters and ticket rules depend on them: add new ids, but never
 rename one.
 
-**Signals today vs later.** Some rules need data the SDK doesn't send yet:
+**Decided per error, from what came before it.** The classifier labels each error when it
+arrives, using the error, its context and its breadcrumbs. Breadcrumbs only hold what happened
+*earlier*, so nothing here depends on later events. Anything that needs hindsight belongs to
+incidents, which group related errors after the fact. Examples: "a retry succeeded", or "this was
+the first of five failures".
+
+**Signals the SDK doesn't send yet.** Rules marked *later* need data the SDK doesn't send yet.
+Until it does, the label can't be given, or a nearby signal stands in, as the table says:
 
 - whether the phone was online;
-- time since the app came to the foreground;
-- the HTTP client's error code.
+- the exact time since the app came to the foreground;
+- an explicit `fatal` flag.
 
-Until that data arrives, those rules use the closest signal the SDK has today, and the table
-says which. "Phase B" is the later phase that adds the missing data.
+## What the SDK sends today
+
+These are the facts the rules below are built on:
+
+- **Failed requests:**
+  - error `name`: `NetworkError` (no status) or `HttpError` (has a status);
+  - `request`: method, path, status, duration;
+  - `tags.source`: `network`;
+  - the message ends in `timed out` when the request timed out;
+  - aborted requests are never reported.
+- **Which statuses count as failures:** by default only 5xx. A 4xx becomes an error only when the
+  app sets `network.isFailure`, and Node's `http-server` capture only reports 5xx. So `auth` and
+  `client_request` only appear in apps that opt in.
+- **Uncaught errors:**
+  - `handled: false`, and `tags.source` says where it came from:
+    - `global-handler` (React Native), `window.onerror` (web) or `uncaughtException` (Node);
+    - `error-boundary` for a screen that failed to draw;
+    - `unhandled-rejection`, `unhandledrejection` or `unhandledRejection` for promises.
+  - `withDebug` on the server sends `handled: false` with no source.
+- **Fatal errors:** the SDK doesn't store a `fatal` flag. It sets `severity: "critical"` on a fatal
+  error unless the app gave its own severity. The session's `crashed` marker is the reliable
+  signal.
+- **App lifecycle:** a `ui` breadcrumb with the message `App came to the foreground` or
+  `App went to the background`.
+- **Slow requests:** network breadcrumbs at level `warning`, i.e. slower than the app's `slowMs`
+  (3 s by default).
 
 ## Category
 
-The classifier checks the rules in this order and takes the first match.
+The classifier checks the rules in this order and takes the first match. The order is the same
+as `CATEGORIES`.
 
 | Id | Plain label | Rule |
 |---|---|---|
-| `network.offline` | Phone offline | `request` with no `status`, and the phone was offline. **Phase B**: needs the network state. Until then this falls through to the next two rules. |
+| `network.offline` | Phone offline | `request` with no `status`, and the phone was offline. *Later*: needs the network state, so nothing gets this label yet. |
+| `network.timeout` | Request timed out | `request` with no `status`, and the message ends in `timed out`. |
 | `network.never_sent` | Request never sent | `request` with no `status`, and `durationMs` < 100 ms: too fast to have reached a server. |
-| `network.timeout` | Request timed out | `request` with no `status`, and `durationMs` ≥ 100 ms; or the error name is `TimeoutError` or `AbortError`. |
-| `auth` | Sign-in problem | `request.status` is 401 or 403. |
+| `network.failed` | Connection failed | `request` with no `status`, anything else: DNS, TLS or a refused connection. |
+| `auth` | Sign-in problem | `request.status` is 401 or 403. Opt-in, see above. |
 | `server` | Server error | `request.status` is 500–599. |
-| `client_request` | Request rejected | any other `request.status` from 400–499. |
-| `crash` | App crash | `handled: false`, and the error was fatal (severity `critical`, set by the SDK) from the global handler (`source: global-handler`, `uncaughtException`). |
+| `client_request` | Request rejected | any other `request.status` from 400–499. Opt-in, see above. |
+| `crash` | App crash | `handled: false`, `tags.source` is `global-handler` or `uncaughtException`, and `severity` is `critical`. *Later*: the SDK sends `fatal`, so an app-set severity can't hide a crash. |
 | `screen_crash` | Screen crash | `tags.source` is `error-boundary`. |
-| `unhandled_rejection` | Unhandled background error | `tags.source` is any of `unhandled-rejection` (React Native), `unhandledrejection` (web) or `unhandledRejection` (Node). |
-| `handled` | Reported by the app | `handled: true` and no `request`. |
-| `other` | Other | Nothing above matched, e.g. a non-fatal error from the global handler. |
+| `unhandled_rejection` | Unhandled background error | `tags.source` is `unhandled-rejection`, `unhandledrejection` or `unhandledRejection`. |
+| `uncaught` | Uncaught error | any other `handled: false`: a non-fatal global error, a web `window.onerror`, or `withDebug` on the server. |
+| `app_reported` | Reported by the app | `handled: true` and no `request`: the app called `deBug.error()`. |
+| `other` | Other | Nothing above matched. It should be rare; a growing `other` means a rule is missing. |
 
 ## Owner
 
 | Id | Rule |
 |---|---|
-| `app` | The categories `network.never_sent`, `crash`, `screen_crash`, `unhandled_rejection` and `handled`. Also `client_request`, since the app sent a request the server refused. |
-| `backend` | `server`. With friendly host names (ABA-109), the team set for that host wins. |
-| `infrastructure` | `network.timeout` when several hosts fail at once, i.e. the `burst` cause across more than one host. |
-| `third_party` | A failed request to a host marked as third party in Settings (ABA-109). |
-| `unknown` | `network.offline`, `auth` (an expired sign-in is normal; a refusal straight after sign-in isn't) and `other`. |
+| `app` | Categories `network.never_sent`, `client_request`, `crash`, `screen_crash`, `unhandled_rejection`, `uncaught` and `app_reported`. Also `auth` with the cause `auth_expired`: the app should refresh the sign-in. |
+| `backend` | `server`. Once hosts can be named in Settings, the team set for that host wins. |
+| `infrastructure` | `network.timeout` or `network.failed` with the cause `burst`, when the failed requests went to more than one host. |
+| `third_party` | A failed request to a host marked as third party in Settings. *Later*: needs named hosts. |
+| `unknown` | Everything else: `network.offline`, a single `network.timeout` or `network.failed` (the network or the server), `auth` without `auth_expired`, and `other`. |
 
 ## Impact
 
-The classifier takes the worst one that applies.
+Take the first row that applies.
 
 | Id | Rule |
 |---|---|
-| `blocked` | The category is `crash`; or the error happened in a flow listed in Settings as critical (`criticalFlows`). |
-| `degraded` | `screen_crash`; or a failed request in the foreground that wasn't retried successfully within 5 s. |
-| `silent` | `handled` with no flow; or a failed request followed by a successful request to the same endpoint within 5 s. |
+| `blocked` | The category is `crash`; or the error's flow is listed as critical in Settings (`criticalFlows`). |
+| `silent` | The last lifecycle breadcrumb is `App went to the background`, so the user wasn't looking; or the category is `app_reported` with no flow. |
+| `degraded` | Everything else: a screen crash, a failed request in the foreground, an unhandled error. |
+
+"Recovered" (a retry succeeded, so the user never noticed) needs hindsight. It's worked out for
+incidents, not for single errors.
 
 ## Cause patterns
 
@@ -68,9 +105,9 @@ several.
 
 | Id | Plain label | Rule |
 |---|---|---|
-| `resumed_from_background` | Right after reopening the app | The last lifecycle breadcrumb is "foreground", within 2 s before the error. **Phase B** adds the exact time since foreground. |
-| `burst` | Several failures at once | At least 2 other failed-request breadcrumbs within 1 s of the error. |
-| `slow_network` | Slow network | The median duration of the last 5 successful requests is over 2 s. |
+| `resumed_from_background` | Right after reopening the app | The last lifecycle breadcrumb is `App came to the foreground`, at most 2 s before the error. *Later*: the SDK sends the exact time since foreground. |
+| `burst` | Several failures at once | At least one other failed-request breadcrumb in the 1 s before the error. The first failure of a burst doesn't get it; incidents group the whole burst. |
+| `slow_network` | Slow network | At least 2 of the last 5 network breadcrumbs are slow (level `warning`). |
 | `auth_expired` | Sign-in expired | Category `auth`, and an earlier request in the breadcrumbs to the same host succeeded. |
 | `new_in_release` | New in this version | The issue's `firstVersion` is the latest version seen for the app. |
 | `regressed` | Came back | The issue's status is `regressed`. |
@@ -78,17 +115,21 @@ several.
 
 ## Worked example: Cell C staging, 14 Nov
 
-Five requests failed 3–49 ms after the app came back to the foreground on an iPhone. Seconds
-earlier, the same endpoints had returned 200.
+The app came back to the foreground on an iPhone. Seconds earlier, the same endpoints had returned
+200. Then five requests failed, each within 3–49 ms of being sent. The last of the five was:
 
-The `getBalances` failure gets these labels:
+`POST …/balance/getBalances → failed (16ms)`
 
 | Label | Value | Why |
 |---|---|---|
 | Category | `network.never_sent` | no status, 16 ms |
 | Owner | `app` | the app sent the request before the phone had reconnected |
-| Impact | `degraded` | foreground request, no successful retry |
-| Causes | `resumed_from_background`, `burst` | foreground 1 s before; 4 other failures within 1 s |
+| Impact | `degraded` | the app was in the foreground |
+| Causes | `resumed_from_background`, `burst` | the last lifecycle breadcrumb is the foreground; 4 failed requests just before it |
+
+The other four failures get the same category, owner and impact. All of them get
+`resumed_from_background`; the first one doesn't get `burst`. Incidents fold all five into one:
+"Requests failed on app resume (iOS)".
 
 Plain version: "Balance didn't load right after reopening the app; the phone hadn't reconnected.
 Not a server outage. Pass to: app team."

@@ -28,7 +28,23 @@ export type {
   RollupRow,
 } from "./index";
 
-export * from "./taxonomy";
+export {
+  CATEGORIES,
+  CATEGORY_INFO,
+  OWNERS,
+  OWNER_INFO,
+  IMPACTS,
+  IMPACT_INFO,
+  IMPACT_ORDER,
+  CAUSES,
+  CAUSE_INFO,
+  type Category,
+  type Owner,
+  type Impact,
+  type Cause,
+  type Classification,
+  type LabelInfo,
+} from "./taxonomy";
 
 export const SCHEMA_VERSION = 1;
 

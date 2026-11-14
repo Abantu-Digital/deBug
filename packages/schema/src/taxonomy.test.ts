@@ -13,9 +13,9 @@ describe("taxonomy", () => {
   it.each(sets)("every %s id has plain-language text, and nothing extra", (_name, ids, info) => {
     expect(Object.keys(info).sort()).toEqual([...ids].sort());
     for (const id of ids) {
-      const { label, description } = (info as Record<string, { label: string; description: string }>)[id]!;
-      expect(label.length).toBeGreaterThan(0);
-      expect(label.length).toBeLessThanOrEqual(40);
+      const { name, description } = (info as Record<string, { name: string; description: string }>)[id]!;
+      expect(name.length).toBeGreaterThan(0);
+      expect(name.length).toBeLessThanOrEqual(40);
       expect(description).toMatch(/\.$/);
     }
   });
@@ -37,5 +37,13 @@ describe("taxonomy", () => {
     const { readFileSync } = await import("node:fs");
     const doc = readFileSync(new URL("../../../docs/taxonomy.md", import.meta.url), "utf8");
     for (const [, ids] of sets) for (const id of ids) expect(doc, id).toContain(`\`${id}\``);
+  });
+
+  it("lists categories in the doc in the order the classifier checks them", async () => {
+    const { readFileSync } = await import("node:fs");
+    const doc = readFileSync(new URL("../../../docs/taxonomy.md", import.meta.url), "utf8");
+    const section = doc.split("## Category")[1]!.split("\n## ")[0]!;
+    const rows = [...section.matchAll(/^\| `([a-z_.]+)` \|/gm)].map((m) => m[1]);
+    expect(rows).toEqual([...CATEGORIES]);
   });
 });
