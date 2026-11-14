@@ -9,7 +9,7 @@ import { assignIncidents, incidentIssueKey, type BatchError } from "./incidents"
 import { culpritOf, fingerprint, titleOf } from "./fingerprint";
 
 export * from "./fingerprint";
-export { classify, issueCauses, withIssueCauses, type ClassifyOptions, type IssueFacts } from "./classify";
+export { classify, evidenceOf, issueCauses, withIssueCauses, type ClassifyOptions, type Evidence, type IssueFacts } from "./classify";
 export { incidentKey, incidentIssueKey, isRequestCategory, parseIncidentIssueKey, parseIncidentKey, type IncidentKey } from "./incidents";
 export { handleAdmin, effectiveRetention, cachedSettings, type AdminOptions } from "./admin";
 export { countryOf } from "./country";

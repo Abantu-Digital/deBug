@@ -61,19 +61,46 @@ function IssuePage() {
         <Stat label="Top app version" value={d.breakdowns.appVersion[0]?.key ?? "—"} hint={d.breakdowns.appVersion[0] ? `${Math.round(d.breakdowns.appVersion[0].share * 100)}% of occurrences` : undefined} />
       </div>
 
-      <Card title="What to look at" subtitle="Generated from the error, its breadcrumbs and where it happens.">
-        <ol className="space-y-3">
-          {d.hints.map((h, i) => (
-            <li key={i} className="flex gap-3">
-              <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent-soft text-[11px] font-semibold text-accent">{i + 1}</span>
-              <div>
-                <div className="text-sm font-medium">{h.title}</div>
-                <div className="text-sm text-muted">{h.detail}</div>
-              </div>
-            </li>
-          ))}
-        </ol>
-      </Card>
+      {issue.explanation && (
+        <div className="grid gap-5 lg:grid-cols-2">
+          <Card title="What happened" subtitle="In plain words, for support." right={d.ticketMarkdown ? <CopyButton text={d.ticketMarkdown} /> : undefined}>
+            <p className="text-sm leading-relaxed">{issue.explanation.summary}</p>
+          </Card>
+          <Card title="For developers" subtitle={issue.explanation.technical.headline}>
+            <ul className="list-disc space-y-1 pl-5 text-sm">
+              {issue.explanation.technical.evidence.map((line, i) => (
+                <li key={i}>{line}</li>
+              ))}
+            </ul>
+            {issue.explanation.technical.where && (
+              <p className="mt-3 text-sm">
+                <span className="font-medium">Where: </span>
+                <span className="break-words font-mono text-xs">{issue.explanation.technical.where.replaceAll("`", "")}</span>
+              </p>
+            )}
+            <p className="mt-3 text-sm">
+              <span className="font-medium">Suggested fix: </span>
+              {issue.explanation.technical.fix.replaceAll("`", "")}
+            </p>
+          </Card>
+        </div>
+      )}
+
+      {d.hints.length > 0 && (
+        <Card title={issue.explanation ? "Also worth checking" : "What to look at"} subtitle="Generated from the error, its breadcrumbs and where it happens.">
+          <ol className="space-y-3">
+            {d.hints.map((h, i) => (
+              <li key={i} className="flex gap-3">
+                <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-accent-soft text-[11px] font-semibold text-accent">{i + 1}</span>
+                <div>
+                  <div className="text-sm font-medium">{h.title}</div>
+                  <div className="text-sm text-muted">{h.detail}</div>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </Card>
+      )}
 
       <div className="grid gap-5 lg:grid-cols-3">
         <div className="lg:col-span-2">
@@ -217,5 +244,47 @@ function IssueActions({
       {canChange && !closed && <p className="w-full text-xs text-muted">If it shows up again in {version || "that version"} or later, it's marked Regressed. Occurrences from older versions don't count: those users haven't updated yet.</p>}
       {error && <p role="alert" className="w-full text-sm text-sev-critical">{error}</p>}
     </section>
+  );
+}
+
+/** Copy text: the Clipboard API, or a hidden textarea where that's blocked (embedded browsers, plain http). */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    try {
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    } finally {
+      area.remove();
+    }
+  }
+}
+
+/** Copies the explanation as Markdown, for a Jira or Linear ticket made by hand. */
+function CopyButton({ text }: { text: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  return (
+    <button
+      type="button"
+      className="rounded-md border border-line px-2 py-1 text-xs text-muted hover:bg-panel-2"
+      onClick={() => {
+        void copyText(text).then((ok) => {
+          setState(ok ? "copied" : "failed");
+          setTimeout(() => setState("idle"), 2500);
+        });
+      }}
+    >
+      {state === "copied" ? "Copied" : state === "failed" ? "Couldn't copy" : "Copy for a ticket"}
+    </button>
   );
 }

@@ -141,6 +141,21 @@ the SDK sent), and its users.
   lists each incident with its issues, each issue page names its incident, and each error stores
   its incident key. An incident whose issues are all resolved or ignored leaves the overview.
 
+## Explanations
+
+Every issue gets two explanations, built from its labels, the evidence behind them
+(`evidenceOf` in `@debugkit/ingest`) and the stack, one template per category. They live in
+`apps/dashboard/src/server/explain.ts`.
+
+- **What happened** (support): what the user saw, where, for how many people, after which user
+  action (from the handler in the stack, e.g. `_onRefresh` → pull to refresh), whether it's
+  still happening, and who to pass it to (from the owner).
+- **For developers:** the category, owner and impact, the evidence, where in the code and what
+  started it, and a suggested fix.
+
+Both are in `/api/summary` (`issues[].explanation`) and on the issue page, which can copy them as
+Markdown for a ticket made by hand.
+
 ## Worked example: Cell C staging, 14 Nov
 
 The app came back to the foreground on an iPhone at 12:59:55.45. Seconds earlier, the same

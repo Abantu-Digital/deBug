@@ -17,6 +17,7 @@ import {
   type SeverityThresholds,
   type StoredEvent,
 } from "@debugkit/schema";
+import { explain, explanationMarkdown, type Explanation } from "./explain";
 import { daysBetween, resolveRange, weekOf, type DateRange } from "./range";
 
 /**
@@ -68,6 +69,8 @@ export interface IssueRow {
   /** The incident the latest occurrence belonged to, if any (see Summary.incidents), and its title. */
   incident?: string;
   incidentTitle?: string;
+  /** Plain summary for support and technical detail for developers (see explain.ts). */
+  explanation?: Explanation;
 }
 
 /**
@@ -222,6 +225,8 @@ export const SUMMARY_FIELDS = {
   "incidents[].active": "false when every issue in it is resolved or ignored; the overview hides those.",
   "incidents[].issues": "The issues in the incident with their errors in the range.",
   "issues[].incident": "Key of the incident the latest occurrence belonged to, if any.",
+  "issues[].explanation.summary": "What happened, in plain words for support: what the user saw, where, how many people, whether it's still happening and who to pass it to.",
+  "issues[].explanation.technical": "For developers: category, owner and impact (headline), the evidence, where in the code and what started it, and a suggested fix.",
   "issues[].labels": "What kind of problem (category), who likely fixes it (owner), how badly it hurts users (impact: blocked, degraded, silent) and why (causes). Ids and rules: docs/taxonomy.md in the deBug repo.",
   "breakdowns.category": "Errors in the range by category (e.g. network.never_sent, server, crash).",
   "breakdowns.owner": "Errors in the range by likely owner: app, backend, infrastructure, third_party, unknown.",
@@ -359,6 +364,9 @@ export async function buildSummary(
   // Users affected: one count per issue, so only for the issues people look at first.
   const active = issueRows.filter((i) => i.status !== "ignored" && i.status !== "resolved");
   await Promise.all(active.slice(0, 10).map(async (i) => (i.users = await countUsersSafe(store, app, `issue:${i.fingerprint}`, usersSince))));
+  const lastEvents = new Map(issues.map((i) => [i.fingerprint, i.lastEvent]));
+  for (const row of issueRows)
+    if (row.labels) row.explanation = explain({ ...row, labels: row.labels, lastEvent: lastEvents.get(row.fingerprint), rangeLabel: range.label, now });
 
   // Incident counts follow the issue table: for 24h, each issue's hourly count caps its daily rollup.
   const incidents = await buildIncidents(incidentRows, incidentIssueRows, issueRows, hourly, (key) => countUsersSafe(store, app, `incident:${key}`, usersSince));
@@ -721,6 +729,8 @@ export interface IssueDetail {
   sample: StoredEvent | null;
   recent: { ts: string; os: string; appVersion?: string; device?: string; message: string; userId?: string }[];
   hints: { title: string; detail: string }[];
+  /** The explanation as Markdown, for "Copy for a ticket". */
+  ticketMarkdown?: string;
 }
 
 export async function buildIssueDetail(
@@ -774,7 +784,10 @@ export async function buildIssueDetail(
   const row = toIssueRow(issue, count24h, countRange, thresholds, null, criticalFlows);
   // Recent occurrences say whether it's one device model.
   if (row.labels) row.labels = withIssueCauses(row.labels, { deviceModels: events.map((e) => e.context.device.model) });
-  const hints = hintsFor(issue, breakdowns, events);
+  const hints = hintsFor(issue, breakdowns, events, !!row.labels);
+  row.explanation = row.labels
+    ? explain({ ...row, labels: row.labels, lastEvent: events[0] ?? issue.lastEvent, users: affectedUsers, rangeLabel: range.label, now })
+    : undefined;
   const detail = {
     app,
     range,
@@ -795,8 +808,10 @@ export async function buildIssueDetail(
       userId: e.user?.id,
     })),
     hints,
+    ticketMarkdown: undefined as string | undefined,
   } satisfies IssueDetail;
   detail.links = trackerLinks(detail, opts.trackers ?? {});
+  if (row.explanation) detail.ticketMarkdown = explanationMarkdown(row.title, row.explanation, issueUrl(opts.trackers?.dashboardUrl, app, fingerprint));
   return detail;
 }
 
@@ -812,13 +827,18 @@ export interface Trackers {
 }
 
 /** The issue as a ticket: what, where, how often, what to look at. Kept short enough for a URL. */
+const issueUrl = (dashboardUrl: string | undefined, app: string, fp: string) =>
+  dashboardUrl ? `${dashboardUrl.replace(/\/+$/, "")}/issues/${fp}?app=${encodeURIComponent(app)}` : undefined;
+
 export function issueStory(d: Omit<IssueDetail, "links">, dashboardUrl?: string): { title: string; body: string } {
   const i = d.issue;
+  const x = i.explanation;
   const top = (rows: { key: string; share: number }[]) => rows.filter((r) => r.key !== "unknown").slice(0, 3).map((r) => `${r.key} (${Math.round(r.share * 100)}%)`).join(", ") || "n/a";
   const frames = d.sample?.event.type === "error" ? (d.sample.event.error.frames ?? []).filter((f) => f.inApp).slice(0, 3) : [];
   const body = [
     `**${i.title}**`,
     i.culprit ? `At \`${i.culprit}\`${i.flow ? ` in flow \`${i.flow}\`` : ""}.` : i.flow ? `In flow \`${i.flow}\`.` : "",
+    ...(x ? ["", x.summary, "", `**${x.technical.headline}**`, ...x.technical.evidence.map((l) => `- ${l}`), `**Suggested fix:** ${x.technical.fix}`] : []),
     "",
     `- ${i.countRange.toLocaleString()} occurrences in ${d.range.label}, ${i.count24h} in the last 24h (severity: ${i.severity})`,
     `- ${d.affectedUsers.toLocaleString()} users affected`,
@@ -827,7 +847,7 @@ export function issueStory(d: Omit<IssueDetail, "links">, dashboardUrl?: string)
     `- OS: ${top(d.breakdowns.os)}; devices: ${top(d.breakdowns.deviceModel)}`,
     ...(frames.length ? ["", "Stack (in-app frames):", ...frames.map((f) => `- \`${f.fn ?? "?"}\` ${f.file ?? ""}:${f.line ?? ""}`)] : []),
     ...(d.hints.length ? ["", "What to look at:", ...d.hints.slice(0, 3).map((h) => `- ${h.title}: ${h.detail}`)] : []),
-    ...(dashboardUrl ? ["", `deBug: ${dashboardUrl.replace(/\/+$/, "")}/issues/${i.fingerprint}?app=${encodeURIComponent(d.app)}`] : []),
+    ...(dashboardUrl ? ["", `deBug: ${issueUrl(dashboardUrl, d.app, i.fingerprint)}`] : []),
   ]
     .filter((l, n, all) => !(l === "" && all[n - 1] === ""))
     .join("\n");
@@ -844,7 +864,7 @@ function trackerLinks(d: Omit<IssueDetail, "links">, t: Trackers): IssueDetail["
 }
 
 /** Rule-based "what to look at" hints. Phase 2 replaces/augments these with an LLM over the same data. */
-function hintsFor(issue: Issue, b: IssueDetail["breakdowns"], events: StoredEvent[]): IssueDetail["hints"] {
+function hintsFor(issue: Issue, b: IssueDetail["breakdowns"], events: StoredEvent[], explained = false): IssueDetail["hints"] {
   const hints: IssueDetail["hints"] = [];
   const text = `${issue.title} ${events[0]?.event.type === "error" ? (events[0].event.error.stack ?? "") : ""}`.toLowerCase();
   const crumbs = events.flatMap((e) => (e.event.type === "error" ? (e.event.breadcrumbs ?? []) : []));
@@ -863,22 +883,23 @@ function hintsFor(issue: Issue, b: IssueDetail["breakdowns"], events: StoredEven
       title: "A value is missing when the code expects it",
       detail: `Something is null/undefined at ${issue.culprit ?? "the top frame"}. Check the data the previous step returns (API response shape, async state not yet loaded) and add a guard or loading state.`,
     });
-  if (/network request failed|failed to fetch|networkerror|timeout|timed out|econn|socket/.test(text))
+  // With labels, the explanation covers network, auth and server failures: these hints would repeat it.
+  if (!explained && /network request failed|failed to fetch|networkerror|timeout|timed out|econn|socket/.test(text))
     hints.push({ title: "Network failure", detail: "Check if errors line up with poor connectivity (see the network breakdown), add retries with backoff, and show an offline/timeout state instead of failing." });
-  if (/\b401\b|\b403\b|unauthori[sz]ed|forbidden|token expired|jwt/.test(text))
+  if (!explained && /\b401\b|\b403\b|unauthori[sz]ed|forbidden|token expired|jwt/.test(text))
     hints.push({ title: "Auth/session problem", detail: "Look for expired or missing tokens. Confirm the token refresh runs before this call, and that the clock/expiry handling is right." });
   if (/json|unexpected token|syntaxerror/.test(text))
     hints.push({ title: "Bad response body", detail: "The app tried to parse something that isn't the JSON it expected — often an HTML error page or an empty 204/5xx. Log the status and content-type before parsing." });
-  if (/\b5\d\d\b|internal server error|bad gateway|service unavailable/.test(text))
+  if (!explained && /\b5\d\d\b|internal server error|bad gateway|service unavailable/.test(text))
     hints.push({ title: "Server-side failure", detail: "The backend returned a 5xx. Correlate the timestamps with your API logs." });
 
   const failingRequests = crumbs.filter((c) => c.category === "network" && (c.level === "error" || /\b[45]\d\d\b/.test(c.message)));
-  if (failingRequests.length) {
+  if (failingRequests.length && !explained) {
     const m = new Map<string, number>();
     for (const c of failingRequests) m.set(c.message, (m.get(c.message) ?? 0) + 1);
     const [msg] = [...m.entries()].sort((a, b) => b[1] - a[1])[0]!;
     hints.push({ title: "A request fails right before the error", detail: `Most common: ${msg}` });
   }
-  if (hints.length === 0) hints.push({ title: "Start at the culprit frame", detail: `Open ${issue.culprit ?? "the top stack frame"} and use the breadcrumbs below to replay what the user did.` });
+  if (hints.length === 0 && !explained) hints.push({ title: "Start at the culprit frame", detail: `Open ${issue.culprit ?? "the top stack frame"} and use the breadcrumbs below to replay what the user did.` });
   return hints;
 }
