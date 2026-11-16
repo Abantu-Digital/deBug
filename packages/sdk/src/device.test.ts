@@ -9,7 +9,7 @@ const rn = vi.hoisted(() => ({
 }));
 vi.mock("react-native", () => rn);
 
-const { setDeviceInfoLoader, staticDeviceTags, liveDeviceTags, freeDiskBand } = await import("./device");
+const { setDeviceInfoLoader, staticDeviceTags, liveDeviceTags, freeDiskBand, detailsTag } = await import("./device");
 const { initReactNative, mmkvStorage } = await import("./react-native");
 const { DebugClient } = await import("./client");
 
@@ -68,6 +68,7 @@ describe("device facts, read by the SDK", () => {
         "network.carrier": "Cell C",
         "app.installer": "com.huawei.appmarket",
         "network.airplaneMode": "true",
+        "device.details": "full",
       });
     expect(JSON.stringify(sent)).not.toMatch(/SECRET-ID|Sam's phone/);
     await c.close();
@@ -85,7 +86,37 @@ describe("device facts, read by the SDK", () => {
     await c.flush();
     expect(loader).not.toHaveBeenCalled(); // never even evaluated
     expect(sent[0]!.context.device).toMatchObject({ model: "fallback-model", screen: { width: 411 } });
-    expect(sent[0]!.events[0]!.tags).toEqual({ "device.fontScale": "1.1" }); // React Native's own font scale
+    expect(sent[0]!.events[0]!.tags).toEqual({ "device.details": "limited", "device.fontScale": "1.1" }); // React Native's own font scale
+  });
+
+  it("sends no device.details tag when the app opts out with deviceInfo: null", async () => {
+    const loader = vi.fn(() => huawei);
+    setDeviceInfoLoader(loader);
+    const { c, sent, fetch } = client();
+    initReactNative({ ...opts, fetch, deviceInfo: null }, c);
+    c.error(new Error("x"));
+    await c.flush();
+    expect(loader).not.toHaveBeenCalled();
+    expect(sent[0]!.events[0]!.tags).not.toHaveProperty("device.details");
+    await c.close();
+  });
+
+  it("tags device.details full for a module passed in, and leaves session markers untagged", async () => {
+    rn.NativeModules.RNDeviceInfo = undefined; // the override is used as-is
+    const { c, sent, fetch } = client();
+    initReactNative({ ...opts, fetch, deviceInfo: huawei, autoCapture: { sessions: true } }, c);
+    c.error(new Error("x"));
+    await c.flush();
+    const events = sent.flatMap((b) => b.events);
+    expect(events.find((e) => e.type === "error")!.tags).toHaveProperty("device.details", "full");
+    expect(events.find((e) => e.type === "session")?.tags?.["device.details"]).toBeUndefined();
+    await c.close();
+  });
+
+  it("leaves device.details out with collect: { details: false }", () => {
+    expect(detailsTag(undefined, false)).toEqual({ "device.details": "limited" });
+    expect(detailsTag(undefined, false, { details: false })).toEqual({});
+    expect(detailsTag(undefined, true)).toEqual({});
   });
 
   it("survives a loader that throws even with the native half present", () => {

@@ -1,7 +1,7 @@
 import { AppState, Platform } from "react-native";
 import { deBug, type DebugClient, type InitOptions } from "./index";
 import { locale, mergeContext, timezone, type ContextPatch } from "./context";
-import { deviceContext, liveDeviceTags, loadDeviceInfo, staticDeviceTags, type CollectOptions, type DeviceInfoModule } from "./device";
+import { detailsTag, deviceContext, liveDeviceTags, loadDeviceInfo, staticDeviceTags, type CollectOptions, type DeviceInfoModule } from "./device";
 
 export * from "./react";
 
@@ -65,11 +65,15 @@ export function initReactNative(options: ReactNativeInitOptions, client: DebugCl
     context: mergeContext(base, rest.context ?? {}),
   });
   if (!client.enabled) return client; // enabled: false — no listeners, no rejection tracking
-  if (!di && deviceInfo !== null && rest.debug) console.log("[deBug] react-native-device-info isn't linked (Expo Go, or the app needs a rebuild): device details are limited");
+  const optedOut = deviceInfo === null;
+  if (!di && !optedOut && rest.debug) console.log("[deBug] react-native-device-info isn't linked (Expo Go, or the app needs a rebuild): device details are limited");
 
   // Device facts on every error and event: fixed ones read once, on the first event; live ones each time.
   let fixed: Record<string, string> | undefined;
-  removeDeviceTags = client.addTagSource(() => ({ ...(fixed ??= staticDeviceTags(di, collect)), ...liveDeviceTags(di, collect) }));
+  removeDeviceTags = client.addTagSource(() => ({
+    ...(fixed ??= { ...detailsTag(di, optedOut, collect), ...staticDeviceTags(di, collect) }),
+    ...liveDeviceTags(di, collect),
+  }));
 
   // Sessions end after 30 minutes in the background; coming back after that starts a new one.
   let backgroundedAt = 0;
