@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MemoryStore } from "@debugkit/adapters/memory";
 import { ingest } from "@debugkit/ingest";
-import { buildSessionDetail, describeEvent, SESSION_EVENT_LIMIT, uniqueCrumbs } from "./session";
+import { buildSessionDetail, describeEvent, SESSION_EVENT_LIMIT, stepsAfter, uniqueCrumbs } from "./session";
 
 const at = (s: number) => new Date(Date.parse("2026-11-16T09:00:00.000Z") + s * 1000).toISOString();
 const crumbs = {
@@ -99,6 +99,15 @@ describe("session timeline", () => {
     );
     const s = (await buildSessionDetail(store, "a", "s-long"))!;
     expect(s).toMatchObject({ truncated: true, read: SESSION_EVENT_LIMIT, end: at(SESSION_EVENT_LIMIT + 1), start: at(2) });
+  });
+
+  it("finds what the customer did after an error in the trails of later errors", async () => {
+    const store = await session([
+      { type: "error", id: "evt_000000031", ts: at(10), error: { name: "HttpError", message: "POST /buy/with-airtime → 422" }, breadcrumbs: [crumbs.open, crumbs.buy, crumbs.pay] },
+      { type: "error", id: "evt_000000032", ts: at(25), handled: false, error: { name: "TypeError", message: "x" }, breadcrumbs: [crumbs.buy, crumbs.pay, crumbs.back] },
+    ], "s-after");
+    expect((await stepsAfter(store, "a", "s-after", at(10))).map((t) => t.message)).toEqual(["Buy → Dashboard"]);
+    expect(await stepsAfter(store, "a", "s-after", at(25))).toEqual([]);
   });
 
   it("describes flow events in plain words", () => {

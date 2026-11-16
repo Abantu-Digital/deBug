@@ -5,13 +5,15 @@ import { rangeSearch, type RangeSearch } from "~/components/range-picker";
 import { CrumbBody, ICON, clock, joined, offset } from "~/components/timeline";
 import { Card } from "~/components/ui";
 import { getEventDetail } from "~/server/fns";
+import { supportSummary, ticketText } from "~/lib/support-summary";
 import type { ApiCall, EventDetail, TimelineItem } from "~/server/event";
 
 export const Route = createFileRoute("/_authed/events/$eventId")({
   // The range is kept only to take it back to the issue page.
-  validateSearch: (s: Record<string, unknown>): { app: string; issue: string } & RangeSearch => ({
+  validateSearch: (s: Record<string, unknown>): { app: string; issue: string; view?: "support" } & RangeSearch => ({
     app: typeof s.app === "string" ? s.app : "",
     issue: typeof s.issue === "string" ? s.issue : "",
+    view: s.view === "support" ? "support" : undefined,
     ...rangeSearch(s),
   }),
   loaderDeps: ({ search }) => ({ app: search.app, issue: search.issue }),
@@ -25,9 +27,10 @@ export const Route = createFileRoute("/_authed/events/$eventId")({
 
 function EventPage() {
   const d = Route.useLoaderData();
-  const { range, from, to } = Route.useSearch();
+  const { range, from, to, view } = Route.useSearch();
   const issueSearch = { app: d.app, range, from, to };
-  const step = (id: string) => ({ to: "/events/$eventId" as const, params: { eventId: id }, search: { ...issueSearch, issue: d.issue.fingerprint } });
+  const step = (id: string) => ({ to: "/events/$eventId" as const, params: { eventId: id }, search: { ...issueSearch, issue: d.issue.fingerprint, view } });
+  const support = view === "support";
   const stepClass = "rounded-md border border-line px-2 py-1 text-xs hover:bg-panel-2";
 
   return (
@@ -54,6 +57,14 @@ function EventPage() {
 
       <Who d={d} />
 
+      <Summary d={d} support={support} />
+
+      {support ? (
+        <Card title="What they did" subtitle="Screens, taps and failed calls before the error, and after it when the session went on.">
+          <Steps items={d.timeline.filter(forSupport)} after={d.after.filter(forSupport)} errorTs={d.ts} />
+        </Card>
+      ) : (
+      <>
       <div className="grid gap-5 lg:grid-cols-5">
         <div className="min-w-0 lg:col-span-3">
           <Card title="Timeline" subtitle="What happened before the error, in order. Times are from the device, relative to the error.">
@@ -103,7 +114,59 @@ function EventPage() {
           <pre className="overflow-auto whitespace-pre-wrap text-xs text-muted">{d.stack ?? "No stack trace captured."}</pre>
         )}
       </Card>
+      </>
+      )}
     </main>
+  );
+}
+
+/** The support summary, the Support / Developer switch, and "Copy for ticket". */
+function Summary({ d, support }: { d: EventDetail; support: boolean }) {
+  const search = Route.useSearch();
+  const summary = supportSummary(d, (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }));
+  const link = typeof window === "undefined" ? "" : `${window.location.origin}/events/${encodeURIComponent(d.id)}?app=${encodeURIComponent(d.app)}&issue=${encodeURIComponent(d.issue.fingerprint)}`;
+  const tab = (on: boolean) => `rounded-md px-2.5 py-1 text-xs ${on ? "bg-panel-2 font-medium text-ink" : "text-muted hover:text-ink"}`;
+  return (
+    <section aria-label="Support summary" className="rounded-xl border border-line bg-panel p-4 sm:p-5">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold">What happened</h2>
+        <div className="flex items-center gap-2">
+          <span className="flex rounded-md border border-line p-0.5" role="group" aria-label="View">
+            <Link to="/events/$eventId" params={{ eventId: d.id }} search={{ ...search, view: "support" }} replace aria-pressed={support} className={tab(support)}>Support</Link>
+            <Link to="/events/$eventId" params={{ eventId: d.id }} search={{ ...search, view: undefined }} replace aria-pressed={!support} className={tab(!support)}>Developer</Link>
+          </span>
+          <CopyButton text={ticketText(summary, link, d.request?.traceId)} label="Copy for ticket" ariaLabel="Copy the summary, event link and trace id for a ticket" />
+        </div>
+      </div>
+      <p className="text-[15px] leading-relaxed">{summary.sentences.join(" ")}</p>
+    </section>
+  );
+}
+
+/** The steps support follows: screens, taps, what the app showed, and calls that failed. */
+function forSupport(t: TimelineItem): boolean {
+  return t.category === "navigation" || t.category === "ui" || !!t.api?.failed || typeof t.data?.shown === "string";
+}
+
+function Steps({ items, after, errorTs }: { items: TimelineItem[]; after: TimelineItem[]; errorTs: string }) {
+  const row = (t: TimelineItem, i: number) => (
+    <li key={`${t.ts}${i}`} className={`grid grid-cols-[4.5rem_1.25rem_1fr] gap-2 rounded-md px-2 py-1.5 text-sm ${t.failed ? "bg-sev-critical/10" : ""}`}>
+      <span className="tabular pt-0.5 text-right text-xs text-muted" title={t.ts}>{offset(t.ts, errorTs)}</span>
+      <span aria-hidden className={`pt-0.5 text-center ${t.failed ? "text-sev-critical" : "text-muted"}`}>{ICON[t.category]}</span>
+      <div className="min-w-0"><CrumbBody item={t} /></div>
+    </li>
+  );
+  if (!items.length && !after.length) return <p className="text-sm text-muted">No screens or taps recorded before this error.</p>;
+  return (
+    <ol className="space-y-1.5">
+      {items.map(row)}
+      <li className="grid grid-cols-[4.5rem_1.25rem_1fr] gap-2 rounded-md bg-sev-critical/15 px-2 py-1.5 text-sm font-medium text-sev-critical">
+        <span className="tabular pt-0.5 text-right text-xs">0 s</span>
+        <span aria-hidden className="pt-0.5 text-center">✕</span>
+        <span>The error</span>
+      </li>
+      {after.map(row)}
+    </ol>
   );
 }
 

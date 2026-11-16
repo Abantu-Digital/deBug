@@ -27,6 +27,8 @@ export interface EventDetail {
   /** In-app frames first, each group in stack order. */
   frames: StackFrame[];
   stack?: string;
+  /** What the customer did next, from the session's later errors (filled in by getEventDetail). */
+  after: TimelineItem[];
   /** The neighbouring occurrences of the same issue, for stepping through them. */
   newer?: string;
   older?: string;
@@ -217,6 +219,7 @@ export async function buildEventDetail(store: ReadStore, app: string, fingerprin
     request: failedRequest(ev.request, timeline, hosts),
     frames: framesInAppFirst(ev.error.frames),
     stack: ev.error.stack,
+    after: [],
     newer: index > 0 ? errors[index - 1]!.event.id : undefined,
     older: index >= 0 && index < errors.length - 1 ? errors[index + 1]!.event.id : undefined,
   };
