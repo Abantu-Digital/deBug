@@ -4,6 +4,8 @@ import { canManage, checkCredentials, demoLoginEnabled, DEMO_USER, endSession, r
 import { config } from "./config";
 import { buildEventDetail } from "./event";
 import { buildSessionDetail } from "./session";
+import { lookupCustomer } from "./customers";
+import { isMissingIndex } from "./errors";
 import { buildIssueDetail, buildSummary } from "./queries";
 import { readSettings, restampStep, seenHosts, settingsWriter, testAlert, validRetention, writeIssueStatus, writeRetention, writeSettings } from "./settings";
 import { getStore } from "./store";
@@ -88,10 +90,25 @@ export const getSessionDetail = createServerFn({ method: "GET" })
     try {
       return { session: await buildSessionDetail(await getStore(), data.app, data.sessionId) };
     } catch (e) {
-      // Firestore refuses the query until the (sessionId, ts) index exists: FAILED_PRECONDITION, gRPC code 9.
-      const err = e as { code?: unknown; message?: unknown };
-      const noIndex = config().store === "firestore" && (err?.code === 9 || err?.code === "failed-precondition") && /index/i.test(String(err?.message ?? ""));
-      if (noIndex) return { session: null, missingIndex: true };
+      // Firestore refuses the query until the (sessionId, ts) index exists.
+      if (isMissingIndex(e, config().store)) return { session: null, missingIndex: true };
+      throw e;
+    }
+  });
+
+export const findCustomer = createServerFn({ method: "GET" })
+  .validator((d: { app?: string; q?: string }) => ({ app: typeof d?.app === "string" ? d.app : undefined, q: typeof d?.q === "string" ? d.q.slice(0, 100) : "" }))
+  .handler(async ({ data }) => {
+    await requireUser();
+    const store = await getStore();
+    const apps = await store.listApps();
+    const app = data.app && apps.includes(data.app) ? data.app : apps[0];
+    if (!app) return { apps, app: undefined, lookup: null };
+    try {
+      return { apps, app, lookup: data.q.trim() ? await lookupCustomer(store, app, data.q) : null };
+    } catch (e) {
+      // Firestore refuses the lookup until the user.id and user.anonymousId indexes exist.
+      if (isMissingIndex(e, config().store)) return { apps, app, lookup: null, missingIndex: true };
       throw e;
     }
   });

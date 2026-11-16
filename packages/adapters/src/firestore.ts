@@ -2,7 +2,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { isRegression, type Issue, type RollupDimension, type RollupIncrement, type RollupRow, type StoredEvent } from "@debugkit/schema";
 import { coalesceRollups, rollupId } from "./rollups";
-import { HOURLY_ROLLUP_DAYS, type TeamInvite, type TeamMember, type AppSettings, type IssueStatusChange, type IssueUpsert, type RestampResult, type Store, type UpsertOutcome, type UserMark } from "./index";
+import { HOURLY_ROLLUP_DAYS, type TeamInvite, type TeamMember, type AppSettings, type IssueStatusChange, type IssueUpsert, type RestampResult, type Store, type UpsertOutcome, type UserField, type UserMark } from "./index";
 
 /**
  * Firestore layout (all under one root collection so it's easy to find / secure / delete):
@@ -228,6 +228,13 @@ export class FirestoreStore implements Store {
     // Needs the events (sessionId, ts desc) index in firestore.indexes.json.
     const snap = await this.app(app).collection("events").where("sessionId", "==", sessionId).orderBy("ts", "desc").limit(limit).get();
     return snap.docs.map(storedEvent).reverse();
+  }
+
+  async listUserEvents(app: string, field: UserField, values: readonly string[], { limit = 500 } = {}) {
+    if (!values.length) return [];
+    // Needs the events (user.id, ts desc) and (user.anonymousId, ts desc) indexes.
+    const snap = await this.app(app).collection("events").where(`user.${field}`, "in", [...values]).orderBy("ts", "desc").limit(limit).get();
+    return snap.docs.map(storedEvent);
   }
 
   async listIssueEvents(app: string, fp: string, { limit = 50 } = {}) {

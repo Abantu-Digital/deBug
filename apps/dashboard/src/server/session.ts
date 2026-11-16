@@ -52,6 +52,17 @@ export interface CarriedCrumb {
 
 export const SESSION_EVENT_LIMIT = 500;
 
+/** A fatal error: labelled a crash, or uncaught and critical, which is how the SDK sends a fatal one. */
+export function isCrash(e: StoredEvent): boolean {
+  return e.event.type === "error" && (e.labels?.category === "crash" || (!e.event.handled && e.event.severity === "critical"));
+}
+
+/** crashed, errored (an uncaught error) or clean, as on the session page. */
+export function sessionOutcome(events: readonly StoredEvent[]): SessionDetail["outcome"] {
+  if (events.some(isCrash)) return "crashed";
+  return events.some((e) => e.event.type === "error" && !e.event.handled) ? "errored" : "clean";
+}
+
 /** The prop that says why a flow failed, in the order apps tend to name it. */
 const REASON_KEYS = ["reason", "error", "errorKind", "code", "message"];
 const OUTCOME_WORD: Record<string, string> = { success: "succeeded", failure: "failed", abandoned: "abandoned" };
@@ -150,7 +161,7 @@ export async function buildSessionDetail(store: ReadStore, app: string, sessionI
   for (const e of page) {
     const ev = e.event;
     if (ev.type === "error") {
-      const crash = e.labels?.category === "crash" || (!ev.handled && ev.severity === "critical");
+      const crash = isCrash(e);
       errors++;
       if (ev.handled) handled++;
       else uncaught = true;

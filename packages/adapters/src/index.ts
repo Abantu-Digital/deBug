@@ -150,7 +150,17 @@ export interface ReadStore {
    * keeping them by session.
    */
   listSessionEvents(app: string, sessionId: string, opts?: { limit?: number }): Promise<StoredEvent[]>;
+  /**
+   * The newest stored events whose `user.id` (customer number) or `user.anonymousId` (install id)
+   * is one of `values` (at most 10), newest first. Firestore needs the user.id + ts and
+   * user.anonymousId + ts indexes; DynamoDB only finds events written since it started keeping
+   * them by user.
+   */
+  listUserEvents(app: string, field: UserField, values: readonly string[], opts?: { limit?: number }): Promise<StoredEvent[]>;
 }
+
+/** Which of an event's user ids to look up by. */
+export type UserField = "id" | "anonymousId";
 
 export type Store = WriteStore & ReadStore;
 
