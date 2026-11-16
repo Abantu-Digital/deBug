@@ -746,7 +746,8 @@ export interface IssueDetail {
   /** Prefilled "new issue" links for trackers configured on the dashboard. */
   links: { linear?: string; github?: string };
   sample: StoredEvent | null;
-  recent: { ts: string; os: string; appVersion?: string; device?: string; message: string; userId?: string }[];
+  /** Newest first. `id` opens the event page; error events only have one worth opening. */
+  recent: { id: string; type: string; ts: string; os: string; appVersion?: string; device?: string; message: string; userId?: string }[];
   hints: { title: string; detail: string }[];
   /** The explanation as Markdown, for "Copy for a ticket". */
   ticketMarkdown?: string;
@@ -834,6 +835,8 @@ export async function buildIssueDetail(
     links: {},
     sample: events[0] ?? issue.lastEvent ?? null,
     recent: events.slice(0, 25).map((e) => ({
+      id: e.event.id,
+      type: e.event.type,
       ts: e.event.ts,
       os: `${e.context.os.name} ${e.context.os.version ?? ""}`.trim(),
       appVersion: e.context.app.version,

@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { redirect } from "@tanstack/react-router";
 import { canManage, checkCredentials, demoLoginEnabled, DEMO_USER, endSession, readSession, recordFailure, startSession, tooManyAttempts, type SessionUser } from "./auth";
 import { config } from "./config";
+import { buildEventDetail } from "./event";
 import { buildIssueDetail, buildSummary } from "./queries";
 import { readSettings, restampStep, seenHosts, settingsWriter, testAlert, validRetention, writeIssueStatus, writeRetention, writeSettings } from "./settings";
 import { getStore } from "./store";
@@ -70,6 +71,13 @@ export const getIssueDetail = createServerFn({ method: "GET" })
     await requireUser();
     const detail = await buildIssueDetail(await getStore(), data.app, data.fingerprint, config().severity, Date.now(), { range: data, retentionDays: config().retentionDays, trackers: config().trackers });
     return detail ? { ...detail, canChangeStatus: settingsWriter() !== "none" } : null;
+  });
+
+export const getEventDetail = createServerFn({ method: "GET" })
+  .validator((d: { app: string; fingerprint: string; eventId: string }) => ({ app: String(d.app), fingerprint: String(d.fingerprint), eventId: String(d.eventId) }))
+  .handler(async ({ data }) => {
+    await requireUser();
+    return buildEventDetail(await getStore(), data.app, data.fingerprint, data.eventId);
   });
 
 export const updateIssueStatus = createServerFn({ method: "POST" })
