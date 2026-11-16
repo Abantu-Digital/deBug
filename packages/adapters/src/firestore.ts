@@ -224,6 +224,12 @@ export class FirestoreStore implements Store {
       .get();
     return snap.docs.map((d) => d.data() as RollupRow);
   }
+  async listSessionEvents(app: string, sessionId: string, { limit = 500 } = {}) {
+    // Needs the events (sessionId, ts desc) index in firestore.indexes.json.
+    const snap = await this.app(app).collection("events").where("sessionId", "==", sessionId).orderBy("ts", "desc").limit(limit).get();
+    return snap.docs.map(storedEvent).reverse();
+  }
+
   async listIssueEvents(app: string, fp: string, { limit = 50 } = {}) {
     const snap = await this.app(app)
       .collection("events")
@@ -231,11 +237,14 @@ export class FirestoreStore implements Store {
       .orderBy("ts", "desc")
       .limit(limit)
       .get();
-    return snap.docs.map((d) => {
-      const { expireAt: _e, ts: _t, ...rest } = d.data();
-      return rest as StoredEvent;
-    });
+    return snap.docs.map(storedEvent);
   }
+}
+
+/** An events document without the fields only Firestore needs. */
+function storedEvent(d: { data(): Record<string, unknown> }): StoredEvent {
+  const { expireAt: _e, ts: _t, ...rest } = d.data();
+  return rest as unknown as StoredEvent;
 }
 
 /** Firestore rejects `undefined` values; drop them recursively. */

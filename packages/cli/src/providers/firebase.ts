@@ -167,7 +167,7 @@ export async function setupFirebase(ctx: SetupContext): Promise<ProviderResult> 
       `In ${bold(projectId)}${environment.get() ? ` (your ${environment.get()} environment)` : ""}, deBug will add:`,
       `• a Cloud Function ${code(FUNCTION_NAME)} in ${region}, with a public URL (each request needs the ingest key)`,
       `• a ${code("debug_apps")} collection in Firestore, with raw events expiring after 30 days`,
-      `• two Firestore indexes for it (your existing indexes are left alone)`,
+      `• ${FIRESTORE_INDEXES.indexes.length} Firestore indexes for it (your existing indexes are left alone)`,
       "",
       "Nothing else in the project is changed. Usage is billed to the project's Blaze plan.",
     ].join("\n"),

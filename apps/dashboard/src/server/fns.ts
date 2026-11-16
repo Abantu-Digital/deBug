@@ -3,6 +3,7 @@ import { redirect } from "@tanstack/react-router";
 import { canManage, checkCredentials, demoLoginEnabled, DEMO_USER, endSession, readSession, recordFailure, startSession, tooManyAttempts, type SessionUser } from "./auth";
 import { config } from "./config";
 import { buildEventDetail } from "./event";
+import { buildSessionDetail } from "./session";
 import { buildIssueDetail, buildSummary } from "./queries";
 import { readSettings, restampStep, seenHosts, settingsWriter, testAlert, validRetention, writeIssueStatus, writeRetention, writeSettings } from "./settings";
 import { getStore } from "./store";
@@ -78,6 +79,21 @@ export const getEventDetail = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     await requireUser();
     return buildEventDetail(await getStore(), data.app, data.fingerprint, data.eventId);
+  });
+
+export const getSessionDetail = createServerFn({ method: "GET" })
+  .validator((d: { app: string; sessionId: string }) => ({ app: String(d.app), sessionId: String(d.sessionId) }))
+  .handler(async ({ data }) => {
+    await requireUser();
+    try {
+      return { session: await buildSessionDetail(await getStore(), data.app, data.sessionId) };
+    } catch (e) {
+      // Firestore refuses the query until the (sessionId, ts) index exists: FAILED_PRECONDITION, gRPC code 9.
+      const err = e as { code?: unknown; message?: unknown };
+      const noIndex = config().store === "firestore" && (err?.code === 9 || err?.code === "failed-precondition") && /index/i.test(String(err?.message ?? ""));
+      if (noIndex) return { session: null, missingIndex: true };
+      throw e;
+    }
   });
 
 export const updateIssueStatus = createServerFn({ method: "POST" })

@@ -2,6 +2,7 @@ import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { CopyButton } from "~/components/copy-button";
 import { rangeSearch, type RangeSearch } from "~/components/range-picker";
+import { CrumbBody, ICON, clock, joined, offset } from "~/components/timeline";
 import { Card } from "~/components/ui";
 import { getEventDetail } from "~/server/fns";
 import type { ApiCall, EventDetail, TimelineItem } from "~/server/event";
@@ -127,12 +128,12 @@ function Who({ d }: { d: EventDetail }) {
         <span className="break-all font-mono text-xs">{d.sessionId}</span>
         <span className="ml-2"><CopyButton text={d.sessionId} label="Copy" ariaLabel="Copy session id" /></span>
       </span>
-      <span className="text-xs text-muted">Pages for this session's timeline and the customer's other sessions are coming next; until then, copy the ids.</span>
+      <Link to="/sessions/$sessionId" params={{ sessionId: d.sessionId }} search={{ app: d.app }} className="text-accent hover:underline">
+        Whole session →
+      </Link>
     </section>
   );
 }
-
-const ICON: Record<TimelineItem["category"], string> = { navigation: "→", network: "⇅", ui: "◉", log: "≡", event: "◆", custom: "✱" };
 
 function Timeline({ items, errorTs, errorText }: { items: TimelineItem[]; errorTs: string; errorText: string }) {
   if (!items.length) {
@@ -145,14 +146,7 @@ function Timeline({ items, errorTs, errorText }: { items: TimelineItem[]; errorT
           <span className="tabular pt-0.5 text-right text-xs text-muted" title={t.ts}>{offset(t.ts, errorTs)}</span>
           <span aria-hidden className={`pt-0.5 text-center ${t.failed ? "text-sev-critical" : "text-muted"}`}>{ICON[t.category]}</span>
           <div className="min-w-0">
-            <span className="mr-2 rounded bg-panel-2 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted">{t.category}</span>
-            {t.api ? <ApiLine call={t.api} /> : <span className="break-words">{t.message}</span>}
-            {t.repeated && <span className="ml-2 text-xs text-muted">×{t.repeated}</span>}
-            {t.data && (
-              <div className="mt-0.5 break-words font-mono text-[11px] text-muted">
-                {Object.entries(t.data).map(([k, v]) => `${k}=${String(v)}`).join(" · ")}
-              </div>
-            )}
+            <CrumbBody item={t} />
           </div>
         </li>
       ))}
@@ -162,21 +156,6 @@ function Timeline({ items, errorTs, errorText }: { items: TimelineItem[]; errorT
         <span className="break-words">{errorText}</span>
       </li>
     </ol>
-  );
-}
-
-function ApiLine({ call }: { call: ApiCall }) {
-  return (
-    <span className="break-words">
-      {call.service && <span className="font-medium">{call.service} </span>}
-      <span className="font-mono text-xs">{joined([call.method, call.path])}</span>
-      {" → "}
-      <span className={call.failed ? "font-semibold text-sev-critical" : ""}>{call.status ?? call.outcome ?? "failed"}</span>
-      {call.status !== undefined && call.outcome && call.outcome !== "answered" && <span className="text-muted"> ({call.outcome})</span>}
-      {call.durationMs !== undefined && <span className="text-muted"> · {call.durationMs} ms</span>}
-      {call.errorKind && <span className="text-muted"> · {call.errorKind}</span>}
-      {call.backendCode && <span className="text-muted"> · {call.backendCode}</span>}
-    </span>
   );
 }
 
@@ -219,26 +198,3 @@ function Facts({ rows, mono }: { rows: [string, ReactNode | undefined][]; mono?:
   );
 }
 
-/** The parts that are set, joined; undefined when none are. */
-function joined(parts: (string | false | undefined)[], sep = " "): string | undefined {
-  return parts.filter(Boolean).join(sep) || undefined;
-}
-
-/** "14 Nov, 12:59:55" in the viewer's time zone. */
-function clock(iso: string) {
-  return new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
-
-/** How long before the error: "−5.9 s", "−2 min". */
-function offset(ts: string, errorTs: string) {
-  const s = (Date.parse(ts) - Date.parse(errorTs)) / 1000;
-  if (!Number.isFinite(s)) return "";
-  const a = Math.abs(s);
-  if (a < 0.05) return "0 s";
-  const sign = s < 0 ? "−" : "+";
-  // Round first, then pick the unit, so 59.6 s reads "1 min", not "60 s".
-  if (a < 9.95) return `${sign}${a.toFixed(1)} s`;
-  if (Math.round(a) < 60) return `${sign}${Math.round(a)} s`;
-  if (Math.round(a / 60) < 60) return `${sign}${Math.round(a / 60)} min`;
-  return `${sign}${Math.round(a / 3600)} h`;
-}
