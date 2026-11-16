@@ -1,9 +1,9 @@
 import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { HourlyChart, TrendChart } from "~/components/charts";
 import { RangePicker, rangeSearch, RetentionNote, type RangeSearch } from "~/components/range-picker";
 import { Card, DataTable, IssueLabels, SeverityBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
-import { copyText } from "~/lib/copy";
+import { CopyButton } from "~/components/copy-button";
 import { getIssueDetail, updateIssueStatus } from "~/server/fns";
 
 export const Route = createFileRoute("/_authed/issues/$fingerprint")({
@@ -64,7 +64,7 @@ function IssuePage() {
 
       {issue.explanation && (
         <div className="grid gap-5 lg:grid-cols-2">
-          <Card title="What happened" subtitle="In plain words, for support." right={d.ticketMarkdown ? <CopyButton text={d.ticketMarkdown} /> : undefined}>
+          <Card title="What happened" subtitle="In plain words, for support." right={d.ticketMarkdown ? <CopyButton text={d.ticketMarkdown} label="Copy for a ticket" /> : undefined}>
             <p className="text-sm leading-relaxed">{issue.explanation.summary}</p>
           </Card>
           <Card title="For developers" subtitle={plain(issue.explanation.technical.headline)}>
@@ -165,7 +165,7 @@ function IssuePage() {
         </Card>
       </div>
 
-      <Card title="Recent occurrences">
+      <Card title="Recent occurrences" subtitle="Newest first. Open one for its timeline, request, device and stack.">
         <div className="-mx-4 overflow-x-auto sm:mx-0">
           <table className="tabular w-full min-w-[600px] text-left text-sm">
             <thead className="text-xs text-muted">
@@ -178,9 +178,17 @@ function IssuePage() {
               </tr>
             </thead>
             <tbody>
-              {d.recent.map((r, i) => (
-                <tr key={i} className="border-b border-line last:border-0">
-                  <td className="px-4 py-2 text-xs text-muted sm:px-2">{timeAgo(r.ts)}</td>
+              {d.recent.map((r) => (
+                <tr key={r.id} className="border-b border-line last:border-0 hover:bg-panel-2">
+                  <td className="px-4 py-2 text-xs sm:px-2">
+                    {r.type === "error" ? (
+                      <Link to="/events/$eventId" params={{ eventId: r.id }} search={{ app: d.app, issue: issue.fingerprint }} className="font-medium text-accent hover:underline" title={r.ts}>
+                        {timeAgo(r.ts)}
+                      </Link>
+                    ) : (
+                      <span className="text-muted" title={r.ts}>{timeAgo(r.ts)}</span>
+                    )}
+                  </td>
                   <td className="px-2 py-2">{r.os}</td>
                   <td className="px-2 py-2">{r.appVersion ?? "—"}</td>
                   <td className="px-2 py-2">{r.device ?? "—"}</td>
@@ -245,28 +253,6 @@ function IssueActions({
       {canChange && !closed && <p className="w-full text-xs text-muted">If it shows up again in {version || "that version"} or later, it's marked Regressed. Occurrences from older versions don't count: those users haven't updated yet.</p>}
       {error && <p role="alert" className="w-full text-sm text-sev-critical">{error}</p>}
     </section>
-  );
-}
-
-/** Copies the explanation as Markdown, for a Jira or Linear ticket made by hand. */
-function CopyButton({ text }: { text: string }) {
-  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
-  return (
-    <button
-      type="button"
-      className="rounded-md border border-line px-2 py-1 text-xs text-muted hover:bg-panel-2"
-      onClick={() => {
-        void copyText(text).then((ok) => {
-          setState(ok ? "copied" : "failed");
-          clearTimeout(timer.current);
-          timer.current = setTimeout(() => setState("idle"), 2500);
-        });
-      }}
-    >
-      {state === "copied" ? "Copied" : state === "failed" ? "Couldn't copy" : "Copy for a ticket"}
-    </button>
   );
 }
 
