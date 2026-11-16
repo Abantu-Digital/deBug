@@ -1,9 +1,9 @@
-import { createFileRoute, getRouteApi, useNavigate, useRouter } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { normaliseHostMatch, OWNER_INFO, OWNERS, type HostName, type Owner } from "@debugkit/schema";
 import { Card, timeAgo } from "~/components/ui";
-import { CopyButton } from "~/components/copy-button";
 import { partText } from "~/lib/version-text";
+import { UpgradeCommand, useVersionStatus } from "~/components/version-banner";
 import type { VersionStatus } from "~/server/versions";
 import { getSettings, restampExisting, saveAppSettings, saveRetention, sendTestAlert } from "~/server/fns";
 
@@ -15,11 +15,11 @@ export const Route = createFileRoute("/_authed/settings")({
 });
 
 const CHOICES = [30, 60, 90, 180, 365];
-const authed = getRouteApi("/_authed");
+
 
 function SettingsPage() {
   const { apps, settings, seenHosts } = Route.useLoaderData();
-  const versions = authed.useLoaderData();
+  const versions = useVersionStatus();
   const navigate = useNavigate({ from: Route.fullPath });
   const router = useRouter();
   const [days, setDays] = useState(String(settings?.retentionDays ?? 60));
@@ -318,6 +318,8 @@ function HostNames({
   );
 }
 
+/** Only ingest or the dashboard a patch behind: nothing is missing yet. */
+const patchOnly = (s: VersionStatus) => s.level === "note" && s.behind.some((p) => p.part !== "sdk");
 const upperFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const PART_LABEL = { sdk: "App SDK (newest seen)", ingest: "Ingest", dashboard: "This dashboard" } as const;
 
@@ -342,14 +344,11 @@ function VersionsCard({ status }: { status: VersionStatus }) {
       ) : (
         <div className="mt-3 space-y-2 text-sm">
           <p className={status.level === "banner" ? "" : "text-muted"}>
-            {upperFirst(status.behind.filter((p) => p.part !== "sdk").map(partText).join(" and ")) || "Your app's SDK is behind"}
-            {status.level === "note" ? ": a patch behind, so nothing's missing, but worth catching up." : `, behind ${status.newest}.`}
+            {upperFirst(status.behind.map(partText).join(" and "))}
+            {patchOnly(status) ? `: a patch behind ${status.newest}, so nothing's missing, but worth catching up.` : `, behind ${status.newest}.`}
           </p>
           {status.behind.some((p) => p.part !== "sdk") ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <code className="break-all rounded bg-panel-2 px-2 py-1 font-mono text-xs">{status.command}</code>
-              <CopyButton text={status.command} label="Copy" ariaLabel="Copy the upgrade command" />
-            </div>
+            <UpgradeCommand status={status} />
           ) : (
             <p className="text-xs text-muted">Update @debugkit/sdk in your app to {status.newest}.</p>
           )}

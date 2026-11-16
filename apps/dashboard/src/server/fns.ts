@@ -21,10 +21,12 @@ export const getSessionUser = createServerFn({ method: "GET" }).handler(async ()
 /** Whether the project's SDK, ingest and this dashboard are in step; null when the store can't be read. */
 export const getVersionStatus = createServerFn({ method: "GET" }).handler(async () => {
   await requireUser();
-  return buildVersionStatus(await getStore(), config().environment).catch((e: Error) => {
-    console.warn("[deBug] couldn't read versions", e.message);
+  try {
+    return await buildVersionStatus(await getStore(), config().environment);
+  } catch (e) {
+    console.warn("[deBug] couldn't read versions", (e as Error).message);
     return null;
-  });
+  }
 });
 
 export const getLoginInfo = createServerFn({ method: "GET" }).handler(async () => ({

@@ -27,11 +27,15 @@ export interface VersionStatus {
   level: "banner" | "note" | "none";
   /** The command that brings ingest and the dashboard up to date. */
   command: string;
-  /** Set when the dashboard knows the environment (DEBUG_ENVIRONMENT, set by the CLI). */
+  /** Set when the dashboard knows its environment (DEBUG_ENVIRONMENT, which the CLI sets from 0.9). */
   environment?: string;
 }
 
-/** "minor" when a and b differ in major or minor, "patch" when only below that, undefined when the same. */
+/**
+ * How far apart two versions are: "minor" when they differ in major or minor, "patch" when only
+ * below that, undefined when the same. A part that doesn't say its version (an ingest from before
+ * tracking) counts as a minor gap: it's at least that old.
+ */
 function gap(a: string | undefined, b: string | undefined): "minor" | "patch" | undefined {
   const pa = parseVersion(a);
   const pb = parseVersion(b);

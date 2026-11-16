@@ -23,7 +23,7 @@ describe("version status", () => {
   it("calls an ingest that records no version older, once apps have sent anything", () => {
     const s = versionStatus([rec(), rec()], "0.9.0");
     expect(s).toMatchObject({ level: "banner", command: "npx debugkit upgrade" });
-    expect(bannerText(s)).toBe("deBug 0.9.0 is out, but ingest predates version tracking. Newer data and pages won't show until you run:");
+    expect(bannerText(s)).toBe("deBug is out of step: ingest predates version tracking. Newer data and pages won't show until you run:");
     expect(versionStatus([], "0.9.0").level).toBe("none");
   });
 
