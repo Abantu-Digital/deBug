@@ -174,6 +174,8 @@ export class DebugClient {
   private restores: (() => void)[] = [];
   private sessionState = { errored: false, crashed: false };
   private lastNav: string | undefined;
+  /** Failures waiting for their response body (fetch), reported on close if it hasn't come. */
+  private pendingReports = new Set<() => void>();
   private limits = new Map<string, { n: number; since: number }>();
   /** fetch as it was before instrumentation, so our own uploads are never recorded. */
   private rawFetch: typeof fetch | undefined;
@@ -273,15 +275,22 @@ export class DebugClient {
   }
 
   breadcrumb(category: Breadcrumb["category"], message: string, data?: Record<string, string | number | boolean | null>, level: Breadcrumb["level"] = "info") {
+    this.addCrumb(category, message, data, level);
+  }
+
+  /** Records a breadcrumb and returns the one stored (a repeat collapses into the last). */
+  private addCrumb(category: Breadcrumb["category"], message: string, data: Record<string, string | number | boolean | null> | undefined, level: Breadcrumb["level"]): Breadcrumb {
     const msg = message.slice(0, 500);
     const last = this.crumbs[this.crumbs.length - 1];
     if (last && last.category === category && last.message === msg && last.level === level) {
       last.ts = now();
       last.data = { ...data, repeated: Number(last.data?.repeated ?? 1) + 1 };
-      return;
+      return last;
     }
-    this.crumbs.push({ ts: now(), category, message: msg, data, level });
+    const crumb: Breadcrumb = { ts: now(), category, message: msg, data, level };
+    this.crumbs.push(crumb);
     if (this.crumbs.length > (this.opts?.maxBreadcrumbs ?? 30)) this.crumbs.shift();
+    return crumb;
   }
 
   /** Log an error. `flow` is the part of the app it belongs to, e.g. "auth.login". */
@@ -371,6 +380,8 @@ export class DebugClient {
   close() {
     if (this.timer) clearInterval(this.timer);
     this.uninstrument();
+    // Failures still waiting for their response body are reported now, so the last flush sends them.
+    for (const report of [...this.pendingReports]) report();
     this.closing = true;
     return this.flush().finally(() => (this.closing = false));
   }
@@ -382,6 +393,8 @@ export class DebugClient {
     e: { name: string; message: string; stack?: string; frames?: ReturnType<typeof parseStack> },
     meta: EventMeta & { severity?: Severity; handled?: boolean; fatal?: boolean },
     request?: { method: string; url: string; status?: number; durationMs?: number },
+    /** The trail as it was when the error happened, when it is reported later. */
+    breadcrumbs: Breadcrumb[] = [...this.crumbs],
   ) {
     if (!this.ready) return;
     const handled = meta.handled ?? true;
@@ -409,7 +422,7 @@ export class DebugClient {
       severity: meta.severity ?? (meta.fatal ? "critical" : undefined),
       handled,
       error: { name: e.name, message: e.message, stack: e.stack, frames },
-      breadcrumbs: [...this.crumbs],
+      breadcrumbs,
       request,
     });
   }
@@ -688,9 +701,16 @@ export class DebugClient {
     const ms = Math.round(r.durationMs);
     const failed = r.status === undefined ? !r.aborted : this.isFailedStatus(r.status, r.url);
     const slow = ms >= (net.slowMs ?? 3000);
-    const outcome = r.aborted ? "aborted" : r.timedOut ? "timed out" : r.status !== undefined ? String(r.status) : "failed";
-    // Named by service (ABA-119), with what the backend said when it failed. The message keeps
-    // the full URL unless the call matched a base URL, so existing trails read the same.
+    // How the call ended: in words for the message, and as one of a few values for the data.
+    const [ended, outcome] = r.aborted
+      ? ["aborted", "aborted"]
+      : r.timedOut
+        ? ["timed out", "unreachable"]
+        : r.status !== undefined
+          ? [String(r.status), "answered"]
+          : ["failed", "unreachable"];
+    // Named by service, with what the backend said when it failed. The message keeps the full
+    // URL unless the call matched a base URL, so existing trails read the same.
     const name = nameRequest(r.url, net.baseUrls);
     const data: Record<string, string | number | boolean | null> = {
       service: name.service,
@@ -698,10 +718,10 @@ export class DebugClient {
       method: r.method,
       status: r.status ?? null,
       durationMs: ms,
-      outcome: r.aborted ? "aborted" : r.status !== undefined ? "answered" : "unreachable",
+      outcome,
       ...(failed && readProblemDetails(r.responseBody)),
     };
-    this.breadcrumb("network", `${r.method} ${name.matched ? name.path : url} → ${outcome} (${ms}ms)`, data, failed ? "error" : slow ? "warning" : "info");
+    const crumb = this.addCrumb("network", `${r.method} ${name.matched ? name.path : url} → ${ended} (${ms}ms)`, data, failed ? "error" : slow ? "warning" : "info");
     if (!r.aborted) this.timeRequest(`${r.method} ${url}`, ms, failed);
     if (!failed) return;
 
@@ -712,18 +732,28 @@ export class DebugClient {
     // The first frame is our own wrapper; the rest is the code that made the request. Mark library
     // frames again without it: the wrapper on top hides the library run below it.
     const frames = markLibraryFrames(parseStack(r.stack).slice(1));
+    const trail = [...this.crumbs];
     const report = () =>
       this.captureError(
         { name: r.status !== undefined ? "HttpError" : "NetworkError", message, stack: r.stack, frames },
         { flow, handled: true, tags: { source: "network" } },
         { method: r.method, url, status: r.status, durationMs: ms },
+        trail,
       );
     if (!r.bodyPending) return report();
-    return (responseBody: string) => {
+    // The trail is kept as it was at the failure; its breadcrumb gains the backend's details.
+    let done = false;
+    const finish = (responseBody?: string) => {
+      if (done) return;
+      done = true;
+      this.pendingReports.delete(finishNow);
       const backend = readProblemDetails(responseBody);
-      if (backend) Object.assign(data, backend);
+      if (backend) crumb.data = { ...crumb.data, ...backend };
       report();
     };
+    const finishNow = () => finish();
+    this.pendingReports.add(finishNow);
+    return (responseBody: string) => finish(responseBody);
   }
 
   private log(...args: unknown[]) {

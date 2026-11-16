@@ -58,7 +58,7 @@ describe("network capture", () => {
     );
     await fetch("https://api.x.com/v1/me");
     await fetch("https://api.x.com/v1/feed?page=2");
-    // A fetch failure is reported once its body has been read (ABA-119).
+    // A fetch failure is reported once its body has been read.
     await new Promise((r) => setTimeout(r, 0));
     await c.flush();
     const [e] = errors(sent);
@@ -126,12 +126,12 @@ describe("network capture", () => {
     x.send();
     await new Promise((r) => setTimeout(r, 0));
     await c.flush();
-    // A fetch failure is reported once its body has been read (ABA-119), so after the XHR's.
+    // A fetch failure is reported once its body has been read, so after the XHR's.
     expect(errors(sent).map((e) => e.type === "error" && e.request?.url)).toEqual(["/v1/upload", "/v1/feed"]);
   });
 });
 
-describe("network naming and problem details (ABA-119)", () => {
+describe("named calls and backend error details", () => {
   const problem = JSON.stringify({ title: "Insufficient airtime", status: 422, code: 4021, traceId: "00-4f2c", errors: ["balance too low"] });
   const network = { baseUrls: ["https://gw.example.com/ppd/api"], isFailure: (s: number) => s >= 400 };
   const settle = () => new Promise((r) => setTimeout(r, 0));
@@ -180,7 +180,12 @@ describe("network naming and problem details (ABA-119)", () => {
       send() {
         this.status = 422;
         this.responseText = problem;
-        this.response = this.responseType === "json" ? JSON.parse(problem) : problem;
+        this.response =
+          this.responseType === "json"
+            ? JSON.parse(problem)
+            : this.url.includes("bytes")
+              ? new TextEncoder().encode(this.url.includes("binary") ? "\u0000\u00ff" : problem).buffer
+              : problem;
         queueMicrotask(() => this.listeners.loadend?.forEach((f) => f()));
       }
       addEventListener(t: string, f: () => void) {
@@ -200,15 +205,58 @@ describe("network naming and problem details (ABA-119)", () => {
     blob.responseType = "arraybuffer";
     blob.open("GET", "https://gw.example.com/ppd/api/profile/contracts/1/doc");
     blob.send();
+    // Apps that download files ask for bytes, and their error bodies come back as bytes too.
+    const bytes = new g.XMLHttpRequest();
+    bytes.responseType = "arraybuffer";
+    bytes.open("GET", "https://gw.example.com/ppd/api/contracts/bytes");
+    bytes.send();
+    const binary = new g.XMLHttpRequest();
+    binary.responseType = "arraybuffer";
+    binary.open("GET", "https://gw.example.com/ppd/api/contracts/bytes/binary");
+    binary.send();
     await settle();
     await c.flush();
 
-    const crumbs = errors(sent).at(-1)?.type === "error" ? (errors(sent).at(-1) as { breadcrumbs?: { data?: Record<string, unknown> }[] }).breadcrumbs : [];
-    expect(crumbs?.map((b) => [b.data?.service, b.data?.traceId])).toEqual([
+    const e = errors(sent).at(-1);
+    if (e?.type !== "error") throw new Error("expected an error");
+    expect(e.breadcrumbs?.map((b) => [b.data?.service, b.data?.traceId])).toEqual([
       ["buy", "00-4f2c"],
       ["share", "00-4f2c"],
-      ["profile", undefined], // binary bodies are not read
+      ["profile", undefined], // an arraybuffer that isn't bytes is not read
+      ["contracts", "00-4f2c"],
+      ["contracts", undefined], // bytes that aren't text are not an error body
     ]);
+  });
+
+  it("keeps the backend's details when the same failure repeats, and the trail as it was", async () => {
+    const { c, sent } = setup({ autoCapture: { sessions: false }, network }, async (url) =>
+      url.includes("pay") ? new Response(problem, { status: 422 }) : new Response("{}", { status: 200 }),
+    );
+    await fetch("https://gw.example.com/ppd/api/buy/pay");
+    await fetch("https://gw.example.com/ppd/api/buy/pay");
+    await fetch("https://gw.example.com/ppd/api/buy/after");
+    await settle();
+    await c.flush();
+    const [first, second] = errors(sent);
+    if (first?.type !== "error" || second?.type !== "error") throw new Error("expected two errors");
+    // The two failures collapse into one breadcrumb, which keeps the backend's details.
+    expect(second.breadcrumbs?.map((b) => b.data?.traceId)).toEqual(["00-4f2c"]);
+    expect(second.breadcrumbs?.[0]?.data?.repeated).toBe(2);
+    // The call made after the failure isn't in its trail.
+    expect(first.breadcrumbs?.some((b) => b.message.includes("/after"))).toBe(false);
+  });
+
+  it("sends a failure still waiting for its body when the client closes", async () => {
+    let release: (body: string) => void = () => undefined;
+    const { c, sent } = setup({ autoCapture: { sessions: false }, network }, async () => {
+      const res = new Response(problem, { status: 500 });
+      Object.defineProperty(res, "clone", { value: () => ({ text: () => new Promise<string>((r) => (release = r)) }) });
+      return res;
+    });
+    await fetch("https://gw.example.com/ppd/api/buy/slow");
+    await c.close();
+    release(problem); // too late: already sent, without the details
+    expect(errors(sent)).toHaveLength(1);
   });
 
   it("records no answer as unreachable, without backend fields", async () => {

@@ -105,9 +105,10 @@ export function instrumentFetch(sink: AutoSink): Restore | undefined {
           const finish = (body: string) => {
             if (done) return;
             done = true;
+            clearTimeout(timer);
             addBody(body);
           };
-          setTimeout(() => finish(""), BODY_WAIT_MS);
+          const timer = setTimeout(() => finish(""), BODY_WAIT_MS);
           clone.text().then(
             (body) => finish(body.slice(0, MAX_BODY_CHARS)),
             () => finish(""),
@@ -138,14 +139,31 @@ interface TrackedXhr {
   addEventListener(type: string, fn: () => void): void;
 }
 
-/** The body of a finished XHR as text, whatever its responseType; undefined for binary. */
+/**
+ * Bytes as UTF-8 text. Hermes (React Native) has no TextDecoder, so it falls back to
+ * percent-decoding, which throws on bytes that aren't UTF-8: those are binary, not an error body.
+ */
+function decodeUtf8(buf: ArrayBuffer): string | undefined {
+  if (buf.byteLength > MAX_BODY_CHARS) return undefined;
+  const bytes = new Uint8Array(buf);
+  if (typeof TextDecoder !== "undefined") return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  let escaped = "";
+  for (const b of bytes) escaped += `%${b.toString(16).padStart(2, "0")}`;
+  return decodeURIComponent(escaped);
+}
+
+/**
+ * The body of a finished XHR as text: text and json responses, and arraybuffer ones (apps that
+ * download files ask for bytes, and their errors come back as bytes too). Blobs are skipped.
+ */
 function readXhrBody(x: TrackedXhr): string | undefined {
   try {
     const type = x.responseType ?? "";
     if (type === "" || type === "text") return x.responseText?.slice(0, MAX_BODY_CHARS);
     if (type === "json" && x.response != null) return JSON.stringify(x.response).slice(0, MAX_BODY_CHARS);
+    if (type === "arraybuffer" && x.response instanceof ArrayBuffer) return decodeUtf8(x.response);
   } catch {
-    // Reading a body must never affect the app.
+    // Reading a body must never affect the app, and bytes that aren't text are no error body.
   }
   return undefined;
 }

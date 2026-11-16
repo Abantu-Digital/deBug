@@ -27,7 +27,7 @@ describe("nameRequest", () => {
 });
 
 describe("readProblemDetails", () => {
-  it("reads RFC 7807 problem details", () => {
+  it("reads RFC 9457 problem details", () => {
     expect(
       readProblemDetails(JSON.stringify({ type: "about:blank", title: "Insufficient airtime", status: 422, code: 4021, traceId: "00-4f2c", errors: ["balance too low", "try a smaller bundle"] })),
     ).toEqual({ backendTitle: "Insufficient airtime", backendCode: 4021, traceId: "00-4f2c", backendErrors: "balance too low; try a smaller bundle" });
@@ -46,6 +46,17 @@ describe("readProblemDetails", () => {
       traceId: "c-1",
       backendErrors: "m; d",
     });
+  });
+
+  it("masks phone numbers and emails the backend quotes", () => {
+    expect(readProblemDetails(JSON.stringify({ title: "0821234567 not found", errors: ["mail a.b@example.co.za failed", "+27 82 123 4567"] }))).toMatchObject({
+      backendTitle: "••• not found",
+      backendErrors: "mail ••• failed; •••",
+    });
+  });
+
+  it("matches a base without case in the scheme and host", () => {
+    expect(nameRequest("HTTPS://GW.Example.com/ppd/api/buy/x", ["https://gw.example.com/ppd/api"])).toEqual({ service: "buy", path: "/buy/x", matched: true });
   });
 
   it("caps long text", () => {

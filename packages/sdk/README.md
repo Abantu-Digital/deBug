@@ -60,7 +60,8 @@ before it: the screen, the click, the request that failed.
 **Privacy.** Query strings and fragments are dropped from every URL before anything is
 recorded, and ids in paths become `:id` (`/v1/orders/8812?token=…` becomes `/v1/orders/:id`).
 Request bodies, headers and what users type are never read. A failed call's response body is
-read only to pick out the backend's error details (see below); the body itself is never sent.
+read only to pick out the backend's error details (see below), with phone numbers and email
+addresses in them masked; the body itself is never sent.
 Use `beforeSend` to scrub anything else.
 
 **Noise control.** At most 60 errors a minute are sent (`maxErrorsPerMinute`), and one repeating
@@ -103,9 +104,10 @@ was no answer), `durationMs` and `outcome` (`answered`, `unreachable` or `aborte
   [problem details](https://www.rfc-editor.org/rfc/rfc9457) (`title`, `code`, `traceId`, `errors`,
   as .NET and Spring send, or `message`, `trace_id`, `correlationId`), adds `backendTitle`,
   `backendCode`, `traceId` and `backendErrors` to the breadcrumb. The dashboard shows them on the
-  failed request, with the trace id to search your backend's logs. Binary responses are never read.
-  A fetch failure is reported once its body has been read (at most 3 seconds); an XHR failure, as
-  axios sends on React Native, straight away.
+  failed request, with the trace id to search your backend's logs. Bytes (`arraybuffer`) are read
+  only when they decode as text; blobs never are. Phone numbers and email addresses the backend
+  quotes are masked. A fetch failure is reported once its body has been read (at most 3 seconds,
+  or at once on `close()`); an XHR failure, as axios sends on React Native, straight away.
 
 ## Response times
 
