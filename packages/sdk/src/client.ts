@@ -169,6 +169,8 @@ export class DebugClient {
   private backoffUntil = 0;
   private failures = 0;
   private ready = false;
+  /** Set by close(): nothing more is recorded or queued until the next init(). */
+  private closed = false;
   private handlersInstalled = false;
   private auto: Required<AutoCaptureOptions> = { errors: false, network: false, console: false, navigation: false, clicks: false, lifecycle: false, sessions: false };
   private restores: (() => void)[] = [];
@@ -184,6 +186,7 @@ export class DebugClient {
     if (this.timer) clearInterval(this.timer);
     this.uninstrument();
     this.opts = { flushIntervalMs: 5000, maxBatch: 50, maxBreadcrumbs: 30, ...options };
+    this.closed = false;
     this.globalTags = { ...options.tags };
     if (options.enabled === false) {
       // Switched off: stay inert. Handlers from an earlier init() check `ready` and do nothing.
@@ -227,9 +230,13 @@ export class DebugClient {
 
   /** Record a navigation breadcrumb ("from → to"). Repeated paths are ignored. */
   navigated(to: string) {
-    if (!to || to === this.lastNav) return;
-    this.breadcrumb("navigation", this.lastNav ? `${this.lastNav} → ${to}` : to);
-    this.lastNav = to;
+    if (this.closed || !to || to === this.lastNav) return;
+    try {
+      this.breadcrumb("navigation", this.lastNav ? `${this.lastNav} → ${to}` : to);
+      this.lastNav = String(to);
+    } catch (err) {
+      this.log("navigation breadcrumb failed", err);
+    }
   }
 
   get initialized() {
@@ -274,13 +281,19 @@ export class DebugClient {
     this.user = { ...this.user, id };
   }
 
+  /** Record a breadcrumb. Never throws; does nothing after close(). */
   breadcrumb(category: Breadcrumb["category"], message: string, data?: Record<string, string | number | boolean | null>, level: Breadcrumb["level"] = "info") {
-    this.addCrumb(category, message, data, level);
+    if (this.closed) return;
+    try {
+      this.addCrumb(category, message, data, level);
+    } catch (err) {
+      this.log("breadcrumb failed", err);
+    }
   }
 
   /** Records a breadcrumb and returns the one stored (a repeat collapses into the last). */
   private addCrumb(category: Breadcrumb["category"], message: string, data: Record<string, string | number | boolean | null> | undefined, level: Breadcrumb["level"]): Breadcrumb {
-    const msg = message.slice(0, 500);
+    const msg = String(message).slice(0, 500);
     const last = this.crumbs[this.crumbs.length - 1];
     if (last && last.category === category && last.message === msg && last.level === level) {
       last.ts = now();
@@ -377,11 +390,17 @@ export class DebugClient {
   /** Stop the flush timer, undo automatic instrumentation and send what is queued. */
   private closing = false;
 
+  /**
+   * Sends what is queued and stops: automatic capture is removed, and errors, events, sessions
+   * and breadcrumbs are ignored until the next init(). A remote kill switch can rely on it.
+   */
   close() {
     if (this.timer) clearInterval(this.timer);
     this.uninstrument();
     // Failures still waiting for their response body are reported now, so the last flush sends them.
     for (const report of [...this.pendingReports]) report();
+    this.closed = true;
+    this.lastNav = undefined;
     this.closing = true;
     return this.flush().finally(() => (this.closing = false));
   }
@@ -396,7 +415,7 @@ export class DebugClient {
     /** The trail as it was when the error happened, when it is reported later. */
     breadcrumbs: Breadcrumb[] = [...this.crumbs],
   ) {
-    if (!this.ready) return;
+    if (!this.ready || this.closed) return;
     const handled = meta.handled ?? true;
     const frames = e.frames ?? parseStack(e.stack);
     if (!meta.fatal && !this.allowError(`${e.name}|${e.message.slice(0, 120)}|${frames[0]?.file ?? ""}:${frames[0]?.line ?? ""}`)) return;
@@ -454,7 +473,8 @@ export class DebugClient {
 
   /** Queue without sampling (sessions must be complete for crash-free rates to be right). */
   private push(e: EventInput) {
-    if (!this.ready) return;
+    // After close(), only the final flush may still add (its request timings).
+    if (!this.ready || (this.closed && !this.closing)) return;
     let out: EventInput | null | undefined = e.type === "error" || e.type === "event" ? this.withTags(e) : e;
     if (this.opts.beforeSend) {
       try {
