@@ -169,7 +169,7 @@ export class DebugClient {
   private backoffUntil = 0;
   private failures = 0;
   private ready = false;
-  /** Set by close(): breadcrumbs and navigation stop until the next init(). */
+  /** Set by close(): nothing more is recorded or queued until the next init(). */
   private closed = false;
   private handlersInstalled = false;
   private auto: Required<AutoCaptureOptions> = { errors: false, network: false, console: false, navigation: false, clicks: false, lifecycle: false, sessions: false };
@@ -231,8 +231,12 @@ export class DebugClient {
   /** Record a navigation breadcrumb ("from → to"). Repeated paths are ignored. */
   navigated(to: string) {
     if (this.closed || !to || to === this.lastNav) return;
-    this.breadcrumb("navigation", this.lastNav ? `${this.lastNav} → ${to}` : to);
-    this.lastNav = to;
+    try {
+      this.breadcrumb("navigation", this.lastNav ? `${this.lastNav} → ${to}` : to);
+      this.lastNav = String(to);
+    } catch (err) {
+      this.log("navigation breadcrumb failed", err);
+    }
   }
 
   get initialized() {
@@ -386,12 +390,17 @@ export class DebugClient {
   /** Stop the flush timer, undo automatic instrumentation and send what is queued. */
   private closing = false;
 
+  /**
+   * Sends what is queued and stops: automatic capture is removed, and errors, events, sessions
+   * and breadcrumbs are ignored until the next init(). A remote kill switch can rely on it.
+   */
   close() {
     if (this.timer) clearInterval(this.timer);
     this.uninstrument();
     // Failures still waiting for their response body are reported now, so the last flush sends them.
     for (const report of [...this.pendingReports]) report();
     this.closed = true;
+    this.lastNav = undefined;
     this.closing = true;
     return this.flush().finally(() => (this.closing = false));
   }
@@ -406,7 +415,7 @@ export class DebugClient {
     /** The trail as it was when the error happened, when it is reported later. */
     breadcrumbs: Breadcrumb[] = [...this.crumbs],
   ) {
-    if (!this.ready) return;
+    if (!this.ready || this.closed) return;
     const handled = meta.handled ?? true;
     const frames = e.frames ?? parseStack(e.stack);
     if (!meta.fatal && !this.allowError(`${e.name}|${e.message.slice(0, 120)}|${frames[0]?.file ?? ""}:${frames[0]?.line ?? ""}`)) return;
@@ -464,7 +473,8 @@ export class DebugClient {
 
   /** Queue without sampling (sessions must be complete for crash-free rates to be right). */
   private push(e: EventInput) {
-    if (!this.ready) return;
+    // After close(), only the final flush may still add (its request timings).
+    if (!this.ready || (this.closed && !this.closing)) return;
     let out: EventInput | null | undefined = e.type === "error" || e.type === "event" ? this.withTags(e) : e;
     if (this.opts.beforeSend) {
       try {

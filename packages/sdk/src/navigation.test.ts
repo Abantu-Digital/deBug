@@ -13,15 +13,15 @@ function setup() {
     sent.push(...Envelope.parse(JSON.parse(init.body)).events);
     return new Response("", { status: 202 });
   });
-  const c = new DebugClient().init({
+  const options = {
     endpoint: "https://ingest.example/x",
     ingestKey: "pk_test",
     app: { id: "app" },
     fetch: fetch as unknown as typeof globalThis.fetch,
     flushIntervalMs: 0,
-    autoCapture: false,
-  });
-  return { c, sent };
+    autoCapture: false as const,
+  };
+  return { c: new DebugClient().init(options), sent, options };
 }
 
 const trail = (sent: Event[]) => {
@@ -39,17 +39,24 @@ describe("navigation", () => {
     expect(trail(sent)).toEqual(["/dashboard", "/dashboard → /buy"]);
   });
 
-  it("records nothing after close(), and again after the next init()", async () => {
-    const { c, sent } = setup();
+  it("records and sends nothing after close(), and starts afresh after the next init()", async () => {
+    const { c, sent, options } = setup();
     useDebugNavigation("/dashboard", c);
     await c.close();
     useDebugNavigation("/buy", c);
     c.breadcrumb("ui", "tapped Buy");
-    c.init({ ...(c as unknown as { opts: Parameters<typeof c.init>[0] }).opts });
+    c.error(new Error("after close"));
+    c.event("bundle.bought");
+    c.startSession();
+    await c.flush();
+    expect(sent).toEqual([]);
+
+    c.init(options);
     useDebugNavigation("/checkout", c);
     c.error(new Error("boom"));
     await c.flush();
-    expect(trail(sent)).toEqual(["/dashboard", "/dashboard → /checkout"]);
+    // The screen visited while closed isn't the "from" of the next one.
+    expect(trail(sent)).toEqual(["/dashboard", "/checkout"]);
   });
 
   it("never lets a breadcrumb or a broken client throw into the app", () => {

@@ -190,8 +190,9 @@ export default function RootLayout() {
 }
 ```
 
-`useDebugExpoRouter()` never throws into your navigation, and records nothing once you call
-`deBug.close()` (say, from a remote kill switch) until the next `init()`.
+`useDebugExpoRouter()` never throws into your navigation. `deBug.close()` (say, from a remote
+kill switch) sends what is queued and then records and sends nothing, not even errors, until the
+next `init()`.
 
 In Expo Go, the app version reported is Expo Go's own. Development and production builds
 report yours.
