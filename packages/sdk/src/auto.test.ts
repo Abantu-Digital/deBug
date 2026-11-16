@@ -232,9 +232,12 @@ describe("named calls and backend error details", () => {
     const { c, sent } = setup({ autoCapture: { sessions: false }, network }, async (url) =>
       url.includes("pay") ? new Response(problem, { status: 422 }) : new Response("{}", { status: 200 }),
     );
+    // Repeats collapse only when their messages match, durations included: hold the clock.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
     await fetch("https://gw.example.com/ppd/api/buy/pay");
     await fetch("https://gw.example.com/ppd/api/buy/pay");
     await fetch("https://gw.example.com/ppd/api/buy/after");
+    clock.mockRestore();
     await settle();
     await c.flush();
     const [first, second] = errors(sent);
