@@ -1,5 +1,6 @@
 import { MemoryStore } from "@debugkit/adapters/memory";
 import { ingest } from "@debugkit/ingest";
+import { DASHBOARD_VERSION } from "./versions";
 import type { EnvelopeInput, EventInput } from "@debugkit/schema";
 
 /**
@@ -188,7 +189,8 @@ export async function seedDemo(): Promise<MemoryStore> {
       if (events.length > 100) events.length = 100;
 
       const env: EnvelopeInput = {
-        sdk: { name: "@debugkit/sdk", version: "0.1.0" },
+        // The demo's app is on this release, so the versions read as in step.
+        sdk: { name: "@debugkit/sdk", version: DASHBOARD_VERSION },
         context: {
           app: { id: "megaton-native", version: appVersion, build: appVersion.replace(/\./g, "") + "0", environment: "production" },
           ...dev,

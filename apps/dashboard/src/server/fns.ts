@@ -6,6 +6,7 @@ import { buildEventDetail } from "./event";
 import { buildSessionDetail } from "./session";
 import { lookupCustomer } from "./customers";
 import { buildEndpoints } from "./endpoints";
+import { buildVersionStatus } from "./versions";
 import { isMissingIndex } from "./errors";
 import { buildIssueDetail, buildSummary } from "./queries";
 import { readSettings, restampStep, seenHosts, settingsWriter, testAlert, validRetention, writeIssueStatus, writeRetention, writeSettings } from "./settings";
@@ -16,6 +17,15 @@ import { TEAM_ROLES, type TeamRole } from "@debugkit/adapters";
 import { validHostNames } from "@debugkit/schema";
 
 export const getSessionUser = createServerFn({ method: "GET" }).handler(async () => readSession());
+
+/** Whether the project's SDK, ingest and this dashboard are in step; null when the store can't be read. */
+export const getVersionStatus = createServerFn({ method: "GET" }).handler(async () => {
+  await requireUser();
+  return buildVersionStatus(await getStore(), config().environment).catch((e: Error) => {
+    console.warn("[deBug] couldn't read versions", e.message);
+    return null;
+  });
+});
 
 export const getLoginInfo = createServerFn({ method: "GET" }).handler(async () => ({
   store: config().store,

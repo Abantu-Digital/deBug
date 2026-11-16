@@ -1,6 +1,7 @@
 import { createFileRoute, Link, Outlet, redirect, useRouter } from "@tanstack/react-router";
 import { Logo } from "~/components/ui";
-import { getSessionUser, logout } from "~/server/fns";
+import { VersionBanner } from "~/components/version-banner";
+import { getSessionUser, getVersionStatus, logout } from "~/server/fns";
 
 export const Route = createFileRoute("/_authed")({
   beforeLoad: async () => {
@@ -8,11 +9,16 @@ export const Route = createFileRoute("/_authed")({
     if (!user) throw redirect({ to: "/login" });
     return { user };
   },
+  // The project's versions, for the banner on every page and the list on Settings.
+  loader: () => getVersionStatus(),
+  // Versions change at most on a deploy: don't refetch on every navigation.
+  staleTime: 5 * 60_000,
   component: Layout,
 });
 
 function Layout() {
   const { user } = Route.useRouteContext();
+  const versions = Route.useLoaderData();
   const router = useRouter();
   return (
     <div className="min-h-screen">
@@ -43,6 +49,7 @@ function Layout() {
           </div>
         </div>
       </header>
+      <VersionBanner status={versions} />
       <Outlet />
     </div>
   );
