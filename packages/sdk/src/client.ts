@@ -12,6 +12,7 @@ import {
   type AutoSink,
   type RequestInfo,
 } from "./auto";
+import { nameRequest, readProblemDetails } from "./network";
 
 export const SDK_NAME = "@debugkit/sdk";
 declare const __DEBUGKIT_SDK_VERSION__: string | undefined;
@@ -110,6 +111,13 @@ export interface NetworkOptions {
    * `flows: [["/v2/auth/", "auth.login"], [/\/payments\//, "checkout.payment"]]`.
    */
   flows?: [string | RegExp, string][];
+  /**
+   * Your backends' base URLs, to name each call in the trail. The longest base a URL starts
+   * with is stripped and the first path segment left names the service:
+   * `baseUrls: ["https://api.x.com/v1"]` turns "https://api.x.com/v1/orders/42" into service
+   * "orders", path "/orders/:id". Calls to other hosts are named by their host.
+   */
+  baseUrls?: string[];
   /** Which HTTP statuses count as failures. Default: 500 and above. Network failures and timeouts always count. */
   isFailure?: (status: number, url: string) => boolean;
   /** Requests slower than this get a warning breadcrumb. Default 3000ms. */
@@ -649,6 +657,7 @@ export class DebugClient {
         }
       },
       ignored: (url) => this.isIgnored(url),
+      wantsBody: (status, url) => this.isFailedStatus(status, url),
     };
   }
 
@@ -659,15 +668,40 @@ export class DebugClient {
     return (this.opts.network?.ignoreUrls ?? []).some((p) => (typeof p === "string" ? url.includes(p) : p.test(url)));
   }
 
-  private recordRequest(r: RequestInfo) {
+  private isFailedStatus(status: number, rawUrl: string): boolean {
+    try {
+      return (this.opts.network?.isFailure ?? ((s: number) => s >= 500))(status, normaliseUrl(rawUrl));
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Records one request: a breadcrumb now, in call order, and an error for a failure. When the
+   * body is still being read (fetch), returns a function that adds what the backend said to the
+   * breadcrumb and then reports the error, since an error is sent as soon as it is queued.
+   */
+  private recordRequest(r: RequestInfo): ((responseBody: string) => void) | void {
     if (!this.ready) return;
     const net = this.opts.network ?? {};
     const url = normaliseUrl(r.url);
     const ms = Math.round(r.durationMs);
-    const failed = r.status === undefined ? !r.aborted : (net.isFailure ?? ((s: number) => s >= 500))(r.status, url);
+    const failed = r.status === undefined ? !r.aborted : this.isFailedStatus(r.status, r.url);
     const slow = ms >= (net.slowMs ?? 3000);
     const outcome = r.aborted ? "aborted" : r.timedOut ? "timed out" : r.status !== undefined ? String(r.status) : "failed";
-    this.breadcrumb("network", `${r.method} ${url} → ${outcome} (${ms}ms)`, { status: r.status ?? null, durationMs: ms }, failed ? "error" : slow ? "warning" : "info");
+    // Named by service (ABA-119), with what the backend said when it failed. The message keeps
+    // the full URL unless the call matched a base URL, so existing trails read the same.
+    const name = nameRequest(r.url, net.baseUrls);
+    const data: Record<string, string | number | boolean | null> = {
+      service: name.service,
+      path: name.path,
+      method: r.method,
+      status: r.status ?? null,
+      durationMs: ms,
+      outcome: r.aborted ? "aborted" : r.status !== undefined ? "answered" : "unreachable",
+      ...(failed && readProblemDetails(r.responseBody)),
+    };
+    this.breadcrumb("network", `${r.method} ${name.matched ? name.path : url} → ${outcome} (${ms}ms)`, data, failed ? "error" : slow ? "warning" : "info");
     if (!r.aborted) this.timeRequest(`${r.method} ${url}`, ms, failed);
     if (!failed) return;
 
@@ -678,11 +712,18 @@ export class DebugClient {
     // The first frame is our own wrapper; the rest is the code that made the request. Mark library
     // frames again without it: the wrapper on top hides the library run below it.
     const frames = markLibraryFrames(parseStack(r.stack).slice(1));
-    this.captureError(
-      { name: r.status !== undefined ? "HttpError" : "NetworkError", message, stack: r.stack, frames },
-      { flow, handled: true, tags: { source: "network" } },
-      { method: r.method, url, status: r.status, durationMs: ms },
-    );
+    const report = () =>
+      this.captureError(
+        { name: r.status !== undefined ? "HttpError" : "NetworkError", message, stack: r.stack, frames },
+        { flow, handled: true, tags: { source: "network" } },
+        { method: r.method, url, status: r.status, durationMs: ms },
+      );
+    if (!r.bodyPending) return report();
+    return (responseBody: string) => {
+      const backend = readProblemDetails(responseBody);
+      if (backend) Object.assign(data, backend);
+      report();
+    };
   }
 
   private log(...args: unknown[]) {

@@ -14,15 +14,22 @@ export interface RequestInfo {
   durationMs: number;
   /** Stack captured where the request was made, so a failure points at the calling code. */
   stack?: string;
+  /** The response body as text, read only when `wantsBody` said so (a failure). */
+  responseBody?: string;
+  /** The body is still being read (fetch): the failure is reported when it arrives. */
+  bodyPending?: boolean;
 }
 
 /** What the instrumentation needs from the client. */
 export interface AutoSink {
-  request(info: RequestInfo): void;
+  /** Returns, for a failure, a function that adds the response body once it has been read. */
+  request(info: RequestInfo): ((responseBody: string) => void) | void;
   crumb(category: "navigation" | "network" | "ui" | "log", message: string, level?: "debug" | "info" | "warning" | "error", data?: Record<string, string | number | boolean | null>): void;
   navigated(to: string): void;
   lifecycle(state: "foreground" | "background"): void;
   ignored(url: string): boolean;
+  /** Whether a response with this status is a failure worth reading the body of. */
+  wantsBody(status: number, url: string): boolean;
 }
 
 type Restore = () => void;
@@ -58,6 +65,11 @@ function safeDecode(s: string) {
 
 /* ------------------------------ network ----------------------------- */
 
+/** Bodies past this are not read: an error body is small, and a big one isn't problem details. */
+const MAX_BODY_CHARS = 64 * 1024;
+/** How long a failure waits for its body before it is reported without it. */
+const BODY_WAIT_MS = 3000;
+
 /** > 0 while the original fetch runs synchronously, so the XHR it uses (React Native) isn't counted twice. */
 let insideFetch = 0;
 
@@ -79,7 +91,28 @@ export function instrumentFetch(sink: AutoSink): Restore | undefined {
     }
     return p.then(
       (res) => {
-        sink.request({ method, url, status: res.status, durationMs: Date.now() - start, stack });
+        // Recorded now, in call order. A failure's body is read from a clone afterwards, so the
+        // app still reads the response itself, and what the backend said is added when it lands.
+        let clone: Response | undefined;
+        try {
+          clone = sink.wantsBody(res.status, url) ? res.clone() : undefined;
+        } catch {
+          clone = undefined;
+        }
+        const addBody = sink.request({ method, url, status: res.status, durationMs: Date.now() - start, stack, bodyPending: !!clone });
+        if (clone && addBody) {
+          let done = false;
+          const finish = (body: string) => {
+            if (done) return;
+            done = true;
+            addBody(body);
+          };
+          setTimeout(() => finish(""), BODY_WAIT_MS);
+          clone.text().then(
+            (body) => finish(body.slice(0, MAX_BODY_CHARS)),
+            () => finish(""),
+          );
+        }
         return res;
       },
       (error) => {
@@ -99,7 +132,22 @@ export function instrumentFetch(sink: AutoSink): Restore | undefined {
 interface TrackedXhr {
   __debug?: { method: string; url: string } | null;
   status: number;
+  responseType?: string;
+  responseText?: string;
+  response?: unknown;
   addEventListener(type: string, fn: () => void): void;
+}
+
+/** The body of a finished XHR as text, whatever its responseType; undefined for binary. */
+function readXhrBody(x: TrackedXhr): string | undefined {
+  try {
+    const type = x.responseType ?? "";
+    if (type === "" || type === "text") return x.responseText?.slice(0, MAX_BODY_CHARS);
+    if (type === "json" && x.response != null) return JSON.stringify(x.response).slice(0, MAX_BODY_CHARS);
+  } catch {
+    // Reading a body must never affect the app.
+  }
+  return undefined;
 }
 
 export function instrumentXhr(sink: AutoSink): Restore | undefined {
@@ -123,9 +171,11 @@ export function instrumentXhr(sink: AutoSink): Restore | undefined {
       let timedOut = false;
       this.addEventListener("abort", () => (aborted = true));
       this.addEventListener("timeout", () => (timedOut = true));
-      this.addEventListener("loadend", () =>
-        sink.request({ ...d, status: this.status || undefined, aborted, timedOut, durationMs: Date.now() - start, stack }),
-      );
+      this.addEventListener("loadend", () => {
+        const status = this.status || undefined;
+        const responseBody = status !== undefined && sink.wantsBody(status, d.url) ? readXhrBody(this) : undefined;
+        sink.request({ ...d, status, aborted, timedOut, durationMs: Date.now() - start, stack, responseBody });
+      });
     }
     return send.apply(this, args);
   };
