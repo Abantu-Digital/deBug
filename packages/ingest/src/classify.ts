@@ -15,8 +15,9 @@ export interface ClassifyOptions {
   hosts?: readonly HostName[];
 }
 
-const FOREGROUND = "App came to the foreground";
-const BACKGROUND = "App went to the background";
+/** The SDK's app-lifecycle breadcrumb messages (client.ts). */
+export const FOREGROUND = "App came to the foreground";
+export const BACKGROUND = "App went to the background";
 const NEVER_SENT_MS = 100;
 /** How long after reopening a failure still counts as "on resume", if nothing has succeeded since. */
 const RESUME_WINDOW_MS = 10_000;

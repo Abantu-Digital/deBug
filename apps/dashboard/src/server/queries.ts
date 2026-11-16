@@ -19,7 +19,7 @@ import {
   type SeverityThresholds,
   type StoredEvent,
 } from "@debugkit/schema";
-import { explain, explanationLines, explanationMarkdown, type Explanation } from "./explain";
+import { explain, explanationLines, explanationMarkdown, findingLine, type Explanation } from "./explain";
 import { findingsOf, type Finding } from "./detectors";
 import { daysBetween, resolveRange, weekOf, type DateRange } from "./range";
 
@@ -886,7 +886,8 @@ export function issueStory(d: Omit<IssueDetail, "links">, dashboardUrl?: string)
     i.culprit ? `At \`${i.culprit}\`${i.flow ? ` in flow \`${i.flow}\`` : ""}.` : i.flow ? `In flow \`${i.flow}\`.` : "",
     // The link first, so the body's length limit can't cut it off.
     ...(dashboardUrl ? ["", `deBug: ${issueUrl(dashboardUrl, d.app, i.fingerprint)}`] : []),
-    ...(x ? ["", ...explanationLines(x, d.findings)] : []),
+    // Findings go after the counts (below), so the body's length limit cuts them, not the counts.
+    ...(x ? ["", ...explanationLines(x)] : []),
     "",
     `- ${i.countRange.toLocaleString()} occurrences in ${d.range.label}, ${i.count24h} in the last 24h (severity: ${i.severity})`,
     `- ${d.affectedUsers.toLocaleString()} users affected`,
@@ -894,6 +895,7 @@ export function issueStory(d: Omit<IssueDetail, "links">, dashboardUrl?: string)
     `- Versions: ${top(d.breakdowns.appVersion)}`,
     `- OS: ${top(d.breakdowns.os)}; devices: ${top(d.breakdowns.deviceModel)}`,
     ...(frames.length ? ["", "Stack (in-app frames):", ...frames.map((f) => `- \`${f.fn ?? "?"}\` ${f.file ?? ""}:${f.line ?? ""}`)] : []),
+    ...(d.findings.length ? ["", "What the trail shows:", ...d.findings.slice(0, 3).map(findingLine)] : []),
     ...(d.hints.length ? ["", x ? "Also worth checking:" : "What to look at:", ...d.hints.slice(0, 3).map((h) => `- ${h.title}: ${h.detail}`)] : []),
   ]
     .filter((l, n, all) => !(l === "" && all[n - 1] === ""))

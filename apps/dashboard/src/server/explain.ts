@@ -73,7 +73,7 @@ export function userAction(frames: StackFrame[] | undefined): { fn: string; acti
   return undefined;
 }
 
-const seconds = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
+export const seconds = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
 const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const PLATFORM: Record<string, string> = { ios: "iPhone", android: "Android", web: "the web", macos: "Mac", windows: "Windows" };
@@ -162,7 +162,7 @@ const TEMPLATES: Record<Category, Template> = {
     saw: (n) => `${cap(n)} took too long and gave up`,
     why: () => "The request was sent but no answer came back in time: a slow network or a slow server.",
     diagnosis: (_ev, took) => `Timed out${took ? ` after ${took}` : ""} with no response.`,
-    fix: () => "Check this endpoint's p95 under Response times. If the server is slow, fix it there; otherwise raise the timeout, retry idempotent requests, and show a retry state.",
+    fix: () => "Check this endpoint's p95 under Response times. If it's slow on every network, give that service's owner the timings and the times above; in the app, raise the timeout, retry idempotent requests, and show a retry state.",
   },
   "network.failed": {
     saw: (n) => `${cap(n)} couldn't connect`,
