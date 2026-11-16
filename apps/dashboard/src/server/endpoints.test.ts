@@ -30,7 +30,7 @@ function failure(id: string, s: number, status: number, backendCode?: number, tr
   };
 }
 
-async function store() {
+async function store(extra: unknown[] = []) {
   const s = new MemoryStore();
   const env = {
     sdk: { name: "t", version: "1" },
@@ -43,6 +43,7 @@ async function store() {
       failure("evt_000000001", 100, 402, 4102, "4f2c9a1b77"),
       failure("evt_000000002", 200, 402, 4102),
       failure("evt_000000003", 300, 503),
+      ...extra,
     ],
   };
   expect((await ingest(JSON.stringify(env), "k", { store: s, keys: { k: "a" }, now: () => new Date(NOW) })).status).toBe(202);
@@ -78,6 +79,37 @@ describe("endpoint health", () => {
       ["evt_000000001", "402", "4102", "4f2c9a1b77"],
     ]);
     expect(r.selected!.failures[0]).toMatchObject({ fingerprint: expect.any(String), sessionId: "s1", userId: "0841234567", durationMs: 420 });
+  });
+
+  it("names an endpoint's service from any call in the trails, and adds endpoints up per service", async () => {
+    const seen = { ...failure("evt_000000004", 400, 503), breadcrumbs: [{ ts: at(398), category: "network", message: "GET /v1/balances → 200", data: { service: "balance", path: "/v1/balances", method: "GET", status: null, outcome: "answered" } }, ...failure("x", 400, 503).breadcrumbs] };
+    const r = (await buildEndpoints(await store([seen]), "a", NOW, { range: { range: "7d" } }))!;
+    expect(r.endpoints.find((e) => e.endpoint === "GET /v1/balances")).toMatchObject({ service: "balance", calls: 200, failures: 0 });
+    expect(r.services.map((x) => [x.service, x.calls, x.failedCalls, x.failures])).toEqual([
+      ["buy", 40, 4, 4],
+      ["balance", 200, 0, 0],
+    ]);
+  });
+
+  it("counts a failure the app reported itself under the SDK's endpoint with the same method and path", async () => {
+    const appOnly = { ...failure("evt_000000005", 500, 401), request: undefined };
+    const r = (await buildEndpoints(await store([appOnly]), "a", NOW, { range: { range: "7d" } }))!;
+    expect(r.endpoints.filter((e) => e.path === "/v1/buy/airtime")).toHaveLength(1);
+    expect(r.endpoints[0]).toMatchObject({ endpoint: "POST /v1/buy/airtime", failures: 4, statuses: [{ key: "402", count: 2 }, { key: "401", count: 1 }, { key: "503", count: 1 }] });
+  });
+
+  it("joins a lower-case method and a URL past the SDK's 300-character key", async () => {
+    const long = `/v1/search/${"x".repeat(320)}`;
+    const key = `GET ${long}`.slice(0, 300);
+    const err = { ...failure("evt_000000006", 600, 500), request: { method: "get", url: long, status: 500 }, breadcrumbs: [] };
+    const metric = { type: "metric", id: "evt_m00000003", ts: at(60), name: "http", key, count: 10, errors: 1, buckets: buckets(10, 0) };
+    const r = (await buildEndpoints(await store([err, metric]), "a", NOW, { range: { range: "7d" } }))!;
+    expect(r.endpoints.filter((e) => e.endpoint.startsWith("GET /v1/search"))).toMatchObject([{ calls: 10, failures: 1 }]);
+  });
+
+  it("says when an endpoint asked for had nothing in the period", async () => {
+    const r = (await buildEndpoints(await store(), "a", NOW, { range: { range: "7d" }, endpoint: "GET /nope" }))!;
+    expect(r).toMatchObject({ missing: "GET /nope", selected: undefined, truncated: false });
   });
 
   it("leaves out failures outside the period", async () => {

@@ -540,7 +540,7 @@ const rate = (bad: number, total: number) => (total > 0 ? Math.max(0, 1 - bad / 
 export { compareVersions };
 
 /** An endpoint key ("POST host/path") with its host's name, or undefined when the host has none. */
-export function endpointLabel(endpoint: string, hosts: readonly HostName[]): string | undefined {
+function endpointLabel(endpoint: string, hosts: readonly HostName[]): string | undefined {
   const named = nameUrlsIn(endpoint, hosts);
   return named === endpoint ? undefined : named;
 }

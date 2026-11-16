@@ -1,8 +1,8 @@
 import type { ReadStore } from "@debugkit/adapters";
 import { isRequestCategory } from "@debugkit/ingest";
 import { hostNameFor, type HostName, type Issue, type StoredEvent } from "@debugkit/schema";
-import { EVENT_LOOKBACK, failedRequest, timelineOf, type ApiCall } from "./event";
-import { endpointTimings, retentionFor, type Retention } from "./queries";
+import { apiCallOf, EVENT_LOOKBACK, failedRequest, timelineOf, type ApiCall } from "./event";
+import { endpointTimings, retentionFor, type EndpointTiming, type Retention } from "./queries";
 import { resolveRange, type DateRange } from "./range";
 
 /**
@@ -18,7 +18,10 @@ export interface EndpointHealth {
   service?: string;
   method?: string;
   path?: string;
-  /** From the request summaries: null when the SDK sent none for this endpoint. */
+  /**
+   * From the request summaries: null when the SDK sent none for this endpoint. Failed calls are
+   * those the SDK's network.isFailure counted (status 400 and above on mobile, else 500).
+   */
   calls: number | null;
   failedCalls: number | null;
   failureRate: number | null;
@@ -32,6 +35,19 @@ export interface EndpointHealth {
   /** The backend's own error codes on the failures, most first. */
   backendCodes: Count[];
   lastFailure?: string;
+}
+
+/** Endpoints added up per backend service. */
+export interface ServiceHealth {
+  /** undefined: endpoints whose service nobody named (in Settings or the app's breadcrumbs). */
+  service?: string;
+  endpoints: number;
+  calls: number;
+  failedCalls: number;
+  failureRate: number | null;
+  /** The slowest endpoint's p95. */
+  worstP95: number | null;
+  failures: number;
 }
 
 export interface Count {
@@ -56,41 +72,78 @@ export interface EndpointFailure {
 
 export interface EndpointsReport {
   app: string;
+  generatedAt: string;
   apps: string[];
   range: DateRange;
   retention: Retention;
+  /** Most failures first. */
+  services: ServiceHealth[];
+  /** Most failures first, then the busiest. */
   endpoints: EndpointHealth[];
   /** The chosen endpoint's failures in the period, newest first. */
   selected?: { endpoint: EndpointHealth; failures: EndpointFailure[] };
-  /** True when there were more network issues than one report reads: the quietest are left out. */
+  /** The endpoint asked for, when it had no calls or failures in the period. */
+  missing?: string;
+  /**
+   * True when the stored failures are undercounted: more network issues than one report reads,
+   * or an issue with more failures than are read per issue.
+   */
   truncated: boolean;
 }
 
 /** Network issues read per report, busiest first, and failures listed for one endpoint. */
 export const ENDPOINT_ISSUE_LIMIT = 100;
 export const ENDPOINT_FAILURE_LIMIT = 50;
+const ISSUE_READ_LIMIT = 500;
+
+/**
+ * The key an endpoint counts under: "<METHOD> <url>" as the SDK's request summaries name it, with
+ * the method in capitals and cut where the SDK cuts the summary's key.
+ */
+export function endpointKey(method: string, url: string): string {
+  return `${method.toUpperCase()} ${url}`.slice(0, 300);
+}
 
 interface Failure {
   endpoint: string;
+  /** Set when the key isn't "<METHOD> <url>": a failure the app reported, with no matching summary. */
+  own?: { method?: string; path: string };
   call?: ApiCall;
   e: StoredEvent;
 }
 
-/** A stored error that is a failed API call: the SDK's request on it, or a request category label. */
+/**
+ * A stored error that is a failed API call: the SDK's request on it, a request category label, or
+ * (a failure the app reported itself) a failed call as its last breadcrumb, just before it.
+ */
 function isNetworkIssue(i: Issue): boolean {
-  const e = i.lastEvent;
-  return e.event.type === "error" && (!!e.event.request || (!!e.labels?.category && isRequestCategory(e.labels.category)));
+  const e = i.lastEvent.event;
+  if (e.type !== "error") return false;
+  if (e.request || (i.lastEvent.labels?.category && isRequestCategory(i.lastEvent.labels.category))) return true;
+  const last = e.breadcrumbs?.[e.breadcrumbs.length - 1];
+  return !!last && !!apiCallOf(last)?.failed && Math.abs(Date.parse(e.ts) - Date.parse(last.ts)) <= 2000;
 }
 
-/** The failed call an error describes, and the endpoint key it counts under. */
-export function failureOf(e: StoredEvent, hosts: readonly HostName[] = []): Failure | undefined {
+/**
+ * The failed call an error describes, and the endpoint key it counts under: the SDK's request, or
+ * for a failure the app reported itself, the request-summary key with the same method and path.
+ */
+function failureOf(e: StoredEvent, hosts: readonly HostName[] = [], keys: readonly string[] = []): Failure | undefined {
   if (e.event.type !== "error") return undefined;
   const req = e.event.request;
   const call = failedRequest(req, timelineOf(e.event.breadcrumbs, hosts), hosts);
-  if (req) return { endpoint: `${req.method} ${req.url}`, call, e };
+  if (req) return { endpoint: endpointKey(req.method, req.url), call, e };
   if (!call?.path) return undefined;
-  // App-reported, without the SDK's request: named by the app's breadcrumb.
-  return { endpoint: [call.method, call.service, call.path].filter(Boolean).join(" "), call, e };
+  const known = keys.find((k) => sameCall(k, call.method, call.path!));
+  if (known) return { endpoint: known, call, e };
+  return { endpoint: [call.method, call.service, call.path].filter(Boolean).join(" "), own: { method: call.method, path: call.path }, call, e };
+}
+
+/** Whether a request-summary key ("<METHOD> <url>") is the call the app names by method and path. */
+function sameCall(key: string, method: string | undefined, path: string): boolean {
+  const [m, ...rest] = key.split(" ");
+  const url = rest.join(" ").split(/[?#]/)[0]!;
+  return (!method || m === method.toUpperCase()) && (url === path || url.endsWith(path.startsWith("/") ? path : `/${path}`));
 }
 
 /** "503", or the outcome or kind of failure when there was no answer. */
@@ -121,34 +174,48 @@ export async function buildEndpoints(
   const [requestRows, latencyRows, issues, settings, retention] = await Promise.all([
     store.getRollups(app, "requests", range.from, range.to),
     store.getRollups(app, "latency", range.from, range.to),
-    store.listIssues(app, { limit: 500 }),
+    store.listIssues(app, { limit: ISSUE_READ_LIMIT }),
     store.getSettings(app).catch(() => null),
     retentionFor(store, app, opts.retentionDays, now),
   ]);
   const hosts = settings?.hosts ?? [];
 
-  const network = issues.filter((i) => isNetworkIssue(i) && i.lastSeen.slice(0, 10) >= range.from).sort((a, b) => b.count - a.count);
+  // The most recently failing first: they're the ones with failures in the period.
+  const network = issues.filter((i) => isNetworkIssue(i) && i.lastSeen.slice(0, 10) >= range.from).sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
   const read = network.slice(0, ENDPOINT_ISSUE_LIMIT);
-  const events = (await Promise.all(read.map((i) => store.listIssueEvents(app, i.fingerprint, { limit: EVENT_LOOKBACK })))).flat();
+  const perIssue = await Promise.all(read.map((i) => store.listIssueEvents(app, i.fingerprint, { limit: EVENT_LOOKBACK })));
+  const events = perIssue.flat();
   const inRange = (e: StoredEvent) => e.day >= range.from && e.day <= range.to;
-  const failures = events.filter(inRange).map((e) => failureOf(e, hosts)).filter((f): f is Failure => !!f);
+  // An issue whose oldest event read is still in the period may have more there.
+  const capped = perIssue.some((list) => list.length >= EVENT_LOOKBACK && inRange(list[list.length - 1]!));
+  const timings = new Map<string, EndpointTiming>();
+  for (const t of endpointTimings(requestRows, latencyRows, hosts)) {
+    const [m, ...rest] = t.endpoint.split(" ");
+    timings.set(endpointKey(m!, rest.join(" ")), t);
+  }
+  const failures = events.filter(inRange).map((e) => failureOf(e, hosts, [...timings.keys()])).filter((f): f is Failure => !!f);
 
   const byEndpoint = new Map<string, Failure[]>();
   for (const f of failures) byEndpoint.set(f.endpoint, [...(byEndpoint.get(f.endpoint) ?? []), f]);
-  const timings = new Map(endpointTimings(requestRows, latencyRows, hosts).map((t) => [t.endpoint, t]));
+
+  // Every API call in the trails read, failed or not, names its service: learn them for the rest.
+  const named = events.flatMap((e) => (e.event.type === "error" ? (e.event.breadcrumbs ?? []) : [])).map((b) => apiCallOf(b, hosts)).filter((c): c is ApiCall => !!c?.service && !!c.path);
+  const serviceFor = (endpoint: string) => named.find((c) => sameCall(endpoint, c.method, c.path!));
 
   const rowFor = (endpoint: string): EndpointHealth => {
     const fs = byEndpoint.get(endpoint) ?? [];
     const t = timings.get(endpoint);
-    const named = fs.find((f) => f.call?.service)?.call;
-    const [method, ...rest] = endpoint.split(" ");
-    const url = rest.join(" ");
+    const own = fs.find((f) => f.call?.service)?.call ?? serviceFor(endpoint);
+    const fallback = fs.find((f) => f.own)?.own;
+    const [first, ...rest] = endpoint.split(" ");
+    const method = fallback ? fallback.method : first;
+    const url = fallback ? fallback.path : rest.join(" ");
     const host = hostNameFor(url, hosts);
     return {
       endpoint,
-      service: named?.service ?? host?.host.name,
-      method: named?.method ?? method,
-      path: named?.path ?? (host ? host.rest || "/" : url),
+      service: own?.service ?? host?.host.name,
+      method: own?.method ?? method,
+      path: host ? host.rest || "/" : (own?.path ?? url),
       calls: t?.requests ?? null,
       failedCalls: t?.failed ?? null,
       failureRate: t ? t.errorRate : null,
@@ -162,8 +229,8 @@ export async function buildEndpoints(
   };
   const endpoints = [...new Set([...timings.keys(), ...byEndpoint.keys()])]
     .map(rowFor)
-    // The most failures first, then the busiest.
-    .sort((a, b) => (b.failedCalls ?? b.failures) - (a.failedCalls ?? a.failures) || b.failures - a.failures || (b.calls ?? 0) - (a.calls ?? 0));
+    // The most failures first (by either count: the SDK's and the app's own differ), then the busiest.
+    .sort((a, b) => failing(b) - failing(a) || (b.calls ?? 0) - (a.calls ?? 0));
 
   const chosen = opts.endpoint ? endpoints.find((r) => r.endpoint === opts.endpoint) : undefined;
   const selected = chosen && {
@@ -187,5 +254,41 @@ export async function buildEndpoints(
         }),
       ),
   };
-  return { app, apps, range, retention, endpoints, selected, truncated: network.length > read.length };
+  return {
+    app,
+    generatedAt: new Date(now).toISOString(),
+    apps,
+    range,
+    retention,
+    services: servicesOf(endpoints),
+    endpoints,
+    selected,
+    missing: opts.endpoint && !chosen ? opts.endpoint : undefined,
+    truncated: issues.length >= ISSUE_READ_LIMIT || network.length > read.length || capped,
+  };
+}
+
+/** How badly an endpoint fails: the larger of the SDK's failed calls and the stored failures. */
+const failing = (r: { failedCalls: number | null; failures: number }) => Math.max(r.failedCalls ?? 0, r.failures);
+
+/** Endpoints added up per service, most failures first. */
+export function servicesOf(endpoints: readonly EndpointHealth[]): ServiceHealth[] {
+  const by = new Map<string | undefined, EndpointHealth[]>();
+  for (const e of endpoints) by.set(e.service, [...(by.get(e.service) ?? []), e]);
+  return [...by.entries()]
+    .map(([service, list]) => {
+      const calls = list.reduce((n, e) => n + (e.calls ?? 0), 0);
+      const failedCalls = list.reduce((n, e) => n + (e.failedCalls ?? 0), 0);
+      const p95s = list.map((e) => e.p95).filter((v): v is number => v !== null);
+      return {
+        service,
+        endpoints: list.length,
+        calls,
+        failedCalls,
+        failureRate: calls ? failedCalls / calls : null,
+        worstP95: p95s.length ? Math.max(...p95s) : null,
+        failures: list.reduce((n, e) => n + e.failures, 0),
+      };
+    })
+    .sort((a, b) => failing(b) - failing(a) || b.calls - a.calls);
 }

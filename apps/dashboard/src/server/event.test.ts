@@ -41,6 +41,8 @@ describe("API calls in breadcrumbs", () => {
     expect(apiCallOf(crumb({ category: "network", message: "x", data: { service: "balance", path: "/b", outcome: "unreachable" } }))?.failed).toBe(true);
     expect(apiCallOf(crumb({ category: "network", message: "x", data: { service: "balance", path: "/b", status: 200, outcome: "answered" } }))?.failed).toBe(false);
     expect(apiCallOf(crumb({ category: "network", message: "x", data: { service: "balance", path: "/b", outcome: "cached" } }))?.failed).toBe(false);
+    // The app cancelled it: the SDK says "aborted" at level info.
+    expect(apiCallOf(crumb({ category: "network", message: "GET /b → aborted (12ms)", data: { service: "balance", path: "/b", method: "GET", status: null, outcome: "aborted" } }))?.failed).toBe(false);
   });
 
   it("reads the SDK's own network breadcrumb and names its host from Settings", () => {
