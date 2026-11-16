@@ -24,6 +24,41 @@ describe("nameRequest", () => {
   it("names by host when no base URLs are set", () => {
     expect(nameRequest("https://api.x.com/v1/me")).toEqual({ service: "api.x.com", path: "/v1/me", matched: false });
   });
+
+  describe("named bases", () => {
+    // Cell C: one gateway per backend, each with the same /ppd/api base, mixed with a plain base.
+    const named = [
+      { url: "https://bal.example.com/ppd/api", name: "Balances" },
+      { url: "https://core.example.com/ppd/api/", name: "Core" },
+      "https://gw.example.com/ppd/api",
+    ];
+
+    it.each([
+      ["https://bal.example.com/ppd/api/cellc/balance/getBalances", "Balances", "/cellc/balance/getBalances"],
+      ["https://core.example.com/ppd/api/app-force-update", "Core", "/app-force-update"],
+      ["https://core.example.com/ppd/api", "Core", "/"],
+      ["https://gw.example.com/ppd/api/buy/purchase-history", "buy", "/buy/purchase-history"],
+    ])("%s is %s %s", (url, service, path) => {
+      expect(nameRequest(url, named)).toEqual({ service, path, matched: true });
+    });
+
+    it("uses the longest base, named or not", () => {
+      const bases = ["https://gw.example.com/ppd/api", { url: "https://gw.example.com/ppd/api/share", name: "Share" }];
+      expect(nameRequest("https://gw.example.com/ppd/api/share/airtime/balance", bases)).toEqual({ service: "Share", path: "/airtime/balance", matched: true });
+      expect(nameRequest("https://gw.example.com/ppd/api/buy/x", bases).service).toBe("buy");
+    });
+
+    it("falls back to the first path segment when a name is blank, and skips a base without a URL", () => {
+      const bases = [{ url: "https://bal.example.com/ppd/api", name: "  " }, { url: "", name: "Nothing" }];
+      expect(nameRequest("https://bal.example.com/ppd/api/cellc/x", bases).service).toBe("cellc");
+      expect(nameRequest("https://other.example.com/x", bases)).toEqual({ service: "other.example.com", path: "/x", matched: false });
+    });
+
+    it("never throws on a malformed entry", () => {
+      const bases = [null, { name: "No URL" }, "https://bal.example.com/ppd/api"] as never;
+      expect(nameRequest("https://bal.example.com/ppd/api/cellc/x", bases).service).toBe("cellc");
+    });
+  });
 });
 
 describe("readProblemDetails", () => {

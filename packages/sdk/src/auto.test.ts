@@ -166,6 +166,21 @@ describe("named calls and backend error details", () => {
     });
   });
 
+  it("names every call under a named base after that service", async () => {
+    const named = { ...network, baseUrls: [{ url: "https://bal.example.com/ppd/api", name: "Balances" }, ...network.baseUrls] };
+    const { c, sent } = setup({ autoCapture: { sessions: false }, network: named }, async (url) =>
+      url.includes("getBalances") ? new Response("{}", { status: 503 }) : new Response("{}", { status: 200 }),
+    );
+    await fetch("https://bal.example.com/ppd/api/cellc/balance/getBalances", { method: "POST" });
+    await settle();
+    await c.flush();
+
+    const [e] = errors(sent);
+    if (e?.type !== "error") throw new Error("expected an error");
+    expect(e.error.message).toBe("POST bal.example.com/ppd/api/cellc/balance/getBalances responded 503");
+    expect(e.breadcrumbs?.at(-1)?.data).toMatchObject({ service: "Balances", path: "/cellc/balance/getBalances", status: 503 });
+  });
+
   it("reads an XHR failure's body as it finishes, for text and json response types", async () => {
     class FakeXhr {
       status = 0;

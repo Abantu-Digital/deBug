@@ -12,7 +12,7 @@ import {
   type AutoSink,
   type RequestInfo,
 } from "./auto";
-import { nameRequest, readProblemDetails } from "./network";
+import { nameRequest, readProblemDetails, type BaseUrl } from "./network";
 import { bodyOf, redactHeaders, redactText, type RedactOptions } from "./redact";
 import { INGEST_VERSION_HEADER, ingestBehindWarning } from "./version";
 
@@ -121,11 +121,13 @@ export interface NetworkOptions {
   flows?: [string | RegExp, string][];
   /**
    * Your backends' base URLs, to name each call in the trail. The longest base a URL starts
-   * with is stripped and the first path segment left names the service:
-   * `baseUrls: ["https://api.x.com/v1"]` turns "https://api.x.com/v1/orders/42" into service
+   * with is stripped. Give a base a name and every call under it is that service:
+   * `{ url: "https://api.x.com/v1/balances", name: "Balances" }` turns
+   * ".../v1/balances/get" into service "Balances", path "/get". A plain URL names the service by
+   * the first path segment left: `"https://api.x.com/v1"` turns ".../v1/orders/42" into service
    * "orders", path "/orders/:id". Calls to other hosts are named by their host.
    */
-  baseUrls?: string[];
+  baseUrls?: BaseUrl[];
   /** Which HTTP statuses count as failures. Default: 500 and above (400 and above with `initReactNative`). Network failures and timeouts always count. */
   isFailure?: (status: number, url: string) => boolean;
   /** Requests slower than this get a warning breadcrumb. Default 3000ms. */
