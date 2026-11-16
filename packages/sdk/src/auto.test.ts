@@ -291,6 +291,119 @@ describe("named calls and backend error details", () => {
   });
 });
 
+describe("a failed call's request and response (network.bodies)", () => {
+  const network = { baseUrls: ["https://gw.example.com/ppd/api"], isFailure: (s: number) => s >= 400, bodies: { onFailure: true } };
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  const problem = JSON.stringify({ title: "Bad OTP", status: 400, traceId: "t-1", token: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln" });
+
+  it("carries the fetch request and response, redacted, on the failure only", async () => {
+    const { c, sent } = setup({ autoCapture: { sessions: false }, network }, async (url) =>
+      url.includes("validate")
+        ? new Response(problem, { status: 400, headers: { "content-type": "application/problem+json", "set-cookie": "s=1", "x-request-id": "r-9" } })
+        : new Response("{}", { status: 200 }),
+    );
+    await fetch("https://gw.example.com/ppd/api/buy/ok");
+    await fetch("https://gw.example.com/ppd/api/login/validate-otp?msisdn=27841234567&otp=123456", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer secret" },
+      body: JSON.stringify({ msisdn: "27841234567", otp: "123456" }),
+    });
+    await settle();
+    await c.flush();
+
+    const [e] = errors(sent);
+    if (e?.type !== "error") throw new Error("expected an error");
+    expect(e.request).toMatchObject({
+      method: "POST",
+      status: 400,
+      query: "msisdn=27841234567&otp=%5Bredacted%5D",
+      headers: { "content-type": "application/json", authorization: "[redacted]" },
+      body: '{"msisdn":"27841234567","otp":"[redacted]"}',
+    });
+    expect(e.response).toMatchObject({
+      status: 400,
+      headers: { "content-type": "application/problem+json", "set-cookie": "[redacted]", "x-request-id": "r-9" },
+      body: '{"title":"Bad OTP","status":400,"traceId":"t-1","token":"[redacted]"}',
+    });
+    // The breadcrumb says the bodies are on the error; the successful call has none.
+    expect(e.breadcrumbs?.map((b) => b.data?.hasBodies)).toEqual([undefined, true]);
+  });
+
+  it("carries XHR headers and bodies, and describes a binary response by size and type", async () => {
+    class FakeXhr {
+      status = 0;
+      responseType = "";
+      responseText = "";
+      response: unknown = null;
+      url = "";
+      listeners: Record<string, (() => void)[]> = {};
+      open(_m: string, u: string) {
+        this.url = u;
+      }
+      setRequestHeader(_n: string, _v: string) {}
+      send() {
+        this.status = 500;
+        const pdf = this.url.includes("doc");
+        this.response = pdf ? new Uint8Array([0x25, 0x50, 0xff, 0xfe]).buffer : null;
+        this.responseText = pdf ? "" : '{"title":"Down"}';
+        queueMicrotask(() => this.listeners.loadend?.forEach((f) => f()));
+      }
+      getAllResponseHeaders() {
+        return this.url.includes("doc") ? "content-type: application/pdf\r\n" : "content-type: application/json\r\nx-api-key: k\r\n";
+      }
+      getResponseHeader(n: string) {
+        return n === "content-type" ? (this.url.includes("doc") ? "application/pdf" : "application/json") : null;
+      }
+      addEventListener(t: string, f: () => void) {
+        (this.listeners[t] ??= []).push(f);
+      }
+    }
+    g.XMLHttpRequest = FakeXhr;
+    const { c, sent } = setup({ autoCapture: { sessions: false }, network });
+    const x = new g.XMLHttpRequest();
+    x.open("POST", "https://gw.example.com/ppd/api/share/transfer");
+    x.setRequestHeader("Content-Type", "application/json");
+    x.setRequestHeader("x-id-token", "secret");
+    x.send(JSON.stringify({ to: "0841234567", pin: "1234" }));
+    const doc = new g.XMLHttpRequest();
+    doc.responseType = "arraybuffer";
+    doc.open("GET", "https://gw.example.com/ppd/api/profile/contracts/1/doc");
+    doc.send();
+    await settle();
+    await c.flush();
+
+    const [transfer, pdf] = errors(sent);
+    if (transfer?.type !== "error" || pdf?.type !== "error") throw new Error("expected two errors");
+    expect(transfer.request).toMatchObject({ headers: { "content-type": "application/json", "x-id-token": "[redacted]" }, body: '{"to":"0841234567","pin":"[redacted]"}' });
+    expect(transfer.response).toMatchObject({ status: 500, headers: { "x-api-key": "[redacted]" }, body: '{"title":"Down"}' });
+    expect(pdf.response).toMatchObject({ status: 500, body: "[binary 1 KB, application/pdf]", bodySize: 4 });
+  });
+
+  it("carries no bodies when the option is off", async () => {
+    const { c, sent } = setup({ autoCapture: { sessions: false }, network: { ...network, bodies: undefined } }, async () => new Response(problem, { status: 400 }));
+    await fetch("https://gw.example.com/ppd/api/login/x", { method: "POST", body: "otp=1" });
+    await settle();
+    await c.flush();
+    const [e] = errors(sent);
+    if (e?.type !== "error") throw new Error("expected an error");
+    expect([e.request?.body, e.request?.headers, e.response]).toEqual([undefined, undefined, undefined]);
+  });
+
+  it("keeps each upload under ingest's size limit when many failures carry bodies", async () => {
+    const big = JSON.stringify({ data: "x".repeat(15_000) });
+    const { c, upload } = setup({ autoCapture: { sessions: false }, network }, async () => new Response(big, { status: 500 }));
+    // Queue many failures before any upload goes out.
+    (c as unknown as { backoffUntil: number }).backoffUntil = Date.now() + 60_000;
+    for (let i = 0; i < 40; i++) await fetch(`https://gw.example.com/ppd/api/buy/${i}x`, { method: "POST", body: big });
+    await settle();
+    (c as unknown as { backoffUntil: number }).backoffUntil = 0;
+    while ((c as unknown as { queue: unknown[] }).queue.length) await c.flush();
+    const sizes = upload.mock.calls.map(([, init]) => (init as { body: string }).body.length);
+    expect(sizes.length).toBeGreaterThan(1);
+    expect(Math.max(...sizes)).toBeLessThan(512 * 1024);
+  });
+});
+
 describe("sessions", () => {
   it("marks a session started, then errored and crashed once each, and never samples them out", async () => {
     const { c, sent } = setup({ autoCapture: { network: false }, sampleRate: 0 });

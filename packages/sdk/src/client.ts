@@ -1,4 +1,6 @@
 import type { Breadcrumb, ContextInput, EnvelopeInput, EventInput, Severity } from "@debugkit/schema/core";
+
+type ErrorEventInput = Extract<EventInput, { type: "error" }>;
 import { latencyBucket, LATENCY_BUCKETS_MS, markLibraryFrames, parseStack } from "@debugkit/schema/core";
 import { browserContext, mergeContext, type ContextPatch } from "./context";
 import {
@@ -13,6 +15,7 @@ import {
   type RequestInfo,
 } from "./auto";
 import { nameRequest, readProblemDetails } from "./network";
+import { binaryBody, captureBody, redactHeaders, redactText, type RedactOptions } from "./redact";
 
 export const SDK_NAME = "@debugkit/sdk";
 declare const __DEBUGKIT_SDK_VERSION__: string | undefined;
@@ -122,6 +125,18 @@ export interface NetworkOptions {
   isFailure?: (status: number, url: string) => boolean;
   /** Requests slower than this get a warning breadcrumb. Default 3000ms. */
   slowMs?: number;
+  /**
+   * The full request and response of a failed call: method, URL with its query string, headers
+   * and both bodies, with secrets redacted on the device (passwords, PINs, one-time codes, card
+   * details, tokens; see `redact.ts`) and each body cut to `maxChars`. Off by default; on with
+   * `initReactNative`. Successful calls never carry bodies.
+   */
+  bodies?: {
+    onFailure?: boolean;
+    /** Default 16384 (16 KB) per body. */
+    maxChars?: number;
+    redact?: RedactOptions;
+  };
 }
 
 export interface EventMeta {
@@ -131,6 +146,10 @@ export interface EventMeta {
 }
 
 const QUEUE_KEY = "@debugkit/queue";
+/** About the most of events one upload carries, leaving room for the context under ingest's 512 KB. */
+const MAX_BATCH_CHARS = 384 * 1024;
+/** The most of each body a failed call carries, by default: the schema's limit. */
+const DEFAULT_BODY_CHARS = 16_384;
 /** The most breadcrumbs an error event can carry (the schema's limit). */
 const MAX_BREADCRUMBS = 50;
 /** One id per install, so "users affected" counts people rather than app launches. */
@@ -363,13 +382,33 @@ export class DebugClient {
     this.timingsSince = Date.now();
   }
 
+  /**
+   * How many queued events the next upload takes: at most `maxBatch`, and no more than about
+   * 384 KB of events (ingest refuses uploads over 512 KB), but always at least one.
+   */
+  private batchSize(): number {
+    let size = 0;
+    let n = 0;
+    for (const e of this.queue) {
+      if (n >= this.opts.maxBatch) break;
+      try {
+        size += JSON.stringify(e).length;
+      } catch {
+        size += 1024;
+      }
+      if (n > 0 && size > MAX_BATCH_CHARS) break;
+      n++;
+    }
+    return Math.max(1, n);
+  }
+
   async flush(): Promise<void> {
     this.queueTimings(this.closing);
     // Wait for an upload in progress, then send whatever was queued meanwhile (a crash marker, say).
     if (this.flushing) await this.flushing.catch(() => {});
     if (this.flushing) return this.flushing;
     if (!this.ready || this.queue.length === 0 || Date.now() < this.backoffUntil) return;
-    const batch = this.queue.splice(0, this.opts.maxBatch);
+    const batch = this.queue.splice(0, this.batchSize());
     this.inflight = batch;
     this.flushing = this.send(batch)
       .then(() => {
@@ -414,9 +453,10 @@ export class DebugClient {
   captureError(
     e: { name: string; message: string; stack?: string; frames?: ReturnType<typeof parseStack> },
     meta: EventMeta & { severity?: Severity; handled?: boolean; fatal?: boolean },
-    request?: { method: string; url: string; status?: number; durationMs?: number },
+    request?: ErrorEventInput["request"],
     /** The trail as it was when the error happened, when it is reported later. */
     breadcrumbs: Breadcrumb[] = [...this.crumbs],
+    response?: ErrorEventInput["response"],
   ) {
     if (!this.ready || this.closed) return;
     const handled = meta.handled ?? true;
@@ -446,6 +486,7 @@ export class DebugClient {
       error: { name: e.name, message: e.message, stack: e.stack, frames },
       breadcrumbs,
       request,
+      response,
     });
   }
 
@@ -694,6 +735,7 @@ export class DebugClient {
       },
       ignored: (url) => this.isIgnored(url),
       wantsBody: (status, url) => this.isFailedStatus(status, url),
+      capturesBodies: () => this.opts.network?.bodies?.onFailure === true,
     };
   }
 
@@ -756,13 +798,18 @@ export class DebugClient {
     // frames again without it: the wrapper on top hides the library run below it.
     const frames = markLibraryFrames(parseStack(r.stack).slice(1));
     const trail = [...this.crumbs];
-    const report = () =>
+    const bodies = net.bodies?.onFailure ? net.bodies : undefined;
+    if (bodies) data.hasBodies = true;
+    const report = (responseBody = r.responseBody) => {
+      const http = bodies ? this.describeFailedCall(r, responseBody, bodies) : undefined;
       this.captureError(
         { name: r.status !== undefined ? "HttpError" : "NetworkError", message, stack: r.stack, frames },
         { flow, handled: true, tags: { source: "network" } },
-        { method: r.method, url, status: r.status, durationMs: ms },
+        { method: r.method, url, status: r.status, durationMs: ms, ...http?.request },
         trail,
+        http?.response,
       );
+    };
     if (!r.bodyPending) return report();
     // The trail is kept as it was at the failure; its breadcrumb gains the backend's details.
     let done = false;
@@ -772,11 +819,41 @@ export class DebugClient {
       this.pendingReports.delete(finishNow);
       const backend = readProblemDetails(responseBody);
       if (backend) crumb.data = { ...crumb.data, ...backend };
-      report();
+      report(responseBody);
     };
     const finishNow = () => finish();
     this.pendingReports.add(finishNow);
     return (responseBody: string) => finish(responseBody);
+  }
+
+  /** A failed call's request and response, redacted and cut, for `network.bodies`. Never throws. */
+  private describeFailedCall(
+    r: RequestInfo,
+    responseBody: string | undefined,
+    bodies: NonNullable<NetworkOptions["bodies"]>,
+  ): { request: Partial<NonNullable<ErrorEventInput["request"]>>; response?: ErrorEventInput["response"] } {
+    try {
+      const max = bodies.maxChars ?? DEFAULT_BODY_CHARS;
+      const redact = bodies.redact ?? {};
+      const rawQuery = /\?([^#]*)/.exec(r.url)?.[1];
+      const request = {
+        query: rawQuery ? redactText(rawQuery, redact).slice(0, max) : undefined,
+        headers: redactHeaders(r.requestHeaders, redact),
+        ...(r.requestBinary ? binaryBody(r.requestBinary.bytes, r.requestBinary.type) : captureBody(r.requestBody, max, redact)),
+      };
+      const response =
+        r.status === undefined
+          ? undefined
+          : {
+              status: r.status,
+              headers: redactHeaders(r.responseHeaders, redact),
+              ...(r.responseBinary ? binaryBody(r.responseBinary.bytes, r.responseBinary.type) : captureBody(responseBody, max, redact)),
+            };
+      return { request, response };
+    } catch (err) {
+      this.log("couldn't describe the failed call", err);
+      return { request: {} };
+    }
   }
 
   private log(...args: unknown[]) {
@@ -809,15 +886,15 @@ function resolveAuto(o: InitOptions): Required<AutoCaptureOptions> {
   };
 }
 
-const hasNewFields = (events: EventInput[]) => events.some((e) => e.type === "session" || (e.type === "error" && e.request));
+const hasNewFields = (events: EventInput[]) => events.some((e) => e.type === "session" || (e.type === "error" && (e.request || e.response)));
 
 /** Events as a 0.1 ingest accepts them: no session markers, no request details. */
 function toLegacy(events: EventInput[]): EventInput[] {
   const out: EventInput[] = [];
   for (const e of events) {
     if (e.type === "session" || e.type === "metric") continue;
-    if (e.type === "error" && e.request) {
-      const { request: _r, ...rest } = e;
+    if (e.type === "error" && (e.request || e.response)) {
+      const { request: _r, response: _s, ...rest } = e;
       out.push(rest);
     } else out.push(e);
   }

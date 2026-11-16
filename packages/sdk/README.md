@@ -59,9 +59,10 @@ before it: the screen, the click, the request that failed.
 
 **Privacy.** Query strings and fragments are dropped from every URL before anything is
 recorded, and ids in paths become `:id` (`/v1/orders/8812?token=…` becomes `/v1/orders/:id`).
-Request bodies, headers and what users type are never read. A failed call's response body is
-read only to pick out the backend's error details (see below), with phone numbers and email
-addresses in them masked; the body itself is never sent.
+What users type is never read. A failed call's response body is read to pick out the backend's
+error details (see below), with phone numbers and email addresses in them masked. Bodies and
+headers themselves are sent only if you turn on `network.bodies` (on by default with
+`initReactNative`), only for failed calls, and only after their secrets are redacted on the device.
 Use `beforeSend` to scrub anything else.
 
 **Noise control.** At most 60 errors a minute are sent (`maxErrorsPerMinute`), and one repeating
@@ -108,6 +109,31 @@ was no answer), `durationMs` and `outcome` (`answered`, `unreachable` or `aborte
   only when they decode as text; blobs never are. Phone numbers and email addresses the backend
   quotes are masked. A fetch failure is reported once its body has been read (at most 3 seconds,
   or at once on `close()`); an XHR failure, as axios sends on React Native, straight away.
+
+### The full request and response of a failed call
+
+With `network.bodies: { onFailure: true }` (the default with `initReactNative`), a failed call's
+error carries its request (method, URL with its query string, headers and body) and its response
+(status, headers and body). The dashboard shows them on the failed request. Successful calls never
+carry bodies.
+
+Secrets are redacted on the device, before anything is queued:
+
+| What | Redacted |
+|---|---|
+| Headers | `Authorization`, `Cookie`, `Set-Cookie`, and any name containing `token`, `key` or `secret` |
+| Body and query fields, at any depth, without case | `password`, `pin`, `otp`, `otpCode`, `verificationCode`, `cvv`, `cvc`, `cardNumber`, `pan`, `idToken`, `accessToken`, `refreshToken`, `token`, `secret`, `apiKey` |
+| Values, in any field or plain text | JWTs become `[redacted]`; card numbers that pass the Luhn check become `•••• 1234` |
+
+Plain `code` is kept: it's usually the backend's error code. Add your own with
+`redact: { fields: ["idNumber"], headers: ["x-session"] }`. Each body is cut at 16 KB
+(`maxChars`) with `…[truncated, N KB total]`, and ingest cuts again rather than reject an event.
+Bodies that aren't text (files, images, form data) are recorded as `[binary 412 KB, application/pdf]`.
+Uploads stay under ingest's size limit however many failures are queued.
+
+```ts
+network: { bodies: { onFailure: true, maxChars: 16_384, redact: { fields: ["idNumber"] } } }
+```
 
 ## Response times
 
@@ -199,7 +225,7 @@ report yours.
 
 ## React Native and Expo defaults
 
-`initReactNative` tunes two defaults for an app talking to its own backend. Pass either option to
+`initReactNative` tunes three defaults for an app talking to its own backend. Pass either option to
 change it.
 
 - **A 4xx is a failure** (`network.isFailure`: status 400 and above). On mobile a 4xx is usually a
@@ -209,6 +235,8 @@ change it.
   `isFailure: (s) => s >= 400 && s !== 401` if your app handles those itself.
 - **A longer trail** (`maxBreadcrumbs: 50`, up from 30): screens, API calls and taps fit before a
   failure. 50 is the most an error event carries, on any platform, so a larger value is capped.
+- **A failed call's request and response** (`network.bodies: { onFailure: true }`), redacted on the
+  device as described above.
 
 ## Device details on React Native and Expo
 
