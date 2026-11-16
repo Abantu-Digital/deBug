@@ -1,63 +1,53 @@
 import type { Breadcrumb, ErrorEvent } from "@debugkit/schema";
 
 /**
- * What the SDK captured of a failed call's request and response (ABA-117), redacted by the SDK
- * before it left the phone: headers, bodies (at most 16 KB a side) and their full sizes.
+ * What the SDK captured of a failed call's request and response (ABA-117, `network.bodies`),
+ * redacted on the phone before it was sent: the query, headers and bodies (at most 16 KB a side).
  */
 export interface Exchange {
   request: ExchangeSide & {
     method: string;
-    /** The path, as the SDK names the call. */
+    /** As the SDK names the call: "api.x.com/v1/orders/:id", or "/v1/orders/:id" for its own origin. */
     url: string;
-    /** The whole URL, host included, when a breadcrumb for the call recorded it. */
+    /** "https://api.x.com/v1/orders/:id" when the URL names its host; undefined when it's a path only. */
     fullUrl?: string;
     /** The query string, redacted, without the "?". */
     query?: string;
   };
   /** Absent when the call got no answer. */
-  response?: ExchangeSide & { status?: number };
+  response?: ExchangeSide & { status: number };
 }
 
+/** One side of the call, as the schema's CapturedBody and CapturedHeaders hold it. */
 export interface ExchangeSide {
-  /** Lowercased names; secrets are "[redacted]". */
+  /** Lowercased names; secrets are "[redacted]". Values over 2000 characters were cut by ingest. */
   headers?: Record<string, string>;
-  /** Redacted text, cut at 16 KB ("…[truncated, N KB total]"), or "[binary N KB, type]". */
+  /** Redacted text, cut at 16 KB ("…[truncated, N KB total]", or ingest's "…[truncated]"), or "[binary N KB, type]". */
   body?: string;
-  /** The whole body's size in bytes, before any cut. */
+  /** The whole body's size before any cut: characters for text, bytes for a binary body. */
   bodySize?: number;
   truncated?: boolean;
 }
 
-/** The fields ABA-117 adds to an error, read loosely: stores keep events from before and after it. */
-type Wire = { method: string; url: string; status?: number; query?: unknown; headers?: unknown; body?: unknown; bodySize?: unknown; truncated?: unknown };
+type Request = NonNullable<ErrorEvent["request"]>;
 
-const str = (v: unknown) => (typeof v === "string" ? v : undefined);
-const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
-function headers(v: unknown): Record<string, string> | undefined {
-  if (!v || typeof v !== "object") return undefined;
-  const out = Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, x]) => typeof x === "string")) as Record<string, string>;
-  return Object.keys(out).length ? out : undefined;
-}
-function side(w: Record<string, unknown>): ExchangeSide {
-  return { headers: headers(w.headers), body: str(w.body), bodySize: num(w.bodySize), truncated: w.truncated === true ? true : undefined };
+function sideOf(s: { headers?: Record<string, string>; body?: string; bodySize?: number; truncated?: boolean }): ExchangeSide {
+  return { headers: s.headers && Object.keys(s.headers).length ? s.headers : undefined, body: s.body, bodySize: s.bodySize, truncated: s.truncated || undefined };
 }
 
-/** The SDK's own network breadcrumb carries the URL as it was called: "POST https://api.x/v1/pay → 503 (120ms)". */
-const SDK_URL = /^[A-Z]+ (https?:\/\/\S+) → /;
+/** Whether the SDK captured anything beyond the call itself: only with network.bodies on. */
+function captured(r: Request, crumbs: readonly Breadcrumb[]): boolean {
+  return r.query !== undefined || !!r.headers || r.body !== undefined || r.bodySize !== undefined || crumbs.some((b) => b.category === "network" && b.data?.hasBodies === true);
+}
 
-/** The request and response the SDK captured on an error, or undefined when it captured no bodies or headers. */
-export function exchangeOf(ev: ErrorEvent, crumbs: readonly Breadcrumb[] = ev.breadcrumbs ?? []): Exchange | undefined {
-  const req = ev.request as Wire | undefined;
-  const res = (ev as { response?: unknown }).response as Record<string, unknown> | undefined;
-  if (!req) return undefined;
-  const request = { method: req.method.toUpperCase(), url: req.url, query: str(req.query)?.replace(/^\?/, "") || undefined, ...side(req as Record<string, unknown>) };
-  const response = res && typeof res === "object" ? { status: num(res.status) ?? req.status, ...side(res) } : undefined;
-  const captured = [request, response].some((s) => s && (s.headers || s.body !== undefined));
-  if (!captured) return undefined;
-  const path = req.url.split(/[?#]/)[0]!;
-  const fullUrl = [...crumbs]
-    .reverse()
-    .map((b) => (b.category === "network" ? SDK_URL.exec(b.message)?.[1] : undefined))
-    .find((u) => u && u.split(/[?#]/)[0]!.endsWith(path));
-  return { request: { ...request, fullUrl: fullUrl?.split(/[?#]/)[0] }, response };
+/** The request and response the SDK captured on an error, or undefined when it captured none. */
+export function exchangeOf(ev: ErrorEvent): Exchange | undefined {
+  const r = ev.request;
+  if (!r || !(captured(r, ev.breadcrumbs ?? []) || ev.response)) return undefined;
+  // normaliseUrl keeps the host ("api.x.com/v1/pay") unless the call was to the app's own origin.
+  const fullUrl = r.url && !r.url.startsWith("/") ? `https://${r.url}` : undefined;
+  return {
+    request: { method: r.method.toUpperCase(), url: r.url, fullUrl, query: r.query?.replace(/^\?/, "") || undefined, ...sideOf(r) },
+    response: ev.response ? { status: ev.response.status, ...sideOf(ev.response) } : undefined,
+  };
 }

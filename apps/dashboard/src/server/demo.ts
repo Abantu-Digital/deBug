@@ -35,7 +35,7 @@ export async function seedDemo(): Promise<MemoryStore> {
     /** Unhandled and fatal: the app crashes (feeds crash-free rates). */
     fatal?: boolean;
     /** The failed request the SDK's network capture records alongside the error. */
-    request?: { method: string; url: string; status?: number; message: string };
+    request?: { method: string; url: string; status?: number; message: string; captured?: { request: { query?: string; headers?: Record<string, string> }; response: { status: number; headers?: Record<string, string>; body?: string; bodySize?: number } } };
   };
 
   const scenarios: Scenario[] = [
@@ -69,7 +69,17 @@ export async function seedDemo(): Promise<MemoryStore> {
       weight: () => 0.35,
       error: () => ({ name: "SyntaxError", message: "JSON Parse error: Unexpected token '<'", stack: stack("loadFeed", "features/feed/useFeed.ts", 23) }),
       crumbs: [{ category: "network", message: "GET /v1/feed → 502 (2210ms)", level: "error" }],
-      request: { method: "GET", url: "/v1/feed", status: 502, message: "GET /v1/feed responded 502" },
+      request: {
+        method: "GET",
+        url: "/v1/feed",
+        status: 502,
+        message: "GET /v1/feed responded 502",
+        // What the SDK captures with network.bodies (ABA-117), redacted on the phone.
+        captured: {
+          request: { query: "page=2&session=[redacted]", headers: { accept: "application/json", authorization: "[redacted]", "x-app-version": "2.4.0" } },
+          response: { status: 502, headers: { "content-type": "text/html", server: "nginx" }, body: "<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center></body></html>", bodySize: 108 },
+        },
+      },
     },
     {
       flow: "profile.update",
@@ -135,7 +145,8 @@ export async function seedDemo(): Promise<MemoryStore> {
               handled: true,
               tags: { source: "network" },
               error: { name: r.status ? "HttpError" : "NetworkError", message: r.message },
-              request: { method: r.method, url: r.url, status: r.status, durationMs: r.status ? 2210 : 30000 },
+              request: { method: r.method, url: r.url, status: r.status, durationMs: r.status ? 2210 : 30000, ...r.captured?.request },
+              ...(r.captured ? { response: r.captured.response } : {}),
               breadcrumbs: (sc.crumbs ?? []).map((c) => ({ ts, level: c.level ?? "info", ...c })),
             });
           }
