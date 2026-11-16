@@ -169,6 +169,8 @@ export class DebugClient {
   private backoffUntil = 0;
   private failures = 0;
   private ready = false;
+  /** Set by close(): breadcrumbs and navigation stop until the next init(). */
+  private closed = false;
   private handlersInstalled = false;
   private auto: Required<AutoCaptureOptions> = { errors: false, network: false, console: false, navigation: false, clicks: false, lifecycle: false, sessions: false };
   private restores: (() => void)[] = [];
@@ -184,6 +186,7 @@ export class DebugClient {
     if (this.timer) clearInterval(this.timer);
     this.uninstrument();
     this.opts = { flushIntervalMs: 5000, maxBatch: 50, maxBreadcrumbs: 30, ...options };
+    this.closed = false;
     this.globalTags = { ...options.tags };
     if (options.enabled === false) {
       // Switched off: stay inert. Handlers from an earlier init() check `ready` and do nothing.
@@ -227,7 +230,7 @@ export class DebugClient {
 
   /** Record a navigation breadcrumb ("from → to"). Repeated paths are ignored. */
   navigated(to: string) {
-    if (!to || to === this.lastNav) return;
+    if (this.closed || !to || to === this.lastNav) return;
     this.breadcrumb("navigation", this.lastNav ? `${this.lastNav} → ${to}` : to);
     this.lastNav = to;
   }
@@ -274,13 +277,19 @@ export class DebugClient {
     this.user = { ...this.user, id };
   }
 
+  /** Record a breadcrumb. Never throws; does nothing after close(). */
   breadcrumb(category: Breadcrumb["category"], message: string, data?: Record<string, string | number | boolean | null>, level: Breadcrumb["level"] = "info") {
-    this.addCrumb(category, message, data, level);
+    if (this.closed) return;
+    try {
+      this.addCrumb(category, message, data, level);
+    } catch (err) {
+      this.log("breadcrumb failed", err);
+    }
   }
 
   /** Records a breadcrumb and returns the one stored (a repeat collapses into the last). */
   private addCrumb(category: Breadcrumb["category"], message: string, data: Record<string, string | number | boolean | null> | undefined, level: Breadcrumb["level"]): Breadcrumb {
-    const msg = message.slice(0, 500);
+    const msg = String(message).slice(0, 500);
     const last = this.crumbs[this.crumbs.length - 1];
     if (last && last.category === category && last.message === msg && last.level === level) {
       last.ts = now();
@@ -382,6 +391,7 @@ export class DebugClient {
     this.uninstrument();
     // Failures still waiting for their response body are reported now, so the last flush sends them.
     for (const report of [...this.pendingReports]) report();
+    this.closed = true;
     this.closing = true;
     return this.flush().finally(() => (this.closing = false));
   }
