@@ -3,6 +3,7 @@
  * Client code (the SDK) imports only this entry so validators never reach app bundles.
  */
 import type { Severity, StackFrame } from "./index";
+import type { LabelInfo } from "./taxonomy";
 import { markLibraryFrames, RN_BUNDLE } from "./frames";
 
 export type {
@@ -120,6 +121,14 @@ export function severityFromCount(count: number, t: SeverityThresholds = DEFAULT
 }
 
 export const SEVERITY_ORDER: Record<Severity, number> = { critical: 3, high: 2, medium: 1, low: 0 };
+
+/** How each severity level reads in the dashboard: always in words, never by colour alone. */
+export const SEVERITY_INFO: Record<Severity, LabelInfo> = {
+  critical: { name: "Critical", description: "Customers are blocked, or the app closes, for many of them. Act now." },
+  high: { name: "High", description: "Customers are blocked, or many have a degraded experience." },
+  medium: { name: "Medium", description: "A few customers have a degraded experience, or a silent failure is frequent." },
+  low: { name: "Low", description: "A one-off, or silent and rare." },
+};
 
 /* ---------- Stack parsing ---------- */
 

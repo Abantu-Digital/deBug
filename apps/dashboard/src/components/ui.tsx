@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { CATEGORY_INFO, IMPACT_INFO, OWNER_INFO, type Classification, type Impact, type Severity } from "@debugkit/schema";
+import { Link, type LinkProps } from "@tanstack/react-router";
+import { CATEGORY_INFO, IMPACT_INFO, OWNER_INFO, SEVERITY_INFO, type Classification, type Impact, type Severity } from "@debugkit/schema";
 
 export function Logo() {
   return (
@@ -12,61 +13,41 @@ export function Logo() {
   );
 }
 
-/* ---------- Issue levels (ABA-139) ----------
-   Critical red, High orange, Medium yellow, Low grey. Green is for healthy services and
-   journeys only, never for an issue. Colour never works alone: the level is always in words. */
-
-export const LEVEL_NAME: Record<Severity, string> = { critical: "Critical", high: "High", medium: "Medium", low: "Low" };
+/* ---------- Issue levels (ABA-139): words always, colour too; green only for healthy services and journeys */
 
 type Tone = Severity | "healthy";
 
 /** Full class names (not built from parts) so Tailwind keeps them. */
-const SURFACE: Record<Tone, string> = {
-  critical: "bg-level-critical-bg text-level-critical-fg border-level-critical-edge",
-  high: "bg-level-high-bg text-level-high-fg border-level-high-edge",
-  medium: "bg-level-medium-bg text-level-medium-fg border-level-medium-edge",
-  low: "bg-level-low-bg text-level-low-fg border-level-low-edge",
-  healthy: "bg-level-healthy-bg text-level-healthy-fg border-level-healthy-edge",
-};
-
-const EDGE: Record<Tone, string> = {
-  critical: "border-level-critical-edge",
-  high: "border-level-high-edge",
-  medium: "border-level-medium-edge",
-  low: "border-level-low-edge",
-  healthy: "border-level-healthy-edge",
-};
-
-const TEXT: Record<Tone, string> = {
-  critical: "text-level-critical-fg",
-  high: "text-level-high-fg",
-  medium: "text-level-medium-fg",
-  low: "text-level-low-fg",
-  healthy: "text-level-healthy-fg",
+const TONE: Record<Tone, { surface: string; edge: string; text: string }> = {
+  critical: { surface: "bg-level-critical-bg text-level-critical-fg border-level-critical-edge", edge: "border-level-critical-edge", text: "text-level-critical-fg" },
+  high: { surface: "bg-level-high-bg text-level-high-fg border-level-high-edge", edge: "border-level-high-edge", text: "text-level-high-fg" },
+  medium: { surface: "bg-level-medium-bg text-level-medium-fg border-level-medium-edge", edge: "border-level-medium-edge", text: "text-level-medium-fg" },
+  low: { surface: "bg-level-low-bg text-level-low-fg border-level-low-edge", edge: "border-level-low-edge", text: "text-level-low-fg" },
+  healthy: { surface: "bg-level-healthy-bg text-level-healthy-fg border-level-healthy-edge", edge: "border-level-healthy-edge", text: "text-level-healthy-fg" },
 };
 
 /** An issue's level, in words and colour. */
 export function LevelBadge({ level }: { level: Severity }) {
   return (
-    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${SURFACE[level]}`}>
-      {LEVEL_NAME[level]}
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${TONE[level].surface}`} title={SEVERITY_INFO[level].description}>
+      {SEVERITY_INFO[level].name}
     </span>
   );
 }
 
 /**
- * One level's box on the health screen: its count and who it affects. Coloured only when
- * something is open at that level. Wrap it in a Link to open the list filtered to the level.
+ * One level's box on the health screen: how many issues are open at that level and how many
+ * customers they affect. The whole box links to the list filtered to that level. Coloured only
+ * when something is open.
  */
-export function LevelBox({ level, count, sub, hint }: { level: Severity; count: number; sub?: ReactNode; hint?: ReactNode }) {
+export function LevelBox({ level, count, customers, link }: { level: Severity; count: number; customers: number; link: LinkProps }) {
   const open = count > 0;
   return (
-    <div className={`flex h-full flex-col gap-1.5 rounded-xl border p-4 ${open ? SURFACE[level] : "border-line bg-panel text-muted"}`}>
-      <span className="text-xs font-bold uppercase tracking-wide">{LEVEL_NAME[level]}</span>
+    <Link {...link} className={`flex h-full flex-col gap-1.5 rounded-xl border p-4 hover:brightness-110 ${open ? TONE[level].surface : "border-line bg-panel text-muted"}`}>
+      <span className="text-xs font-bold uppercase tracking-wide">{SEVERITY_INFO[level].name}</span>
       <span className="tabular text-4xl font-semibold leading-none">{count}</span>
-      <span className="text-xs">{sub ?? (open ? null : "None open")}</span>
-      {open && hint && <span className="text-[11px] opacity-80">{hint}</span>}
-    </div>
+      <span className="text-xs">{open ? `${customers.toLocaleString()} customer${customers === 1 ? "" : "s"} affected` : "None open"}</span>
+    </Link>
   );
 }
 
@@ -76,9 +57,9 @@ export function LevelBox({ level, count, sub, hint }: { level: Severity; count: 
  */
 export function LevelRow({ level, aside, children }: { level: Severity; aside?: ReactNode; children: ReactNode }) {
   return (
-    <div className={`flex flex-col overflow-hidden rounded-xl border bg-panel sm:flex-row ${EDGE[level]}`}>
-      <div className={`flex shrink-0 flex-row items-center justify-between gap-2 px-3 py-2 sm:w-28 sm:flex-col sm:justify-center sm:py-3 sm:text-center ${SURFACE[level]}`}>
-        <strong className="text-sm">{LEVEL_NAME[level]}</strong>
+    <div className={`flex flex-col overflow-hidden rounded-xl border bg-panel sm:flex-row ${TONE[level].edge}`}>
+      <div className={`flex shrink-0 flex-row items-center justify-between gap-2 px-3 py-2 sm:w-28 sm:flex-col sm:justify-center sm:py-3 sm:text-center ${TONE[level].surface}`}>
+        <strong className="text-sm">{SEVERITY_INFO[level].name}</strong>
         {aside && <span className="text-xs">{aside}</span>}
       </div>
       <div className="min-w-0 flex-1 p-3 sm:p-4">{children}</div>
@@ -90,9 +71,9 @@ export function LevelRow({ level, aside, children }: { level: Severity; aside?: 
 export function HealthTile({ name, level, state }: { name: string; level: Severity | null; state: ReactNode }) {
   const tone: Tone = level ?? "healthy";
   return (
-    <div className={`flex h-full flex-col gap-1 rounded-xl border bg-panel px-3 py-2.5 ${EDGE[tone]}`}>
+    <div className={`flex h-full flex-col gap-1 rounded-xl border bg-panel px-3 py-2.5 ${TONE[tone].edge}`}>
       <strong className="text-sm">{name}</strong>
-      <span className={`text-xs ${TEXT[tone]}`}>{state}</span>
+      <span className={`text-xs ${TONE[tone].text}`}>{state}</span>
     </div>
   );
 }

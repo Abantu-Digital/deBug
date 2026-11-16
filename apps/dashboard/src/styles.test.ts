@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+/** Comments dropped so a brace in one can't end a block early. */
+const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const LEVELS = ["critical", "high", "medium", "low", "healthy"] as const;
 
 /** The custom properties set in the first block that matches `opener`. */
@@ -35,7 +36,7 @@ describe.each(Object.entries(themes))("level colours, %s theme", (_name, t) => {
     expect(contrast(t.get(`--level-${level}-fg`)!, t.get("--panel")!)).toBeGreaterThanOrEqual(4.5);
   });
 
-  it.each(LEVELS)("%s edge stands out from the panel (3:1, a UI boundary)", (level) => {
-    expect(contrast(t.get(`--level-${level}-edge`)!, t.get("--panel")!)).toBeGreaterThanOrEqual(level === "low" ? 2 : 3);
+  it.each(LEVELS)("%s edge stands out from the panel (3:1, WCAG 1.4.11 for UI boundaries)", (level) => {
+    expect(contrast(t.get(`--level-${level}-edge`)!, t.get("--panel")!)).toBeGreaterThanOrEqual(3);
   });
 });

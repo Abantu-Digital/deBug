@@ -12,13 +12,14 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { Severity } from "@debugkit/schema";
+import { SEVERITY_INFO, type Severity } from "@debugkit/schema";
 
+/** The issue-level palette (ABA-139), so bars match the badges. */
 const SEV_COLOR: Record<Severity, string> = {
-  critical: "var(--sev-critical)",
-  high: "var(--sev-high)",
-  medium: "var(--sev-medium)",
-  low: "var(--sev-low)",
+  critical: "var(--level-critical-edge)",
+  high: "var(--level-high-edge)",
+  medium: "var(--level-medium-edge)",
+  low: "var(--level-low-edge)",
 };
 
 const axis = { stroke: "var(--muted)", fontSize: 11, tickLine: false, axisLine: false } as const;
@@ -93,7 +94,7 @@ export function FlowChart({
           <CartesianGrid horizontal={false} stroke="var(--chart-grid)" />
           <XAxis type="number" allowDecimals={false} {...axis} />
           <YAxis type="category" dataKey="flow" width={130} {...axis} tick={{ fill: "var(--text)", fontSize: 12 }} />
-          <Tooltip {...tooltipStyle} formatter={(v) => [v, "Errors (24h)"]} />
+          <Tooltip {...tooltipStyle} formatter={(v, _name, item: { payload?: { severity?: Severity } }) => [`${v} · ${item.payload?.severity ? SEVERITY_INFO[item.payload.severity].name : ""}`, "Errors (24h)"]} />
           <Bar dataKey="errors24h" name="Errors (24h)" radius={[0, 4, 4, 0]} barSize={18} cursor={onSelect ? "pointer" : undefined}
             onClick={(d: { payload?: { flow?: string } }) => d.payload?.flow && onSelect?.(d.payload.flow)}>
             {rows.map((r) => <Cell key={r.flow} fill={SEV_COLOR[r.severity]} />)}

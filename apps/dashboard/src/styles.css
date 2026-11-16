@@ -16,9 +16,7 @@
   --chart-errors: #d1242f;
   --chart-events: #9aa4bf;
   --chart-grid: #ebeae6;
-  /* Issue levels (ABA-139): a surface, the text on it, and an edge, for each level, plus green
-     for healthy services and journeys only (never for an issue). Text on its surface passes 4.5:1;
-     styles.test.ts checks it in both themes. */
+  /* Issue levels (ABA-139): surface, text and edge per level, plus green for healthy services and journeys only. Dark uses the design's hexes as edges; light darkens them to pass on white. styles.test.ts checks text 4.5:1 and edges 3:1 in both themes. */
   --level-critical-bg: #fde8e8;
   --level-critical-fg: #9b1c1c;
   --level-critical-edge: #d1242f;
@@ -30,7 +28,7 @@
   --level-medium-edge: #b08400;
   --level-low-bg: #f1f1ee;
   --level-low-fg: #4d4d48;
-  --level-low-edge: #a3a39c;
+  --level-low-edge: #6f7889;
   --level-healthy-bg: #e3f5ea;
   --level-healthy-fg: #1d6b3c;
   --level-healthy-edge: #2f9e5c;
@@ -64,7 +62,7 @@
     --level-medium-edge: #f5c242;
     --level-low-bg: #2a2a27;
     --level-low-fg: #c9c8c2;
-    --level-low-edge: #8a8a84;
+    --level-low-edge: #8892a3;
     --level-healthy-bg: #12291e;
     --level-healthy-fg: #a6efc8;
     --level-healthy-edge: #3fb27f;
