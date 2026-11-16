@@ -14,6 +14,7 @@ import {
 } from "./auto";
 import { nameRequest, readProblemDetails } from "./network";
 import { bodyOf, redactHeaders, redactText, type RedactOptions } from "./redact";
+import { INGEST_VERSION_HEADER, ingestBehindWarning } from "./version";
 
 type ErrorEventInput = Extract<EventInput, { type: "error" }>;
 
@@ -86,6 +87,10 @@ export interface InitOptions {
   /** Drop or edit events before they are sent (PII scrubbing). Return null to drop. */
   beforeSend?: (e: EventInput) => EventInput | null;
   fetch?: typeof fetch;
+  /**
+   * Logs what the SDK drops or can't do with `[deBug]` warnings, including, once per launch,
+   * an ingest older than this SDK.
+   */
   debug?: boolean;
 }
 
@@ -593,6 +598,7 @@ export class DebugClient {
       // Lets the last batch finish when the page is closing. Browsers cap keepalive bodies at 64 KB.
       ...(typeof window !== "undefined" && json.length < 60_000 ? { keepalive: true } : {}),
     });
+    this.checkIngestVersion(res);
     // 4xx (other than 429) means the payload will never be accepted: drop it instead of retrying forever.
     if (res.status >= 400 && res.status < 500 && res.status !== 429) {
       this.log(`ingest rejected batch (${res.status})`, await res.text().catch(() => ""));
@@ -612,6 +618,23 @@ export class DebugClient {
       return;
     }
     if (!res.ok) throw new Error(`ingest responded ${res.status}`);
+  }
+
+  /** Set once the ingest's version has been checked, so the warning shows once per launch. */
+  private ingestVersionChecked = false;
+
+  /** In debug mode, warns once when the ingest is a minor or more behind this SDK. */
+  private checkIngestVersion(res: Response): void {
+    if (this.ingestVersionChecked || !this.opts?.debug) return;
+    try {
+      const ingest = res.headers?.get(INGEST_VERSION_HEADER);
+      if (!ingest) return; // An ingest that predates version headers: say nothing.
+      this.ingestVersionChecked = true;
+      const warning = ingestBehindWarning(ingest, SDK_VERSION);
+      if (warning) this.log(warning);
+    } catch {
+      // A response without readable headers: say nothing.
+    }
   }
 
   /** What must survive a restart: the batch being uploaded, then the queue. */
