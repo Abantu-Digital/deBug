@@ -182,7 +182,7 @@ function IssuePage() {
                 <tr key={r.id} className="border-b border-line last:border-0 hover:bg-panel-2">
                   <td className="px-4 py-2 text-xs sm:px-2">
                     {r.type === "error" ? (
-                      <Link to="/events/$eventId" params={{ eventId: r.id }} search={{ app: d.app, issue: issue.fingerprint }} className="font-medium text-accent hover:underline" title={r.ts}>
+                      <Link to="/events/$eventId" params={{ eventId: r.id }} search={{ app: d.app, issue: issue.fingerprint, range: search.range, from: search.from, to: search.to }} className="font-medium text-accent hover:underline" title={r.ts}>
                         {timeAgo(r.ts)}
                       </Link>
                     ) : (

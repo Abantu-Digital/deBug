@@ -1,14 +1,17 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { CopyButton } from "~/components/copy-button";
+import { rangeSearch, type RangeSearch } from "~/components/range-picker";
 import { Card } from "~/components/ui";
 import { getEventDetail } from "~/server/fns";
 import type { ApiCall, EventDetail, TimelineItem } from "~/server/event";
 
 export const Route = createFileRoute("/_authed/events/$eventId")({
-  validateSearch: (s: Record<string, unknown>): { app: string; issue: string } => ({
+  // The range is kept only to take it back to the issue page.
+  validateSearch: (s: Record<string, unknown>): { app: string; issue: string } & RangeSearch => ({
     app: typeof s.app === "string" ? s.app : "",
     issue: typeof s.issue === "string" ? s.issue : "",
+    ...rangeSearch(s),
   }),
   loaderDeps: ({ search }) => ({ app: search.app, issue: search.issue }),
   loader: async ({ params, deps }) => {
@@ -21,8 +24,10 @@ export const Route = createFileRoute("/_authed/events/$eventId")({
 
 function EventPage() {
   const d = Route.useLoaderData();
-  const issueSearch = { app: d.app };
-  const step = (id: string) => ({ to: "/events/$eventId" as const, params: { eventId: id }, search: { app: d.app, issue: d.issue.fingerprint } });
+  const { range, from, to } = Route.useSearch();
+  const issueSearch = { app: d.app, range, from, to };
+  const step = (id: string) => ({ to: "/events/$eventId" as const, params: { eventId: id }, search: { ...issueSearch, issue: d.issue.fingerprint } });
+  const stepClass = "rounded-md border border-line px-2 py-1 text-xs hover:bg-panel-2";
 
   return (
     <main className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6">
@@ -31,8 +36,8 @@ function EventPage() {
           ← {d.issue.title}
         </Link>
         <nav aria-label="Other occurrences" className="flex gap-2">
-          {d.newer ? <Link {...step(d.newer)} className="rounded-md border border-line px-2 py-1 text-xs hover:bg-panel-2">← Newer</Link> : null}
-          {d.older ? <Link {...step(d.older)} className="rounded-md border border-line px-2 py-1 text-xs hover:bg-panel-2">Older →</Link> : null}
+          {d.newer ? <Link {...step(d.newer)} className={stepClass}>← Newer</Link> : null}
+          {d.older ? <Link {...step(d.older)} className={stepClass}>Older →</Link> : null}
         </nav>
       </div>
 
@@ -63,14 +68,14 @@ function EventPage() {
           <Card title="Device and app">
             <Facts
               rows={[
-                ["OS", `${d.context.os.name} ${d.context.os.version ?? ""}`.trim()],
-                ["Device", [d.context.device.brand, d.context.device.model].filter(Boolean).join(" ") || undefined],
-                ["App", [d.context.app.version, d.context.app.build && `(${d.context.app.build})`].filter(Boolean).join(" ") || undefined],
+                ["OS", joined([d.context.os.name, d.context.os.version])],
+                ["Device", joined([d.context.device.brand, d.context.device.model])],
+                ["App", joined([d.context.app.version, d.context.app.build && `(${d.context.app.build})`])],
                 ["Update", d.context.app.update],
                 ["Environment", d.context.app.environment],
-                ["Runtime", [d.context.runtime.name, d.context.runtime.version, d.context.runtime.engine].filter(Boolean).join(" ")],
-                ["Network", d.context.network ? [d.context.network.type, d.context.network.effectiveType].filter(Boolean).join(" ") : undefined],
-                ["Locale", [d.context.locale, d.context.timezone].filter(Boolean).join(" · ") || undefined],
+                ["Runtime", joined([d.context.runtime.name, d.context.runtime.version, d.context.runtime.engine])],
+                ["Network", joined([d.context.network?.type, d.context.network?.effectiveType])],
+                ["Locale", joined([d.context.locale, d.context.timezone], " · ")],
               ]}
             />
             <h3 className="mb-2 mt-4 text-xs font-medium text-muted">Tags</h3>
@@ -108,21 +113,21 @@ function Who({ d }: { d: EventDetail }) {
     <section aria-label="Customer and session" className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border border-line bg-panel px-4 py-3 text-sm">
       <span>
         <span className="text-muted">Customer </span>
-        {customer ? <span className="font-mono">{customer}</span> : <span className="text-muted">not signed in</span>}
+        {customer ? <span className="break-all font-mono">{customer}</span> : <span className="text-muted">not signed in</span>}
         {customer && <span className="ml-2"><CopyButton text={customer} label="Copy" ariaLabel="Copy customer id" /></span>}
       </span>
       {d.user.anonymousId && (
         <span>
           <span className="text-muted">Install </span>
-          <span className="font-mono text-xs">{d.user.anonymousId}</span>
+          <span className="break-all font-mono text-xs">{d.user.anonymousId}</span>
         </span>
       )}
       <span>
         <span className="text-muted">Session </span>
-        <span className="font-mono text-xs">{d.sessionId}</span>
+        <span className="break-all font-mono text-xs">{d.sessionId}</span>
         <span className="ml-2"><CopyButton text={d.sessionId} label="Copy" ariaLabel="Copy session id" /></span>
       </span>
-      <span className="text-xs text-muted">This session's timeline and the customer's other sessions are coming next.</span>
+      <span className="text-xs text-muted">Pages for this session's timeline and the customer's other sessions are coming next; until then, copy the ids.</span>
     </section>
   );
 }
@@ -164,7 +169,7 @@ function ApiLine({ call }: { call: ApiCall }) {
   return (
     <span className="break-words">
       {call.service && <span className="font-medium">{call.service} </span>}
-      <span className="font-mono text-xs">{[call.method, call.path].filter(Boolean).join(" ")}</span>
+      <span className="font-mono text-xs">{joined([call.method, call.path])}</span>
       {" → "}
       <span className={call.failed ? "font-semibold text-sev-critical" : ""}>{call.status ?? call.outcome ?? "failed"}</span>
       {call.status !== undefined && call.outcome && call.outcome !== "answered" && <span className="text-muted"> ({call.outcome})</span>}
@@ -179,10 +184,10 @@ function RequestPanel({ call }: { call: ApiCall }) {
     <Facts
       rows={[
         ["Service", call.service],
-        ["Endpoint", [call.method, call.path].filter(Boolean).join(" ") || undefined],
+        ["Endpoint", joined([call.method, call.path])],
         ["Status", call.status !== undefined ? String(call.status) : "no answer"],
         ["Outcome", call.outcome],
-        ["Backend", [call.backendCode, call.backendTitle].filter(Boolean).join(" · ") || undefined],
+        ["Backend", joined([call.backendCode, call.backendTitle], " · ")],
         ["Trace", call.traceId ? (
           <span className="flex flex-wrap items-center gap-2">
             <span className="break-all font-mono text-xs">{call.traceId}</span>
@@ -211,6 +216,11 @@ function Facts({ rows, mono }: { rows: [string, ReactNode | undefined][]; mono?:
   );
 }
 
+/** The parts that are set, joined; undefined when none are. */
+function joined(parts: (string | false | undefined)[], sep = " "): string | undefined {
+  return parts.filter(Boolean).join(sep) || undefined;
+}
+
 /** "14 Nov, 12:59:55" in the viewer's time zone. */
 function clock(iso: string) {
   return new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -222,8 +232,10 @@ function offset(ts: string, errorTs: string) {
   if (!Number.isFinite(s)) return "";
   const a = Math.abs(s);
   if (a < 0.05) return "0 s";
-  const sign = s < 0 ? "−" : s > 0 ? "+" : "";
-  if (a < 60) return `${sign}${a < 10 ? a.toFixed(1) : Math.round(a)} s`;
-  if (a < 3600) return `${sign}${Math.round(a / 60)} min`;
+  const sign = s < 0 ? "−" : "+";
+  // Round first, then pick the unit, so 59.6 s reads "1 min", not "60 s".
+  if (a < 9.95) return `${sign}${a.toFixed(1)} s`;
+  if (Math.round(a) < 60) return `${sign}${Math.round(a)} s`;
+  if (Math.round(a / 60) < 60) return `${sign}${Math.round(a / 60)} min`;
   return `${sign}${Math.round(a / 3600)} h`;
 }

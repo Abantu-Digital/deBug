@@ -1,5 +1,5 @@
 import type { ReadStore } from "@debugkit/adapters";
-import { nameUrl, nameUrlsIn, type Breadcrumb, type Context, type HostName, type StackFrame, type StoredEvent } from "@debugkit/schema";
+import { hostNameFor, nameUrlsIn, type Breadcrumb, type Context, type HostName, type StackFrame, type StoredEvent } from "@debugkit/schema";
 
 /**
  * One occurrence of an issue, laid out for the event page: what led up to it, what failed, on
@@ -56,6 +56,7 @@ export interface ApiCall {
   durationMs?: number;
   /** answered, unreachable, sessionExpired, ... as the app reports it. */
   outcome?: string;
+  /** The app's retry count or flag, as it sends it. */
   retry?: number | boolean | string;
   backendTitle?: string;
   backendCode?: string;
@@ -74,11 +75,14 @@ const pick = (d: Data, ...keys: string[]) => keys.map((k) => d[k]).find((v) => v
 /** API keys read into the call; the rest of the data is shown as it is. */
 const API_KEYS = new Set([
   "service", "method", "path", "url", "status", "durationMs", "outcome", "retry",
-  "backend.title", "backendTitle", "backend.code", "backendCode", "traceId", "trace_id", "repeated",
+  "backend.title", "backendTitle", "backend.code", "backendCode", "traceId", "trace_id",
 ]);
 
-/** The SDK's own network breadcrumb: "POST api.x.com/v1/pay → 503 (120ms)". */
-const SDK_NETWORK = /^([A-Z]+) (\S+) → /;
+/** Outcomes that mean the call did what it should. Anything else the app reports (unreachable, sessionExpired) is a failure. */
+const OK_OUTCOMES = new Set(["answered", "cached", "cancelled", "canceled", "success", "ok"]);
+
+/** The SDK's own network breadcrumb: "POST api.x.com/v1/pay → 503 (120ms)", or "→ failed". */
+const SDK_NETWORK = /^([A-Z]+) (\S+) → (\d{3})?/;
 
 /** A network breadcrumb as an API call, or undefined when it isn't one ("Device went offline"). */
 export function apiCallOf(b: Breadcrumb, hosts: readonly HostName[] = []): ApiCall | undefined {
@@ -87,16 +91,16 @@ export function apiCallOf(b: Breadcrumb, hosts: readonly HostName[] = []): ApiCa
   const sdk = SDK_NETWORK.exec(b.message);
   const url = str(pick(d, "path", "url")) ?? sdk?.[2];
   const method = str(pick(d, "method"))?.toUpperCase() ?? sdk?.[1];
-  if (!url && !method && d.service === undefined) return undefined;
-  const status = num(d.status);
+  const appService = str(d.service);
+  if (!url && !method && !appService) return undefined;
+  const status = num(d.status) ?? num(sdk?.[3]);
   const outcome = str(d.outcome);
   // Named by Settings when the breadcrumb carries a whole URL and no service of its own.
-  const named = url && !d.service ? nameUrl(url, hosts) : undefined;
-  const hit = named && named !== url ? named.split(" · ") : undefined;
+  const named = url && !appService ? hostNameFor(url, hosts) : undefined;
   const call: ApiCall = {
-    service: str(d.service) ?? hit?.[0],
+    service: appService ?? named?.host.name,
     method,
-    path: hit ? hit[1] || "/" : url,
+    path: named ? named.rest || "/" : url,
     status,
     durationMs: num(d.durationMs),
     outcome,
@@ -106,7 +110,7 @@ export function apiCallOf(b: Breadcrumb, hosts: readonly HostName[] = []): ApiCa
     traceId: str(pick(d, "traceId", "trace_id")),
     failed: false,
   };
-  call.failed = b.level === "error" || (status !== undefined && status >= 400) || (outcome !== undefined && outcome !== "answered");
+  call.failed = b.level === "error" || (status !== undefined && status >= 400) || (outcome !== undefined && !OK_OUTCOMES.has(outcome));
   return call;
 }
 
@@ -114,10 +118,11 @@ export function apiCallOf(b: Breadcrumb, hosts: readonly HostName[] = []): ApiCa
 export function timelineOf(crumbs: readonly Breadcrumb[] = [], hosts: readonly HostName[] = []): TimelineItem[] {
   return crumbs
     .map((b, i) => ({ b, i }))
-    .sort((x, y) => x.b.ts.localeCompare(y.b.ts) || x.i - y.i)
+    // By time, not by string: "09:00:00Z" and "09:00:00.500Z" don't sort as text.
+    .sort((x, y) => Date.parse(x.b.ts) - Date.parse(y.b.ts) || x.i - y.i)
     .map(({ b }) => {
       const api = apiCallOf(b, hosts);
-      const rest = Object.entries(b.data ?? {}).filter(([k]) => !(api && API_KEYS.has(k)) && k !== "repeated");
+      const rest = Object.entries(b.data ?? {}).filter(([k]) => k !== "repeated" && !(api && API_KEYS.has(k)));
       const repeated = num(b.data?.repeated);
       return {
         ts: b.ts,
@@ -144,24 +149,14 @@ export async function buildEventDetail(store: ReadStore, app: string, fingerprin
     store.getSettings(app).catch(() => null),
   ]);
   if (!issue) return null;
-  const all: StoredEvent[] = events.length ? events : [issue.lastEvent];
-  const at = all.findIndex((e) => e.event.id === eventId);
-  const se = at >= 0 ? all[at]! : issue.lastEvent.event.id === eventId ? issue.lastEvent : undefined;
-  if (!se || se.event.type !== "error") return null;
-  const ev = se.event;
+  // Only errors have a page: stepping newer and older skips anything else.
+  const errors = (events.length ? events : [issue.lastEvent]).filter((e) => e.event.type === "error");
+  const index = errors.findIndex((e) => e.event.id === eventId);
+  const stored = index >= 0 ? errors[index] : issue.lastEvent.event.id === eventId ? issue.lastEvent : undefined;
+  if (!stored || stored.event.type !== "error") return null;
+  const ev = stored.event;
   const hosts = settings?.hosts ?? [];
   const timeline = timelineOf(ev.breadcrumbs, hosts);
-  const own: ApiCall | undefined = ev.request
-    ? {
-        ...apiCallOf({ ts: ev.ts, category: "network", level: "error", message: "", data: { method: ev.request.method, url: ev.request.url } }, hosts),
-        status: ev.request.status,
-        durationMs: ev.request.durationMs,
-        failed: true,
-      }
-    : undefined;
-  // The app's breadcrumb for the same call usually carries more: service, backend code, traceId.
-  const lastFailing = [...timeline].reverse().find((t) => t.api?.failed)?.api;
-  const request = own && lastFailing && lastFailing.method === own.method ? { ...lastFailing, ...defined(own), service: lastFailing.service ?? own.service } : own ?? lastFailing;
   return {
     app,
     issue: { fingerprint, title: nameUrlsIn(issue.title, hosts), status: issue.status ?? "open" },
@@ -171,19 +166,45 @@ export async function buildEventDetail(store: ReadStore, app: string, fingerprin
     error: { name: ev.error.name, message: nameUrlsIn(ev.error.message, hosts) },
     flow: ev.flow,
     step: ev.step,
-    user: { id: se.user?.id, anonymousId: se.user?.anonymousId },
-    sessionId: se.sessionId,
-    context: se.context,
+    user: { id: stored.user?.id, anonymousId: stored.user?.anonymousId },
+    sessionId: stored.sessionId,
+    context: stored.context,
     tags: Object.entries(ev.tags ?? {})
       .map(([key, value]) => ({ key, value: String(value) }))
       .sort((a, b) => a.key.localeCompare(b.key)),
     timeline,
-    request,
+    request: failedRequest(ev.request, timeline, hosts),
     frames: framesInAppFirst(ev.error.frames),
     stack: ev.error.stack,
-    newer: at > 0 ? all[at - 1]!.event.id : undefined,
-    older: at >= 0 && at < all.length - 1 ? all[at + 1]!.event.id : undefined,
+    newer: index > 0 ? errors[index - 1]!.event.id : undefined,
+    older: index >= 0 && index < errors.length - 1 ? errors[index + 1]!.event.id : undefined,
   };
+}
+
+type ErrorRequest = { method: string; url: string; status?: number; durationMs?: number };
+
+/**
+ * The call that failed: the error's own request, filled in from the app's breadcrumb for the same
+ * call (service, backend code, traceId), or the last failing call when the error has no request.
+ * A breadcrumb counts as the same call only when its method and path match.
+ */
+export function failedRequest(request: ErrorRequest | undefined, timeline: readonly TimelineItem[], hosts: readonly HostName[] = []): ApiCall | undefined {
+  const lastFailing = [...timeline].reverse().find((t) => t.api?.failed)?.api;
+  if (!request) return lastFailing;
+  const named = hostNameFor(request.url, hosts);
+  const own: ApiCall = {
+    service: named?.host.name,
+    method: request.method.toUpperCase(),
+    path: named ? named.rest || "/" : request.url,
+    status: request.status,
+    durationMs: request.durationMs,
+    failed: true,
+  };
+  const bare = request.url.split(/[?#]/)[0]!;
+  const sameCall = (c: ApiCall) => c.method === own.method && !!c.path && (bare.endsWith(c.path) || c.path === own.path);
+  const match = [...timeline].reverse().find((t) => t.api?.failed && sameCall(t.api))?.api;
+  // The path as the app names it, unless Settings names the host.
+  return match ? { ...match, ...defined(own), service: match.service ?? own.service, path: named ? own.path : match.path } : own;
 }
 
 /** Drop undefined fields, so spreading doesn't erase a value from the breadcrumb. */

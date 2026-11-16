@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { MemoryStore } from "@debugkit/adapters/memory";
 import { ingest } from "@debugkit/ingest";
-import type { Breadcrumb } from "@debugkit/schema";
-import { apiCallOf, buildEventDetail, framesInAppFirst, timelineOf } from "./event";
+import { DEFAULT_SEVERITY_THRESHOLDS, type Breadcrumb } from "@debugkit/schema";
+import { apiCallOf, buildEventDetail, failedRequest, framesInAppFirst, timelineOf } from "./event";
 import { buildIssueDetail } from "./queries";
-import { DEFAULT_SEVERITY_THRESHOLDS } from "@debugkit/schema";
 
 const crumb = (b: Partial<Breadcrumb> & Pick<Breadcrumb, "category" | "message">): Breadcrumb => ({ ts: "2026-11-16T09:00:00.000Z", level: "info", ...b });
 
@@ -24,6 +23,7 @@ describe("API calls in breadcrumbs", () => {
   it("counts an unanswered call as failed even without an error level", () => {
     expect(apiCallOf(crumb({ category: "network", message: "x", data: { service: "balance", path: "/b", outcome: "unreachable" } }))?.failed).toBe(true);
     expect(apiCallOf(crumb({ category: "network", message: "x", data: { service: "balance", path: "/b", status: 200, outcome: "answered" } }))?.failed).toBe(false);
+    expect(apiCallOf(crumb({ category: "network", message: "x", data: { service: "balance", path: "/b", outcome: "cached" } }))?.failed).toBe(false);
   });
 
   it("reads the SDK's own network breadcrumb and names its host from Settings", () => {
@@ -33,6 +33,11 @@ describe("API calls in breadcrumbs", () => {
     );
     expect(call).toMatchObject({ service: "Balance service", method: "POST", path: "/getBalances", durationMs: 16, failed: true });
     expect(call?.status).toBeUndefined();
+  });
+
+  it("reads the status from the SDK's message, and keeps a host name that contains a dot", () => {
+    const call = apiCallOf(crumb({ category: "network", message: "GET api.x.com/v1/me → 503 (90ms)", level: "error", data: { durationMs: 90 } }), [{ match: "api.x.com", name: "Accounts · EU" }]);
+    expect(call).toMatchObject({ service: "Accounts · EU", path: "/v1/me", status: 503 });
   });
 
   it("isn't an API call when a network breadcrumb only reports connectivity", () => {
@@ -52,6 +57,25 @@ describe("timeline", () => {
     expect(t[1]).toMatchObject({ failed: false, data: { button: "pay", screen: "Buy" } });
     expect(t[2]).toMatchObject({ failed: true, repeated: 3, api: { service: "balance", status: 503 } });
     expect(t[2]!.data).toBeUndefined();
+  });
+
+  it("sorts by time even when timestamps have different precision", () => {
+    const t = timelineOf([
+      crumb({ ts: "2026-11-16T09:00:00.500Z", category: "ui", message: "second" }),
+      crumb({ ts: "2026-11-16T09:00:00Z", category: "ui", message: "first" }),
+    ]);
+    expect(t.map((x) => x.message)).toEqual(["first", "second"]);
+  });
+
+  it("only fills the error's request from a breadcrumb for the same call", () => {
+    const timeline = timelineOf([
+      crumb({ category: "network", message: "GET /balance", level: "error", data: { service: "balance", method: "GET", path: "/balance", status: 503, traceId: "wrong" } }),
+    ]);
+    const own = failedRequest({ method: "GET", url: "api.x.com/profile", status: 500 }, timeline);
+    expect(own).toEqual({ service: undefined, method: "GET", path: "api.x.com/profile", status: 500, durationMs: undefined, failed: true });
+    const same = failedRequest({ method: "GET", url: "api.x.com/balance", status: 503, durationMs: 40 }, timeline);
+    expect(same).toMatchObject({ service: "balance", path: "/balance", traceId: "wrong", durationMs: 40 });
+    expect(failedRequest(undefined, timeline)).toMatchObject({ path: "/balance" });
   });
 
   it("lists the app's own frames first, in stack order", () => {
@@ -82,13 +106,13 @@ describe("event detail", () => {
       context: { app: { id: "a", version: "10.1.28", build: "1028" }, os: { name: "android", version: "15" }, runtime: { name: "react-native" }, device: { model: "Pixel 8a", brand: "google" } },
       user: { id: "0841234567", anonymousId: "anon-1" },
       session: { id: "sess-1", startedAt: ts(-60) },
-      events: [err("evt_000000001", 0), err("evt_000000002", 10)],
+      events: [err("evt_000000001", 0), err("evt_000000002", 10), err("evt_000000003", 20)],
     };
-    expect((await ingest(JSON.stringify(env), "k", { store, keys: { k: "a" }, now: () => new Date(ts(20)) })).status).toBe(202);
+    expect((await ingest(JSON.stringify(env), "k", { store, keys: { k: "a" }, now: () => new Date(ts(30)) })).status).toBe(202);
 
     const fp = (await store.listIssues("a"))[0]!.fingerprint;
-    const issue = (await buildIssueDetail(store, "a", fp, DEFAULT_SEVERITY_THRESHOLDS, Date.parse(ts(20))))!;
-    expect(issue.recent.map((r) => r.id)).toEqual(["evt_000000002", "evt_000000001"]);
+    const issue = (await buildIssueDetail(store, "a", fp, DEFAULT_SEVERITY_THRESHOLDS, Date.parse(ts(30))))!;
+    expect(issue.recent.map((r) => r.id)).toEqual(["evt_000000003", "evt_000000002", "evt_000000001"]);
 
     const d = (await buildEventDetail(store, "a", fp, "evt_000000001"))!;
     expect(d.timeline.map((t) => t.message)).toEqual(["Dashboard → Buy", "Tapped Pay", "POST /payments/charge"]);
@@ -98,6 +122,7 @@ describe("event detail", () => {
     expect(d.tags).toEqual([{ key: "device.details", value: "full" }, { key: "network.carrier", value: "Cell C" }]);
     expect(d.frames[0]).toMatchObject({ fn: "pay", inApp: true });
     expect(d).toMatchObject({ newer: "evt_000000002", older: undefined });
+    expect(await buildEventDetail(store, "a", fp, "evt_000000002")).toMatchObject({ newer: "evt_000000003", older: "evt_000000001" });
 
     expect(await buildEventDetail(store, "a", fp, "evt_unknown00")).toBeNull();
     expect(await buildEventDetail(store, "a", "nope", "evt_000000001")).toBeNull();
