@@ -156,16 +156,12 @@ export async function buildSessionDetail(store: ReadStore, app: string, sessionI
   const rows: SessionRow[] = kept.map((c) => ({ kind: "crumb", ...c }));
   let errors = 0;
   let handled = 0;
-  let crashed = false;
-  let uncaught = false;
   for (const e of page) {
     const ev = e.event;
     if (ev.type === "error") {
       const crash = isCrash(e);
       errors++;
       if (ev.handled) handled++;
-      else uncaught = true;
-      crashed ||= crash;
       rows.push({ kind: "error", ts: ev.ts, eventId: ev.id, fingerprint: e.fingerprint, title: nameUrlsIn(`${ev.error.name}: ${ev.error.message}`, hosts), handled: ev.handled, crash });
     } else if (ev.type === "event" && !repeatsCrumb(e, crumbs)) {
       rows.push({ kind: "event", ts: ev.ts, eventId: ev.id, name: ev.name, outcome: ev.outcome, detail: describeEvent(ev.name, ev.outcome, ev.props, ev.step), failed: ev.outcome === "failure", source: own.get(e)?.source });
@@ -183,7 +179,7 @@ export async function buildSessionDetail(store: ReadStore, app: string, sessionI
     context: last.context,
     start: sorted[0]?.ts ?? page[0]!.event.ts,
     end: last.event.ts,
-    outcome: crashed ? "crashed" : uncaught ? "errored" : "clean",
+    outcome: sessionOutcome(page),
     counts: { errors, handled, events: sorted.filter((r) => r.kind === "event").length },
     rows: sorted,
     truncated,

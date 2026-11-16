@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { OutcomeBadge, clock, joined } from "~/components/timeline";
 import { Card, timeAgo } from "~/components/ui";
 import { findCustomer } from "~/server/fns";
@@ -26,10 +26,13 @@ function errorCount(errors: number, handled: number) {
 const MATCHED = { id: "customer number", anonymousId: "install id" } as const;
 
 function CustomersPage() {
-  const { apps, app, lookup, missingIndex } = Route.useLoaderData();
+  const { apps, app, store, lookup, missingIndex } = Route.useLoaderData();
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const [q, setQ] = useState(search.q ?? "");
+  // Back and forward change the query in the URL: keep the box in step.
+  useEffect(() => setQ(search.q ?? ""), [search.q]);
+  const where = app ?? (apps.length > 1 ? "any app" : apps[0]);
 
   return (
     <main className="mx-auto max-w-5xl space-y-5 px-4 py-6 sm:px-6">
@@ -56,7 +59,8 @@ function CustomersPage() {
           className="min-w-0 flex-1 rounded-md border border-line bg-panel px-3 py-2 font-mono text-sm text-ink sm:max-w-md"
         />
         {apps.length > 1 && (
-          <select aria-label="App" value={app} onChange={(e) => navigate({ search: (s) => ({ ...s, app: e.target.value }) })} className="rounded-md border border-line bg-panel px-2 py-2 text-sm">
+          <select aria-label="App" value={app ?? ""} onChange={(e) => navigate({ search: (s) => ({ ...s, app: e.target.value || undefined }) })} className="rounded-md border border-line bg-panel px-2 py-2 text-sm">
+            <option value="">All apps</option>
             {apps.map((a) => <option key={a}>{a}</option>)}
           </select>
         )}
@@ -68,11 +72,14 @@ function CustomersPage() {
           Firestore needs deBug's new indexes on events (user.id, ts) and (user.anonymousId, ts). Deploy them with: firebase deploy --only firestore:indexes, using deBug's firestore.indexes.json. They take a few minutes to build.
         </p>
       )}
-      {!app && <p className="text-sm text-muted">No apps have sent events yet.</p>}
+      {!apps.length && <p className="text-sm text-muted">No apps have sent events yet.</p>}
 
-      {lookup && app && (
+      {lookup && (
         lookup.sessions.length === 0 ? (
-          <p className="text-sm text-muted">No sessions found for <span className="font-mono text-ink">{lookup.query}</span> in {app}. Events are kept for the retention period only, and a customer number is only known once the app sets it.</p>
+          <p className="text-sm text-muted">
+            No sessions found for <span className="font-mono text-ink">{lookup.query}</span> in {where}. Events are kept for the retention period only, and a customer number is only known once the app sets it.
+            {store === "dynamodb" && " On DynamoDB, only events stored since deBug started keeping them by customer can be found."}
+          </p>
         ) : (
           <Card
             title={`${lookup.sessions.length} session${lookup.sessions.length === 1 ? "" : "s"}`}
@@ -81,23 +88,27 @@ function CustomersPage() {
             <ul className="divide-y divide-line">
               {lookup.sessions.map((s) => (
                 <li key={s.sessionId}>
-                  <Link to="/sessions/$sessionId" params={{ sessionId: s.sessionId }} search={{ app }} className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1 px-1 py-2.5 hover:bg-panel-2 sm:grid-cols-[11rem_6.5rem_1fr_auto]">
-                    <span className="text-sm" title={s.end}>
-                      {clock(s.start)}
+                  <Link to="/sessions/$sessionId" params={{ sessionId: s.sessionId }} search={{ app: s.app }} className="grid grid-cols-[1fr_auto] items-center gap-x-4 gap-y-1 px-1 py-2.5 hover:bg-panel-2 sm:grid-cols-[11rem_6.5rem_1fr_auto]">
+                    <span className="text-sm" title={`First stored event ${s.start}, last ${s.end}`}>
+                      {clock(s.end)}
                       <span className="block text-xs text-muted">{timeAgo(s.end)}</span>
                     </span>
                     <span className="justify-self-end sm:justify-self-start"><OutcomeBadge outcome={s.outcome} /></span>
                     <span className="min-w-0 text-sm">
                       <span className="text-muted">App </span>{joined([s.context.app.version, s.context.app.build && `(${s.context.app.build})`]) ?? "—"}
                       <span className="text-muted"> · </span>{joined([s.context.device.brand, s.context.device.model]) ?? joined([s.context.os.name, s.context.os.version]) ?? "—"}
+                      {!app && apps.length > 1 && <span className="text-muted"> · {s.app}</span>}
                       {s.user.id && s.user.id !== lookup.query && <span className="ml-2 font-mono text-xs text-muted">{s.user.id}</span>}
                     </span>
-                    <span className="text-xs text-muted sm:text-right">{errorCount(s.errors, s.handled)}</span>
+                    <span className="text-xs text-muted sm:text-right">
+                      {errorCount(s.errors, s.handled)}
+                      {s.failedFlows > 0 && <span className="block font-medium text-sev-high">{s.failedFlows} failed flow{s.failedFlows === 1 ? "" : "s"}</span>}
+                    </span>
                   </Link>
                 </li>
               ))}
             </ul>
-            {lookup.truncated && <p className="mt-3 text-xs text-muted">Showing the sessions in their newest 500 events; older ones are left out.</p>}
+            {lookup.truncated && <p className="mt-3 text-xs text-muted">This customer has more stored events than one lookup reads: older sessions are left out, and the oldest one listed may be only partly read.</p>}
           </Card>
         )
       )}

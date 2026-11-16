@@ -5,6 +5,9 @@ export function isIndexError(message: string) {
 
 /** A thrown Firestore error saying a composite index is missing (gRPC code 9), on the Firestore store only. */
 export function isMissingIndex(e: unknown, store: string): boolean {
+  if (store !== "firestore") return false;
   const err = e as { code?: unknown; message?: unknown } | undefined;
-  return store === "firestore" && (err?.code === 9 || err?.code === "failed-precondition" || isIndexError(String(err?.message ?? ""))) && /index/i.test(String(err?.message ?? ""));
+  const precondition = err?.code === 9 || err?.code === "failed-precondition";
+  // FAILED_PRECONDITION has other causes too: only the index ones.
+  return precondition && /index/i.test(String(err?.message ?? ""));
 }

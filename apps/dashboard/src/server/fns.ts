@@ -102,13 +102,14 @@ export const findCustomer = createServerFn({ method: "GET" })
     await requireUser();
     const store = await getStore();
     const apps = await store.listApps();
-    const app = data.app && apps.includes(data.app) ? data.app : apps[0];
-    if (!app) return { apps, app: undefined, lookup: null };
+    // No app chosen: search them all, as Android and iOS are often separate apps.
+    const app = data.app && apps.includes(data.app) ? data.app : undefined;
+    const base = { apps, app, store: config().store };
     try {
-      return { apps, app, lookup: data.q.trim() ? await lookupCustomer(store, app, data.q) : null };
+      return { ...base, lookup: data.q.trim() && apps.length ? await lookupCustomer(store, app ? [app] : apps, data.q) : null, missingIndex: false };
     } catch (e) {
       // Firestore refuses the lookup until the user.id and user.anonymousId indexes exist.
-      if (isMissingIndex(e, config().store)) return { apps, app, lookup: null, missingIndex: true };
+      if (isMissingIndex(e, config().store)) return { ...base, lookup: null, missingIndex: true };
       throw e;
     }
   });

@@ -147,7 +147,7 @@ export class MemoryStore implements Store {
 
   async listUserEvents(app: string, field: UserField, values: readonly string[], { limit = 500 } = {}) {
     return this.events
-      .filter((e) => e.app === app && values.includes(e.user?.[field] ?? "\u0000"))
+      .filter((e) => e.app === app && e.user?.[field] !== undefined && values.includes(e.user[field]!))
       .sort((a, b) => b.event.ts.localeCompare(a.event.ts))
       .slice(0, limit);
   }
