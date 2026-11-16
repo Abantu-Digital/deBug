@@ -6,9 +6,9 @@
 /** The response header an ingest names its own version in. */
 export const INGEST_VERSION_HEADER = "x-debugkit-version";
 
-/** `major.minor` of a version like `0.8.0` or `0.9.0-next.1`, or undefined when it isn't one. */
+/** `major.minor` of a version like `0.8.0`, `0.8` or `0.9.0-next.1`, or undefined when it isn't one. */
 function majorMinor(version: string): [number, number] | undefined {
-  const m = /^v?(\d+)\.(\d+)\./.exec(version.trim());
+  const m = /^v?(\d+)\.(\d+)(?:[.-]|$)/.exec(version.trim());
   return m ? [Number(m[1]), Number(m[2])] : undefined;
 }
 
