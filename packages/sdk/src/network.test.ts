@@ -55,6 +55,13 @@ describe("readProblemDetails", () => {
     });
   });
 
+  it("masks tokens and card numbers the backend quotes", () => {
+    expect(readProblemDetails(JSON.stringify({ title: "Bad token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln", errors: ["card 4111111111111111 declined"] }))).toMatchObject({
+      backendTitle: "Bad token [redacted]",
+      backendErrors: "card •••• 1111 declined",
+    });
+  });
+
   it("matches a base without case in the scheme and host", () => {
     expect(nameRequest("HTTPS://GW.Example.com/ppd/api/buy/x", ["https://gw.example.com/ppd/api"])).toEqual({ service: "buy", path: "/buy/x", matched: true });
   });

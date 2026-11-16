@@ -75,7 +75,7 @@ export function initReactNative(options: ReactNativeInitOptions, client: DebugCl
       ...rest.network,
       isFailure: rest.network?.isFailure ?? mobileIsFailure,
       // A failed call's request and response, redacted on the device.
-      bodies: rest.network?.bodies ?? { onFailure: true },
+      bodies: { onFailure: true, ...rest.network?.bodies },
     },
     app: { ...(base.app as object), ...rest.app },
     context: mergeContext(base, rest.context ?? {}),

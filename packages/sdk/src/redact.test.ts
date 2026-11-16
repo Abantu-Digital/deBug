@@ -90,6 +90,43 @@ describe("redactText", () => {
   });
 });
 
+describe("redactText leaks found in review", () => {
+  it("redacts fields in JSON cut short (a body read only up to its first 64 KB)", () => {
+    const cut = `{"password":"hunter2","otp": 123456,"items":[{"name":"a","pin":"1234"},{"name":"b`;
+    const out = redactText(cut);
+    expect(out).not.toMatch(/hunter2|123456|1234"/);
+    expect(out).toContain('"items":[{"name":"a"');
+  });
+
+  it("masks a card number sent as a JSON number, and leaves other numbers alone", () => {
+    expect(JSON.parse(redactText(JSON.stringify({ number: 4111111111111111, amount: 1500, msisdn: 27841234567 })))).toEqual({
+      number: "•••• 1111",
+      amount: 1500,
+      msisdn: 27841234567,
+    });
+  });
+
+  it("redacts JSON and forms held inside a string field", () => {
+    const body = { payload: JSON.stringify({ otp: "123456", to: "084" }), query: "pin=1234&page=2" };
+    const out = JSON.parse(redactText(JSON.stringify(body)));
+    expect(JSON.parse(out.payload)).toEqual({ otp: "[redacted]", to: "084" });
+    expect(out.query).toBe("pin=%5Bredacted%5D&page=2");
+  });
+
+  it("redacts forms with keyless pairs and bracketed or dotted keys", () => {
+    expect(redactText("flag&token=abc&user[password]=x&card.cvv=1&page=2")).toBe("flag&token=%5Bredacted%5D&user[password]=%5Bredacted%5D&card.cvv=%5Bredacted%5D&page=2");
+  });
+
+  it("masks card numbers next to letters and split by dots or underscores", () => {
+    expect(redactValues("pan_4111111111111111 and 4111.1111.1111.1111 or 4111_1111_1111_1111")).toBe("pan_•••• 1111 and •••• 1111 or •••• 1111");
+    expect(redactValues("id 94111111111111111")).toBe("id 94111111111111111"); // part of a longer number
+  });
+
+  it("redacts secret fields in plain text", () => {
+    expect(redactText('OTP check failed: otp: 123456, "pin": "9999", msisdn: 0841234567')).toBe('OTP check failed: otp: [redacted], "pin": "[redacted]", msisdn: 0841234567');
+  });
+});
+
 describe("captureBody", () => {
   it("redacts, then cuts a long body with a marker saying how big it was", () => {
     const long = JSON.stringify({ password: "x", data: "a".repeat(20_000) });

@@ -1,7 +1,5 @@
 import type { Breadcrumb, ContextInput, EnvelopeInput, EventInput, Severity } from "@debugkit/schema/core";
-
-type ErrorEventInput = Extract<EventInput, { type: "error" }>;
-import { latencyBucket, LATENCY_BUCKETS_MS, markLibraryFrames, parseStack } from "@debugkit/schema/core";
+import { latencyBucket, LATENCY_BUCKETS_MS, markLibraryFrames, MAX_BREADCRUMBS, MAX_CAPTURED_BODY, parseStack } from "@debugkit/schema/core";
 import { browserContext, mergeContext, type ContextPatch } from "./context";
 import {
   instrumentClicks,
@@ -15,7 +13,9 @@ import {
   type RequestInfo,
 } from "./auto";
 import { nameRequest, readProblemDetails } from "./network";
-import { binaryBody, captureBody, redactHeaders, redactText, type RedactOptions } from "./redact";
+import { bodyOf, redactHeaders, redactText, type RedactOptions } from "./redact";
+
+type ErrorEventInput = Extract<EventInput, { type: "error" }>;
 
 export const SDK_NAME = "@debugkit/sdk";
 declare const __DEBUGKIT_SDK_VERSION__: string | undefined;
@@ -148,10 +148,6 @@ export interface EventMeta {
 const QUEUE_KEY = "@debugkit/queue";
 /** About the most of events one upload carries, leaving room for the context under ingest's 512 KB. */
 const MAX_BATCH_CHARS = 384 * 1024;
-/** The most of each body a failed call carries, by default: the schema's limit. */
-const DEFAULT_BODY_CHARS = 16_384;
-/** The most breadcrumbs an error event can carry (the schema's limit). */
-const MAX_BREADCRUMBS = 50;
 /** One id per install, so "users affected" counts people rather than app launches. */
 const ANON_KEY = "@debugkit/anonymousId";
 
@@ -735,7 +731,7 @@ export class DebugClient {
       },
       ignored: (url) => this.isIgnored(url),
       wantsBody: (status, url) => this.isFailedStatus(status, url),
-      capturesBodies: () => this.opts.network?.bodies?.onFailure === true,
+      capturesBodies: () => !!this.bodiesOption(),
     };
   }
 
@@ -798,7 +794,8 @@ export class DebugClient {
     // frames again without it: the wrapper on top hides the library run below it.
     const frames = markLibraryFrames(parseStack(r.stack).slice(1));
     const trail = [...this.crumbs];
-    const bodies = net.bodies?.onFailure ? net.bodies : undefined;
+    const bodies = this.bodiesOption();
+    // Tells the dashboard this failure's error carries its request and response.
     if (bodies) data.hasBodies = true;
     const report = (responseBody = r.responseBody) => {
       const http = bodies ? this.describeFailedCall(r, responseBody, bodies) : undefined;
@@ -826,6 +823,12 @@ export class DebugClient {
     return (responseBody: string) => finish(responseBody);
   }
 
+  /** `network.bodies` when it is on, else undefined: the one place that decides. */
+  private bodiesOption(): NonNullable<NetworkOptions["bodies"]> | undefined {
+    const b = this.opts.network?.bodies;
+    return b?.onFailure ? b : undefined;
+  }
+
   /** A failed call's request and response, redacted and cut, for `network.bodies`. Never throws. */
   private describeFailedCall(
     r: RequestInfo,
@@ -833,13 +836,13 @@ export class DebugClient {
     bodies: NonNullable<NetworkOptions["bodies"]>,
   ): { request: Partial<NonNullable<ErrorEventInput["request"]>>; response?: ErrorEventInput["response"] } {
     try {
-      const max = bodies.maxChars ?? DEFAULT_BODY_CHARS;
+      const max = bodies.maxChars ?? MAX_CAPTURED_BODY;
       const redact = bodies.redact ?? {};
       const rawQuery = /\?([^#]*)/.exec(r.url)?.[1];
       const request = {
         query: rawQuery ? redactText(rawQuery, redact).slice(0, max) : undefined,
         headers: redactHeaders(r.requestHeaders, redact),
-        ...(r.requestBinary ? binaryBody(r.requestBinary.bytes, r.requestBinary.type) : captureBody(r.requestBody, max, redact)),
+        ...bodyOf(r.requestBody, r.requestBinary, max, redact),
       };
       const response =
         r.status === undefined
@@ -847,7 +850,7 @@ export class DebugClient {
           : {
               status: r.status,
               headers: redactHeaders(r.responseHeaders, redact),
-              ...(r.responseBinary ? binaryBody(r.responseBinary.bytes, r.responseBinary.type) : captureBody(responseBody, max, redact)),
+              ...bodyOf(responseBody, r.responseBinary, max, redact),
             };
       return { request, response };
     } catch (err) {

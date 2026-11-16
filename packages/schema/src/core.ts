@@ -51,6 +51,11 @@ export {
 
 export const SCHEMA_VERSION = 1;
 
+/** The most of a failed call's captured body kept, in characters (16 KB). */
+export const MAX_CAPTURED_BODY = 16_384;
+/** The most breadcrumbs an error event carries. */
+export const MAX_BREADCRUMBS = 50;
+
 /** "2.10.0" sorts after "2.9.1"; pre-release and build suffixes compare as text. */
 export function compareVersions(a: string, b: string): number {
   const pa = a.split(/[.+-]/);

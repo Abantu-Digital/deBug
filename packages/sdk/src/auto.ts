@@ -100,6 +100,13 @@ function describeBody(body: unknown, type?: string): Body {
   return { binary: { type: type ?? "multipart/form-data" } }; // FormData and streams
 }
 
+/** A header's value, whatever case its name was set in. */
+function headerValue(headers: Record<string, string> | undefined, name: string): string | undefined {
+  if (!headers) return undefined;
+  const lower = name.toLowerCase();
+  return Object.entries(headers).find(([k]) => k.toLowerCase() === lower)?.[1];
+}
+
 /** Headers as a plain object, from a Headers instance, an array of pairs or a record. */
 function headerRecord(h: unknown): Record<string, string> | undefined {
   if (!h) return undefined;
@@ -138,7 +145,7 @@ export function instrumentFetch(sink: AutoSink): Restore | undefined {
     if (sink.capturesBodies()) {
       try {
         const requestHeaders = headerRecord(init?.headers ?? input?.headers);
-        const body = describeBody(init?.body, requestHeaders?.["content-type"] ?? requestHeaders?.["Content-Type"]);
+        const body = describeBody(init?.body, headerValue(requestHeaders, "content-type"));
         sent = { requestHeaders, requestBody: body.text, requestBinary: body.binary };
       } catch {
         // Describing the request must never affect it.
@@ -156,22 +163,22 @@ export function instrumentFetch(sink: AutoSink): Restore | undefined {
         // Recorded now, in call order. A failure's body is read from a clone afterwards, so the
         // app still reads the response itself, and what the backend said is added when it lands.
         let clone: Response | undefined;
-        let failure: Pick<RequestInfo, "responseHeaders" | "responseBinary"> = {};
+        let failedResponse: Pick<RequestInfo, "responseHeaders" | "responseBinary"> = {};
         try {
           if (sink.wantsBody(res.status, url)) {
             const type = res.headers?.get?.("content-type") ?? undefined;
-            if (sink.capturesBodies()) failure.responseHeaders = headerRecord(res.headers);
+            if (sink.capturesBodies()) failedResponse.responseHeaders = headerRecord(res.headers);
             // Only text is read; a file's bytes never are.
             if (!type || TEXT_TYPE.test(type)) clone = res.clone();
             else {
               const length = Number(res.headers.get("content-length"));
-              failure = { ...failure, responseBinary: { bytes: Number.isFinite(length) && length > 0 ? length : undefined, type } };
+              failedResponse = { ...failedResponse, responseBinary: { bytes: Number.isFinite(length) && length > 0 ? length : undefined, type } };
             }
           }
         } catch {
           clone = undefined;
         }
-        const addBody = sink.request({ method, url, status: res.status, durationMs: Date.now() - start, stack, bodyPending: !!clone, ...sent, ...failure });
+        const addBody = sink.request({ method, url, status: res.status, durationMs: Date.now() - start, stack, bodyPending: !!clone, ...sent, ...failedResponse });
         if (clone && addBody) {
           let done = false;
           const finish = (body: string) => {
@@ -274,7 +281,7 @@ export function instrumentXhr(sink: AutoSink): Restore | undefined {
       let sent: Pick<RequestInfo, "requestHeaders" | "requestBody" | "requestBinary"> = {};
       if (sink.capturesBodies()) {
         try {
-          const body = describeBody(args[0], d.headers?.["Content-Type"] ?? d.headers?.["content-type"]);
+          const body = describeBody(args[0], headerValue(d.headers, "content-type"));
           sent = { requestHeaders: d.headers, requestBody: body.text, requestBinary: body.binary };
         } catch {
           // Describing the request must never affect it.

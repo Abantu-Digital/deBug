@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SCHEMA_VERSION, type Classification } from "./core";
+import { MAX_BREADCRUMBS, MAX_CAPTURED_BODY, SCHEMA_VERSION, type Classification } from "./core";
 
 // Everything that does not need zod lives in ./core so client bundles stay small.
 export * from "./core";
@@ -69,10 +69,9 @@ export const Breadcrumb = z.object({
 });
 
 /**
- * The most of a captured body kept, in characters: the SDK cuts at 16 KB and adds a marker, and
- * ingest cuts again here rather than reject an event that came in longer.
+ * Captured bodies: the SDK cuts at MAX_CAPTURED_BODY and adds a marker; ingest cuts again here
+ * rather than reject an event that came in longer.
  */
-export const MAX_CAPTURED_BODY = 16_384;
 const CUT_MARKER = "…[truncated]";
 const CapturedText = z
   .string()
@@ -117,7 +116,7 @@ export const ErrorEvent = EventBase.extend({
     stack: z.string().max(20_000).optional(),
     frames: z.array(StackFrame).max(100).optional(),
   }),
-  breadcrumbs: z.array(Breadcrumb).max(50).optional(),
+  breadcrumbs: z.array(Breadcrumb).max(MAX_BREADCRUMBS).optional(),
   /** Set when the error is a failed HTTP request captured by the SDK's network instrumentation. */
   request: z
     .object({

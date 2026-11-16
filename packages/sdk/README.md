@@ -57,8 +57,9 @@ and whether it succeeded.
 Every error carries the last 30 breadcrumbs, so the dashboard shows what happened just
 before it: the screen, the click, the request that failed.
 
-**Privacy.** Query strings and fragments are dropped from every URL before anything is
-recorded, and ids in paths become `:id` (`/v1/orders/8812?token=…` becomes `/v1/orders/:id`).
+**Privacy.** Query strings and fragments are dropped from the URLs in breadcrumbs, issues and
+timings, and ids in paths become `:id` (`/v1/orders/8812?token=…` becomes `/v1/orders/:id`). Only
+a failed call's captured request (below) keeps its query string, redacted.
 What users type is never read. A failed call's response body is read to pick out the backend's
 error details (see below), with phone numbers and email addresses in them masked. Bodies and
 headers themselves are sent only if you turn on `network.bodies` (on by default with
@@ -121,9 +122,13 @@ Secrets are redacted on the device, before anything is queued:
 
 | What | Redacted |
 |---|---|
-| Headers | `Authorization`, `Cookie`, `Set-Cookie`, and any name containing `token`, `key` or `secret` |
+| Headers | `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, and any name containing `token`, `key` or `secret` |
 | Body and query fields, at any depth, without case | `password`, `pin`, `otp`, `otpCode`, `verificationCode`, `cvv`, `cvc`, `cardNumber`, `pan`, `idToken`, `accessToken`, `refreshToken`, `token`, `secret`, `apiKey` |
-| Values, in any field or plain text | JWTs become `[redacted]`; card numbers that pass the Luhn check become `•••• 1234` |
+| Values, in any field or plain text | JWTs become `[redacted]`; card numbers that pass the Luhn check become `•••• 1234`, even when sent as JSON numbers |
+
+Fields are found in JSON at any depth (and in JSON or forms held inside a string field), in form
+bodies and query strings (`user[password]` counts as `password`), in JSON that was cut short, and
+in plain text (`otp: 123456`).
 
 Plain `code` is kept: it's usually the backend's error code. Add your own with
 `redact: { fields: ["idNumber"], headers: ["x-session"] }`. Each body is cut at 16 KB
@@ -225,8 +230,8 @@ report yours.
 
 ## React Native and Expo defaults
 
-`initReactNative` tunes three defaults for an app talking to its own backend. Pass either option to
-change it.
+`initReactNative` tunes three defaults for an app talking to its own backend. Pass any of these
+options to change it.
 
 - **A 4xx is a failure** (`network.isFailure`: status 400 and above). On mobile a 4xx is usually a
   business rule the customer hit, such as "not enough airtime", and those are the failures support
