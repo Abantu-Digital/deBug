@@ -1,5 +1,6 @@
 import { isRegression, type Issue, type RollupDimension, type RollupIncrement, type RollupRow, type StoredEvent } from "@debugkit/schema";
 import { coalesceRollups, rollupId } from "./rollups";
+import { mergeVersions, type Versions, type VersionsSeen } from "./versions";
 import type { TeamInvite, TeamMember, AppSettings, IssueStatusChange, IssueUpsert, RestampResult, Store, UpsertOutcome, UserField, UserMark } from "./index";
 
 /** In-process store for tests and the dashboard's demo mode. */
@@ -44,6 +45,13 @@ export class MemoryStore implements Store {
 
   async registerApp(app: string) {
     this.apps.add(app);
+  }
+  private versions = new Map<string, Versions>();
+  async recordVersions(app: string, seen: VersionsSeen) {
+    this.versions.set(app, mergeVersions(this.versions.get(app), seen));
+  }
+  async getVersions(app: string): Promise<Versions> {
+    return this.versions.get(app) ?? {};
   }
   async writeEvents(events: StoredEvent[], opts: { retentionDays?: number } = {}) {
     const days = opts.retentionDays ?? this.retentionDays;

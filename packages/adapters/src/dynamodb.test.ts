@@ -29,6 +29,16 @@ function fakeDoc(rows: Record<string, unknown>[], page: number) {
 
 const row = (pk: string, i: number) => ({ pk, sk: `2026-11-16T09:00:${String(i).padStart(2, "0")}.000Z#e${i}`, app: "a", sessionId: "s1", receivedAt: "2026-11-16T09:01:00.000Z", event: { type: "event", id: `e${i}`, ts: `2026-11-16T09:00:${String(i).padStart(2, "0")}.000Z`, name: "tick" } });
 
+describe("DynamoStore versions", () => {
+  it("only moves the SDK version forward, with a condition on its sortable key, and always writes the ingest's", async () => {
+    const { doc, updates } = fakeDoc([], 10);
+    await new DynamoStore(doc, { table: "t" }).recordVersions("a", { sdk: "0.10.0", ingest: "0.10.0", at: "t1" });
+    const sdk = updates.find((u) => u.UpdateExpression.includes("sdk ="))!;
+    expect(sdk).toMatchObject({ Key: { pk: "APP#a#VERSIONS", sk: "v" }, ConditionExpression: "attribute_not_exists(sdkKey) OR sdkKey <= :k", ExpressionAttributeValues: { ":v": "0.10.0", ":k": "000000.000010.000000~" } });
+    expect(updates.find((u) => u.UpdateExpression.includes("ingest ="))).toMatchObject({ ExpressionAttributeValues: { ":v": "0.10.0", ":at": "t1" } });
+  });
+});
+
 describe("DynamoStore sessions", () => {
   it("pages through a session past one query's 1 MB, keeping the newest, oldest first", async () => {
     const rows = Array.from({ length: 7 }, (_, i) => row("APP#a#SESSEV#s1", i));

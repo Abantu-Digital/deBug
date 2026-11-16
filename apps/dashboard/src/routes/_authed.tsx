@@ -1,5 +1,6 @@
 import { createFileRoute, Link, Outlet, redirect, useRouter } from "@tanstack/react-router";
 import { Logo } from "~/components/ui";
+import { VersionBanner } from "~/components/version-banner";
 import { getSessionUser, logout } from "~/server/fns";
 
 export const Route = createFileRoute("/_authed")({
@@ -43,6 +44,7 @@ function Layout() {
           </div>
         </div>
       </header>
+      <VersionBanner />
       <Outlet />
     </div>
   );

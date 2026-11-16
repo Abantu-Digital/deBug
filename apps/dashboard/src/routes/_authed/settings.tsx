@@ -1,7 +1,10 @@
 import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { normaliseHostMatch, OWNER_INFO, OWNERS, type HostName, type Owner } from "@debugkit/schema";
-import { Card } from "~/components/ui";
+import { Card, timeAgo } from "~/components/ui";
+import { partText } from "~/lib/version-text";
+import { UpgradeCommand, useVersionStatus } from "~/components/version-banner";
+import type { VersionStatus } from "~/server/versions";
 import { getSettings, restampExisting, saveAppSettings, saveRetention, sendTestAlert } from "~/server/fns";
 
 export const Route = createFileRoute("/_authed/settings")({
@@ -13,8 +16,10 @@ export const Route = createFileRoute("/_authed/settings")({
 
 const CHOICES = [30, 60, 90, 180, 365];
 
+
 function SettingsPage() {
   const { apps, settings, seenHosts } = Route.useLoaderData();
+  const versions = useVersionStatus();
   const navigate = useNavigate({ from: Route.fullPath });
   const router = useRouter();
   const [days, setDays] = useState(String(settings?.retentionDays ?? 60));
@@ -70,6 +75,8 @@ function SettingsPage() {
           </select>
         )}
       </div>
+
+      {versions && <VersionsCard status={versions} />}
 
       <Card title="Data retention" subtitle="Your data lives in your own database, so you decide how long to keep it.">
         <dl className="grid gap-3 text-sm sm:grid-cols-2">
@@ -307,6 +314,46 @@ function HostNames({
           <button type="button" onClick={() => void save()} disabled={busy} className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40">Save host names</button>
         </div>
       </div>
+    </Card>
+  );
+}
+
+/** Only ingest or the dashboard a patch behind: nothing is missing yet. */
+const patchOnly = (s: VersionStatus) => s.level === "note" && s.behind.some((p) => p.part !== "sdk");
+const upperFirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const PART_LABEL = { sdk: "App SDK (newest seen)", ingest: "Ingest", dashboard: "This dashboard" } as const;
+
+/** The project's deBug versions, and what to run when one is behind. */
+function VersionsCard({ status }: { status: VersionStatus }) {
+  const behind = new Set(status.behind.map((p) => p.part));
+  return (
+    <Card title="deBug versions" subtitle="Your app's SDK, your ingest and this dashboard are released together and work best on the same version.">
+      <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-1.5 text-sm">
+        {status.parts.map((p) => (
+          <div key={p.part} className="contents">
+            <dt className="text-muted">{PART_LABEL[p.part]}</dt>
+            <dd className={behind.has(p.part) ? "font-medium text-sev-high" : ""}>
+              {p.version ?? (p.part === "sdk" ? "not seen yet" : "predates version tracking")}
+              {p.at && <span className="ml-2 text-xs text-muted" title={p.at}>{p.part === "sdk" ? "seen" : "recorded"} {timeAgo(p.at)}</span>}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {status.level === "none" ? (
+        <p className="mt-3 text-xs text-muted">All in step.</p>
+      ) : (
+        <div className="mt-3 space-y-2 text-sm">
+          <p className={status.level === "banner" ? "" : "text-muted"}>
+            {upperFirst(status.behind.map(partText).join(" and "))}
+            {patchOnly(status) ? `: a patch behind ${status.newest}, so nothing's missing, but worth catching up.` : `, behind ${status.newest}.`}
+          </p>
+          {status.behind.some((p) => p.part !== "sdk") ? (
+            <UpgradeCommand status={status} />
+          ) : (
+            <p className="text-xs text-muted">Update @debugkit/sdk in your app to {status.newest}.</p>
+          )}
+        </div>
+      )}
     </Card>
   );
 }

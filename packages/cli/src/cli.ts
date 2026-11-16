@@ -10,6 +10,7 @@ import { setupLocal } from "./providers/local";
 import type { ProviderResult } from "./providers/types";
 import { cmdFor, environment, listEnvironments, paths, readConfig, readEnv, writeConfig, type DebugkitConfig, type ProviderId } from "./state";
 import { ask, bail, bold, choose, code, dim, flags, p, pc, yes } from "./ui";
+import { upgrade } from "./upgrade";
 import { initFile, installSdk, printValues, wireApp } from "./wire";
 
 
@@ -19,6 +20,7 @@ ${dim("Run as npx debugkit <command> once @debugkit/sdk is installed, or npx @de
   ${code("npx debugkit init")}        choose a cloud, deploy ingest to your account, wire the SDK, walk through the dashboard
   ${code("npx debugkit dashboard")}   run the dashboard against your data, on this machine
   ${code("npx debugkit deploy-dashboard")}  host the dashboard in your Firebase or AWS account, at a link you can share
+  ${code("npx debugkit upgrade")}     bring ingest, its indexes and the hosted dashboard to this version (after updating @debugkit/sdk)
   ${code("npx debugkit test")}        send test events and check they arrive
   ${code("npx debugkit guide")}       replay the walkthrough
   ${code("npx debugkit password")}    reset the dashboard login
@@ -29,10 +31,11 @@ Options
   --provider <firebase|aws|local>   skip the provider question
   --cwd <dir>                       the app's folder (default: current folder)
   --yes                             accept defaults (for scripts)
+  --dry-run                         upgrade: show what would be deployed, and deploy nothing
 `;
 
 function parseArgs(argv: string[]) {
-  const out: { cmd?: string; provider?: ProviderId; env?: string; cwd: string; yes: boolean; help: boolean } = { cwd: process.cwd(), yes: false, help: false };
+  const out: { cmd?: string; provider?: ProviderId; env?: string; cwd: string; yes: boolean; help: boolean; dryRun: boolean } = { cwd: process.cwd(), yes: false, help: false, dryRun: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--provider") out.provider = argv[++i] as ProviderId;
@@ -42,6 +45,7 @@ function parseArgs(argv: string[]) {
     else if (a === "--cwd") out.cwd = resolve(argv[++i] ?? ".");
     else if (a === "--yes" || a === "-y") out.yes = true;
     else if (a === "--help" || a === "-h") out.help = true;
+    else if (a === "--dry-run") out.dryRun = true;
     else if (!a.startsWith("-") && !out.cmd) out.cmd = a;
   }
   return out;
@@ -146,7 +150,7 @@ async function init(cwd: string, preset?: ProviderId) {
     p.log.error((err as Error).message);
     bail(`Setup stopped. Nothing else was changed in your app. Fix the error above and run ${cmdFor("init")} again.`);
   }
-  const cfg: DebugkitConfig = { ...result.config, ...(existing?.provider === provider && existing.hosted ? { hosted: existing.hosted } : {}), appId: app.appId, dashboardPort, retentionDays, createdAt: new Date().toISOString() };
+  const cfg: DebugkitConfig = { ...result.config, ...(existing?.provider === provider && existing.hosted ? { hosted: existing.hosted } : {}), appId: app.appId, dashboardPort, retentionDays, version: VERSION, createdAt: new Date().toISOString() };
   writeConfig(cwd, cfg);
   p.note(result.created.map((l) => `• ${l}`).join("\n"), "Created");
   // The two values people copy, outside the box so no border characters come along.
@@ -315,6 +319,8 @@ async function main() {
       return guide(args.cwd);
     case "password":
       return password(args.cwd);
+    case "upgrade":
+      return upgrade(args.cwd, requireConfig(args.cwd), { dryRun: args.dryRun });
     default:
       console.log(HELP);
       process.exitCode = 1;

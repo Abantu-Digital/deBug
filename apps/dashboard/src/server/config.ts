@@ -46,6 +46,9 @@ export function config() {
     /** The ingest function's admin routes (…/admin) and their token, for changing settings. */
     adminUrl: env.DEBUG_ADMIN_URL?.replace(/\/+$/, ""),
     adminToken: env.DEBUG_ADMIN_TOKEN,
+    /** The CLI environment this dashboard belongs to ("preview"), for commands it suggests (`--env preview`). */
+    // The CLI's own rule for names (ENV_NAME in packages/cli/src/state.ts), so the command it suggests is one the CLI takes.
+    environment: /^[a-z][a-z0-9-]{0,30}$/.test(env.DEBUG_ENVIRONMENT ?? "") ? env.DEBUG_ENVIRONMENT : undefined,
     /** The deployment's default retention (what ingest uses before an app has a setting). */
     retentionDays: num(env.DEBUG_RETENTION_DAYS, 0) || undefined,
     /** "Create issue" buttons on the issue page. */

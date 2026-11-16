@@ -12,6 +12,12 @@ export function bail(message = flags.command === "init" ? `Setup cancelled. Run 
   process.exit(0);
 }
 
+/** Stop with an error: exits 1, so a script running the command sees it failed. */
+export function fail(message: string): never {
+  p.cancel(message);
+  process.exit(1);
+}
+
 /** Unwrap a prompt result, exiting cleanly on Ctrl-C. */
 export function must<T>(value: T | symbol): T {
   if (p.isCancel(value) || typeof value === "symbol") bail();

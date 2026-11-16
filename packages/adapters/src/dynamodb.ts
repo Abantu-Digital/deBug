@@ -2,6 +2,7 @@ import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { BatchWriteCommand, type BatchWriteCommandOutput, GetCommand, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { isRegression, type Issue, type RollupDimension, type RollupIncrement, type RollupRow, type StoredEvent } from "@debugkit/schema";
 import { coalesceRollups } from "./rollups";
+import { versionKey, type Versions, type VersionsSeen } from "./versions";
 import { HOURLY_ROLLUP_DAYS, type TeamInvite, type TeamMember, type AppSettings, type IssueStatusChange, type IssueUpsert, type RestampResult, type Store, type UpsertOutcome, type UserField, type UserMark } from "./index";
 
 /**
@@ -17,6 +18,7 @@ import { HOURLY_ROLLUP_DAYS, type TeamInvite, type TeamMember, type AppSettings,
  *   APP#{app}#USEREV#id#{userId} | {ts}#{id}        StoredEvent (by customer number, user.id)
  *   APP#{app}#USEREV#anonymousId#{anonymousId} | {ts}#{id}   StoredEvent (by install id)
  *   APP#{app}#SETTINGS           | app              AppSettings
+ *   APP#{app}#VERSIONS           | v                Versions (sdk, sdkKey, sdkSeenAt, ingest, ingestAt)
  *   APP#{app}#USERS#{scope}      | {member}         { lastDay } (hashed ids; for "users affected")
  *
  *   TEAM                         | M#{email}        TeamMember (dashboard logins)
@@ -86,6 +88,41 @@ export class DynamoStore implements Store {
 
   async registerApp(app: string) {
     await this.doc.send(new PutCommand({ TableName: this.table, Item: { pk: "APPS", sk: app } }));
+  }
+
+  /**
+   * The SDK version only moves forward: a conditional update on its sortable key (versionKey), so two
+   * ingests seeing different SDKs keep the newer, and the same one again moves its seenAt on. The
+   * ingest version is whoever wrote last.
+   */
+  async recordVersions(app: string, seen: VersionsSeen) {
+    const Key = { pk: `APP#${app}#VERSIONS`, sk: "v" };
+    const key = versionKey(seen.sdk);
+    await Promise.all([
+      key &&
+        this.doc
+          .send(
+            new UpdateCommand({
+              TableName: this.table,
+              Key,
+              UpdateExpression: "SET sdk = :v, sdkKey = :k, sdkSeenAt = :at",
+              ConditionExpression: "attribute_not_exists(sdkKey) OR sdkKey <= :k",
+              ExpressionAttributeValues: { ":v": seen.sdk, ":k": key, ":at": seen.at },
+            }),
+          )
+          .catch((e: { name?: string }) => {
+            if (e.name !== "ConditionalCheckFailedException") throw e;
+          }),
+      this.doc.send(new UpdateCommand({ TableName: this.table, Key, UpdateExpression: "SET ingest = :v, ingestAt = :at", ExpressionAttributeValues: { ":v": seen.ingest, ":at": seen.at } })),
+    ]);
+  }
+  async getVersions(app: string): Promise<Versions> {
+    const out = await this.doc.send(new GetCommand({ TableName: this.table, Key: { pk: `APP#${app}#VERSIONS`, sk: "v" } }));
+    const i = out.Item as { sdk?: string; sdkSeenAt?: string; ingest?: string; ingestAt?: string } | undefined;
+    return {
+      ...(i?.sdk && i.sdkSeenAt ? { sdk: { version: i.sdk, seenAt: i.sdkSeenAt } } : {}),
+      ...(i?.ingest && i.ingestAt ? { ingest: { version: i.ingest, at: i.ingestAt } } : {}),
+    };
   }
 
   async writeEvents(events: StoredEvent[], opts: { retentionDays?: number } = {}) {

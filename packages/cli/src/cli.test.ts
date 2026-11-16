@@ -89,7 +89,7 @@ describe("wiring", () => {
 describe("providers", () => {
   it("writes a deployable Firebase function with the ingest key and region", () => {
     const dir = app({ name: "megatron", dependencies: { expo: "58" } });
-    const out = writeFunctionSource({ app: detectApp(dir), ingestKey: "pk_live_abc", dashboardPort: 4400, retentionDays: 90, adminToken: "adm_test_token_0123456789" }, "africa-south1");
+    const out = writeFunctionSource({ app: detectApp(dir), ingestKey: "pk_live_abc", retentionDays: 90, adminToken: "adm_test_token_0123456789" }, "africa-south1");
     const firebaseJson = JSON.parse(readFileSync(join(out, "firebase.json"), "utf8"));
     expect(firebaseJson.functions[0]).toMatchObject({ source: "functions", codebase: "debugkit" });
     expect(readFileSync(join(out, "functions", "index.js"), "utf8")).toContain('region: "africa-south1", invoker: "public"');
@@ -129,8 +129,8 @@ describe("safety on re-runs", () => {
   it("keeps existing keys in the Firebase function's .env when run again", () => {
     const dir = app({ name: "megatron", dependencies: { expo: "58" } });
     const a = detectApp(dir);
-    writeFunctionSource({ app: a, ingestKey: "pk_live_first", dashboardPort: 4400, retentionDays: 90, adminToken: "adm_test_token_0123456789" }, "us-central1");
-    const out = writeFunctionSource({ app: a, ingestKey: "pk_live_second", dashboardPort: 4400, retentionDays: 90, adminToken: "adm_test_token_0123456789" }, "us-central1");
+    writeFunctionSource({ app: a, ingestKey: "pk_live_first", retentionDays: 90, adminToken: "adm_test_token_0123456789" }, "us-central1");
+    const out = writeFunctionSource({ app: a, ingestKey: "pk_live_second", retentionDays: 90, adminToken: "adm_test_token_0123456789" }, "us-central1");
     expect(readFileSync(join(out, "functions", ".env"), "utf8")).toBe("DEBUG_INGEST_KEYS=pk_live_first:megatron,pk_live_second:megatron\nDEBUG_RETENTION_DAYS=90\n");
   });
 

@@ -2,6 +2,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { isRegression, type Issue, type RollupDimension, type RollupIncrement, type RollupRow, type StoredEvent } from "@debugkit/schema";
 import { coalesceRollups, rollupId } from "./rollups";
+import { mergeVersions, type Versions, type VersionsSeen } from "./versions";
 import { HOURLY_ROLLUP_DAYS, type TeamInvite, type TeamMember, type AppSettings, type IssueStatusChange, type IssueUpsert, type RestampResult, type Store, type UpsertOutcome, type UserField, type UserMark } from "./index";
 
 /**
@@ -75,6 +76,18 @@ export class FirestoreStore implements Store {
 
   async registerApp(app: string) {
     await this.app(app).set({ id: app, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  }
+
+  /** On the app's own document, in a transaction: two ingests seeing different SDKs keep the newer. */
+  async recordVersions(app: string, seen: VersionsSeen) {
+    const ref = this.app(app);
+    await this.db.runTransaction(async (tx) => {
+      const cur = (await tx.get(ref)).data()?.versions as Versions | undefined;
+      tx.set(ref, { versions: strip(mergeVersions(cur, seen)) }, { merge: true });
+    });
+  }
+  async getVersions(app: string): Promise<Versions> {
+    return ((await this.app(app).get()).data()?.versions as Versions | undefined) ?? {};
   }
 
   async writeEvents(events: StoredEvent[], opts: { retentionDays?: number } = {}) {
