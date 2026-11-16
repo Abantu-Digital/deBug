@@ -7,6 +7,8 @@ import { Card } from "~/components/ui";
 import { getEventDetail } from "~/server/fns";
 import { shownOf, supportSummary, ticketText, ticketTime } from "~/lib/support-summary";
 import type { ApiCall, EventDetail, TimelineItem } from "~/server/event";
+import type { Exchange, ExchangeSide } from "~/server/exchange";
+import { bodyView, curlOf } from "~/lib/exchange-view";
 
 export const Route = createFileRoute("/_authed/events/$eventId")({
   // The range is kept only to take it back to the issue page.
@@ -74,7 +76,7 @@ function EventPage() {
         <div className="min-w-0 space-y-5 lg:col-span-2">
           {d.request && (
             <Card title="Request" subtitle="The call that failed.">
-              <RequestPanel call={d.request} />
+              <RequestPanel call={d.request} exchange={d.exchange} />
             </Card>
           )}
           <Card title="Device and app">
@@ -221,7 +223,83 @@ function Timeline({ items, after = [], errorTs, errorText }: { items: TimelineIt
   );
 }
 
-function RequestPanel({ call }: { call: ApiCall }) {
+type RequestTab = "call" | "request" | "response";
+
+/** The failed call; with what the SDK captured, its request and response in tabs of their own. */
+function RequestPanel({ call, exchange }: { call: ApiCall; exchange?: Exchange }) {
+  const [tab, setTab] = useState<RequestTab>("call");
+  if (!exchange) return <CallFacts call={call} />;
+  const tabs: [RequestTab, string][] = [["call", "Call"], ["request", "Request"], ...(exchange.response ? ([["response", "Response"]] as [RequestTab, string][]) : [])];
+  return (
+    <div>
+      <div role="tablist" aria-label="Request details" className="mb-3 flex gap-1 border-b border-line">
+        {tabs.map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            id={`req-tab-${id}`}
+            aria-selected={tab === id}
+            aria-controls={`req-panel-${id}`}
+            onClick={() => setTab(id)}
+            className={`-mb-px border-b-2 px-2.5 py-1.5 text-sm ${tab === id ? "border-ink font-medium text-ink" : "border-transparent text-muted hover:text-ink"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" id={`req-panel-${tab}`} aria-labelledby={`req-tab-${tab}`}>
+        {tab === "call" && <CallFacts call={call} />}
+        {tab === "request" && <RequestSide exchange={exchange} />}
+        {tab === "response" && exchange.response && <Side side={exchange.response} first={["Status", exchange.response.status !== undefined ? String(exchange.response.status) : undefined]} />}
+      </div>
+    </div>
+  );
+}
+
+function RequestSide({ exchange }: { exchange: Exchange }) {
+  const r = exchange.request;
+  const curl = curlOf(exchange);
+  return (
+    <div className="space-y-3">
+      <Side side={r} first={["Call", <span className="break-all font-mono text-xs">{r.method} {r.fullUrl ?? r.url}{r.query ? `?${r.query}` : ""}</span>]} />
+      <div className="flex flex-wrap items-center gap-2">
+        <CopyButton text={curl.command} label="Copy as cURL" ariaLabel="Copy the request as a cURL command" />
+        <span className="text-xs text-muted">Redacted: secrets show as [redacted]{curl.complete ? "" : ", and the command says what else to fill in"}.</span>
+      </div>
+    </div>
+  );
+}
+
+/** Headers and body of one side of the call. */
+function Side({ side, first }: { side: ExchangeSide; first: [string, ReactNode | undefined] }) {
+  const body = bodyView(side);
+  const headers = Object.entries(side.headers ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  return (
+    <div className="space-y-3">
+      <Facts rows={[first, ["Body size", side.bodySize !== undefined ? bytes(side.bodySize) : undefined]]} />
+      <div>
+        <h3 className="mb-1.5 text-xs font-medium text-muted">Headers</h3>
+        {headers.length ? <Facts mono rows={headers} /> : <p className="text-sm text-muted">None captured.</p>}
+      </div>
+      <div>
+        <h3 className="mb-1.5 text-xs font-medium text-muted">Body{body?.json ? " (JSON)" : ""}</h3>
+        {body?.note && <p className="mb-1.5 rounded-md bg-sev-medium/10 px-2 py-1 text-xs">{body.note}</p>}
+        {body?.text ? (
+          <pre className="max-h-96 overflow-auto rounded-md border border-line bg-panel-2 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all">{body.text}</pre>
+        ) : (
+          !body?.note && <p className="text-sm text-muted">None captured.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function bytes(n: number) {
+  return n < 1024 ? `${n} B` : `${(n / 1024).toFixed(n < 10_240 ? 1 : 0)} KB`;
+}
+
+function CallFacts({ call }: { call: ApiCall }) {
   return (
     <Facts
       rows={[
