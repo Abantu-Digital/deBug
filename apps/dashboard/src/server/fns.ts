@@ -3,7 +3,7 @@ import { redirect } from "@tanstack/react-router";
 import { canManage, checkCredentials, demoLoginEnabled, DEMO_USER, endSession, readSession, recordFailure, startSession, tooManyAttempts, type SessionUser } from "./auth";
 import { config } from "./config";
 import { buildEventDetail } from "./event";
-import { buildSessionDetail, stepsAfter } from "./session";
+import { buildSessionDetail } from "./session";
 import { lookupCustomer } from "./customers";
 import { buildEndpoints } from "./endpoints";
 import { isMissingIndex } from "./errors";
@@ -88,11 +88,7 @@ export const getEventDetail = createServerFn({ method: "GET" })
   .validator((d: { app: string; fingerprint: string; eventId: string }) => ({ app: String(d.app), fingerprint: String(d.fingerprint), eventId: String(d.eventId) }))
   .handler(async ({ data }) => {
     await requireUser();
-    const store = await getStore();
-    const d = await buildEventDetail(store, data.app, data.fingerprint, data.eventId);
-    if (!d) return d;
-    const hosts = (await store.getSettings(data.app).catch(() => null))?.hosts ?? [];
-    return { ...d, after: await stepsAfter(store, data.app, d.sessionId, d.ts, hosts) };
+    return buildEventDetail(await getStore(), data.app, data.fingerprint, data.eventId);
   });
 
 export const getSessionDetail = createServerFn({ method: "GET" })

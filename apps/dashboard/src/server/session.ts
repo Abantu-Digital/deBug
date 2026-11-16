@@ -1,5 +1,6 @@
 import type { ReadStore } from "@debugkit/adapters";
 import { nameUrlsIn, type Breadcrumb, type Context, type HostName, type StoredEvent } from "@debugkit/schema";
+import { isIndexError } from "./errors";
 import { byTime, readCrumb, withoutSdkTwins, type TimelineItem } from "./event";
 
 /**
@@ -195,8 +196,12 @@ const AFTER_MS = 5 * 60_000;
  * within five minutes of it, at most `limit`. Empty when nothing later was stored or the session
  * can't be read (Firestore without its index).
  */
-export async function stepsAfter(store: ReadStore, app: string, sessionId: string, ts: string, hosts: readonly HostName[] = [], limit = 10): Promise<TimelineItem[]> {
-  const events = await store.listSessionEvents(app, sessionId, { limit: SESSION_EVENT_LIMIT }).catch(() => []);
+export async function stepsAfter(store: ReadStore, app: string, sessionId: string, ts: string, hosts: readonly HostName[] = [], limit = 30): Promise<TimelineItem[]> {
+  const events = await store.listSessionEvents(app, sessionId, { limit: SESSION_EVENT_LIMIT }).catch((e: Error) => {
+    // Firestore without the session index: the event page works without what came after.
+    if (isIndexError(String(e?.message))) return [];
+    throw e;
+  });
   const t = Date.parse(ts);
   const later = withoutSdkTwinsCarried(uniqueCrumbs(events)).filter((c) => {
     const d = Date.parse(c.crumb.ts) - t;

@@ -30,7 +30,27 @@ export function maskCustomer(id: string): string {
     const local = /^27\d{9}$/.test(digits) ? `0${digits.slice(2)}` : digits;
     if (local.length >= 8) return `${local.slice(0, 3)}•••${local.slice(-4)}`;
   }
+  if (/^\d{5,}$/.test(id)) return `•••${id.slice(-3)}`;
   return id.length > 8 ? `${id.slice(0, 3)}•••${id.slice(-3)}` : id;
+}
+
+/** Phone-number-like runs in free text (an error message), masked like the customer number. */
+export function maskNumbersIn(text: string): string {
+  return text.replace(/\+?\d[\d \-]{6,}\d/g, (m) => maskCustomer(m));
+}
+
+/**
+ * "16 Nov 2026, 10:42 SAST": the date, and the time in the phone's own time zone (UTC when it
+ * didn't say), so a ticket read later or elsewhere still says when.
+ */
+export function ticketTime(iso: string, timeZone?: string): string {
+  const fmt = (tz: string) =>
+    new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz, timeZoneName: "short" }).format(new Date(iso));
+  try {
+    return fmt(timeZone ?? "UTC");
+  } catch {
+    return fmt("UTC");
+  }
 }
 
 /** "Dashboard → Buy" reads as moving to Buy; a single name is the screen itself. */
@@ -63,11 +83,11 @@ function tapLabel(t: TimelineItem): string | undefined {
 }
 
 /** What the app showed: data.shown, or a "Showed …" / "Alert: …" breadcrumb. */
-function shownOf(t: TimelineItem): string | undefined {
+export function shownOf(t: TimelineItem): string | undefined {
   const shown = t.data?.shown;
   if (typeof shown === "string" && shown) return shown;
   if (t.category !== "ui" && t.category !== "log") return undefined;
-  const m = /^(?:showed|shown|alert|toast)\s*:?\s*["“]?(.+?)["”]?$/i.exec(t.message);
+  const m = /^(?:showed|shown|alert|toast)\b\s*:?\s+["“]?(.+?)["”]?$/i.exec(t.message);
   return m?.[1];
 }
 
@@ -77,10 +97,10 @@ const quote = (s: string) => `"${s}"`;
 function callSentence(call: ApiCall): string {
   const who = call.service ? `The ${call.service} service` : `The backend (${[call.method, call.path].filter(Boolean).join(" ")})`;
   const trace = call.traceId ? ` (trace ${call.traceId.slice(0, 4)}…)` : "";
-  if (call.outcome === "sessionExpired" || call.status === 401) return `${who} said their session had expired${call.status ? ` (${call.status})` : ""}${trace}.`;
+  if (call.outcome === "sessionExpired") return `${who} said their session had expired${call.status ? ` (${call.status})` : ""}${trace}.`;
   if (call.status === undefined) {
-    const why = call.outcome && call.outcome !== "answered" ? call.outcome : call.errorKind ?? "no answer";
-    return `${who} didn't answer (${why})${trace}.`;
+    const why = call.outcome && call.outcome !== "answered" ? call.outcome : call.errorKind;
+    return `${who} didn't answer${why ? ` (${why})` : ""}${trace}.`;
   }
   const said = call.backendTitle ? ` ${quote(call.backendTitle)}` : "";
   const code = call.backendCode ? `, code ${call.backendCode}` : "";
@@ -95,16 +115,20 @@ export function supportSummary(d: Input, formatTime: (iso: string) => string): S
   sentences.push(`${formatTime(d.ts)} · ${who}${os || app ? ` on ${[os, app].filter(Boolean).join(", ")}` : ""}.`);
 
   const screens = screensOf(d.timeline).slice(-MAX_SCREENS);
-  const tap = [...d.timeline].reverse().map(tapLabel).find(Boolean);
+  // The last tap on the screen they ended on: one before the last navigation was somewhere else.
+  const lastNav = d.timeline.map((t) => t.category === "navigation").lastIndexOf(true);
+  const tap = d.timeline.slice(lastNav + 1).reverse().map(tapLabel).find(Boolean);
   const went = screens.length > 1 ? `Went ${screens.join(" → ")}` : screens.length ? `Was on ${screens[0]}` : undefined;
   const steps = [went, tap && `tapped ${quote(tap)}`].filter(Boolean).join(", ");
   if (steps) sentences.push(`${upperFirst(steps)}.`);
 
   if (d.request) sentences.push(callSentence(d.request));
-  else sentences.push(`The app ${d.handled ? "reported" : "hit"} an error: ${d.error.name}: ${d.error.message}.`);
+  else sentences.push(`The app ${d.handled ? "reported" : "hit"} an error: ${maskNumbersIn(`${d.error.name}: ${d.error.message}`)}.`);
 
   const after = d.after ?? [];
-  const saw = [...d.timeline.slice(-3), ...after.slice(0, 3)].map(shownOf).find(Boolean);
+  // What they were shown because of it: after the failed call (or the last step), and just after the error.
+  const failedAt = d.timeline.map((t) => !!t.api?.failed).lastIndexOf(true);
+  const saw = [...d.timeline.slice(failedAt >= 0 ? failedAt + 1 : d.timeline.length), ...after.slice(0, 3)].map(shownOf).find(Boolean);
   const next = after.map(screenOf).find(Boolean);
   const back = next && screens.includes(next.to) ? `went back to ${next.to}` : next ? `went to ${next.to}` : undefined;
   if (saw || back) sentences.push(`${saw ? `They saw ${quote(saw)}${back ? ` and ${back}` : ""}` : `They ${back}`}.`);

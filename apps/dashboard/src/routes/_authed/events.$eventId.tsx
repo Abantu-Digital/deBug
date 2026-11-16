@@ -1,11 +1,11 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { CopyButton } from "~/components/copy-button";
 import { rangeSearch, type RangeSearch } from "~/components/range-picker";
 import { CrumbBody, ICON, clock, joined, offset } from "~/components/timeline";
 import { Card } from "~/components/ui";
 import { getEventDetail } from "~/server/fns";
-import { supportSummary, ticketText } from "~/lib/support-summary";
+import { shownOf, supportSummary, ticketText, ticketTime } from "~/lib/support-summary";
 import type { ApiCall, EventDetail, TimelineItem } from "~/server/event";
 
 export const Route = createFileRoute("/_authed/events/$eventId")({
@@ -57,11 +57,11 @@ function EventPage() {
 
       <Who d={d} />
 
-      <Summary d={d} support={support} />
+      <Summary d={d} support={support} search={{ ...issueSearch, issue: d.issue.fingerprint, view }} />
 
       {support ? (
         <Card title="What they did" subtitle="Screens, taps and failed calls before the error, and after it when the session went on.">
-          <Steps items={d.timeline.filter(forSupport)} after={d.after.filter(forSupport)} errorTs={d.ts} />
+          <Timeline items={d.timeline.filter(forSupport)} after={d.after.filter(forSupport)} errorTs={d.ts} errorText="The error" />
         </Card>
       ) : (
       <>
@@ -121,10 +121,12 @@ function EventPage() {
 }
 
 /** The support summary, the Support / Developer switch, and "Copy for ticket". */
-function Summary({ d, support }: { d: EventDetail; support: boolean }) {
-  const search = Route.useSearch();
-  const summary = supportSummary(d, (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }));
-  const link = typeof window === "undefined" ? "" : `${window.location.origin}/events/${encodeURIComponent(d.id)}?app=${encodeURIComponent(d.app)}&issue=${encodeURIComponent(d.issue.fingerprint)}`;
+function Summary({ d, support, search }: { d: EventDetail; support: boolean; search: ReturnType<typeof Route.useSearch> }) {
+  const summary = supportSummary(d, (iso) => ticketTime(iso, d.context.timezone));
+  // The page's own address is only known in the browser.
+  const [origin, setOrigin] = useState("");
+  useEffect(() => setOrigin(window.location.origin), []);
+  const link = `${origin}/events/${encodeURIComponent(d.id)}?app=${encodeURIComponent(d.app)}&issue=${encodeURIComponent(d.issue.fingerprint)}${support ? "&view=support" : ""}`;
   const tab = (on: boolean) => `rounded-md px-2.5 py-1 text-xs ${on ? "bg-panel-2 font-medium text-ink" : "text-muted hover:text-ink"}`;
   return (
     <section aria-label="Support summary" className="rounded-xl border border-line bg-panel p-4 sm:p-5">
@@ -138,36 +140,30 @@ function Summary({ d, support }: { d: EventDetail; support: boolean }) {
           <CopyButton text={ticketText(summary, link, d.request?.traceId)} label="Copy for ticket" ariaLabel="Copy the summary, event link and trace id for a ticket" />
         </div>
       </div>
-      <p className="text-[15px] leading-relaxed">{summary.sentences.join(" ")}</p>
+      <p className="text-[15px] leading-relaxed" suppressHydrationWarning>{summary.sentences.join(" ")}</p>
+      {support && (summary.screens.length > 0 || summary.saw) && (
+        <dl className="mt-3 grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-4 gap-y-1 text-sm">
+          {summary.screens.length > 0 && (
+            <>
+              <dt className="text-muted">Screens</dt>
+              <dd className="min-w-0 break-words">{summary.screens.join(" → ")}</dd>
+            </>
+          )}
+          {summary.saw && (
+            <>
+              <dt className="text-muted">They saw</dt>
+              <dd className="min-w-0 break-words">"{summary.saw}"</dd>
+            </>
+          )}
+        </dl>
+      )}
     </section>
   );
 }
 
 /** The steps support follows: screens, taps, what the app showed, and calls that failed. */
 function forSupport(t: TimelineItem): boolean {
-  return t.category === "navigation" || t.category === "ui" || !!t.api?.failed || typeof t.data?.shown === "string";
-}
-
-function Steps({ items, after, errorTs }: { items: TimelineItem[]; after: TimelineItem[]; errorTs: string }) {
-  const row = (t: TimelineItem, i: number) => (
-    <li key={`${t.ts}${i}`} className={`grid grid-cols-[4.5rem_1.25rem_1fr] gap-2 rounded-md px-2 py-1.5 text-sm ${t.failed ? "bg-sev-critical/10" : ""}`}>
-      <span className="tabular pt-0.5 text-right text-xs text-muted" title={t.ts}>{offset(t.ts, errorTs)}</span>
-      <span aria-hidden className={`pt-0.5 text-center ${t.failed ? "text-sev-critical" : "text-muted"}`}>{ICON[t.category]}</span>
-      <div className="min-w-0"><CrumbBody item={t} /></div>
-    </li>
-  );
-  if (!items.length && !after.length) return <p className="text-sm text-muted">No screens or taps recorded before this error.</p>;
-  return (
-    <ol className="space-y-1.5">
-      {items.map(row)}
-      <li className="grid grid-cols-[4.5rem_1.25rem_1fr] gap-2 rounded-md bg-sev-critical/15 px-2 py-1.5 text-sm font-medium text-sev-critical">
-        <span className="tabular pt-0.5 text-right text-xs">0 s</span>
-        <span aria-hidden className="pt-0.5 text-center">✕</span>
-        <span>The error</span>
-      </li>
-      {after.map(row)}
-    </ol>
-  );
+  return t.category === "navigation" || t.category === "ui" || !!t.api?.failed || !!shownOf(t);
 }
 
 /** Who it happened to, and the ids that lead to their session and their other sessions. */
@@ -198,26 +194,29 @@ function Who({ d }: { d: EventDetail }) {
   );
 }
 
-function Timeline({ items, errorTs, errorText }: { items: TimelineItem[]; errorTs: string; errorText: string }) {
-  if (!items.length) {
+/** The trail up to the error, and with `after`, what came after it. */
+function Timeline({ items, after = [], errorTs, errorText }: { items: TimelineItem[]; after?: TimelineItem[]; errorTs: string; errorText: string }) {
+  if (!items.length && !after.length) {
     return <p className="text-sm text-muted">No breadcrumbs. The SDK records screens, taps and requests on its own once it's set up; see the README.</p>;
   }
+  const row = (t: TimelineItem, key: string) => (
+    <li key={key} className={`grid grid-cols-[4.5rem_1.25rem_1fr] gap-2 rounded-md px-2 py-1.5 text-sm ${t.failed ? "bg-sev-critical/10" : t.level === "warning" ? "bg-sev-medium/10" : ""}`}>
+      <span className="tabular pt-0.5 text-right text-xs text-muted" title={t.ts}>{offset(t.ts, errorTs)}</span>
+      <span aria-hidden className={`pt-0.5 text-center ${t.failed ? "text-sev-critical" : "text-muted"}`}>{ICON[t.category]}</span>
+      <div className="min-w-0">
+        <CrumbBody item={t} />
+      </div>
+    </li>
+  );
   return (
     <ol className="space-y-2">
-      {items.map((t, i) => (
-        <li key={i} className={`grid grid-cols-[4.5rem_1.25rem_1fr] gap-2 rounded-md px-2 py-1.5 text-sm ${t.failed ? "bg-sev-critical/10" : t.level === "warning" ? "bg-sev-medium/10" : ""}`}>
-          <span className="tabular pt-0.5 text-right text-xs text-muted" title={t.ts}>{offset(t.ts, errorTs)}</span>
-          <span aria-hidden className={`pt-0.5 text-center ${t.failed ? "text-sev-critical" : "text-muted"}`}>{ICON[t.category]}</span>
-          <div className="min-w-0">
-            <CrumbBody item={t} />
-          </div>
-        </li>
-      ))}
+      {items.map((t, i) => row(t, `b${i}`))}
       <li className="grid grid-cols-[4.5rem_1.25rem_1fr] gap-2 rounded-md bg-sev-critical/15 px-2 py-1.5 text-sm font-medium text-sev-critical">
         <span className="tabular pt-0.5 text-right text-xs">0 s</span>
         <span aria-hidden className="pt-0.5 text-center">✕</span>
         <span className="break-words">{errorText}</span>
       </li>
+      {after.map((t, i) => row(t, `a${i}`))}
     </ol>
   );
 }
