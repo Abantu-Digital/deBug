@@ -1,4 +1,6 @@
 import type { ReadStore } from "@debugkit/adapters";
+// session.ts imports from here too; both only call each other inside functions.
+import { stepsAfter } from "./session";
 import { hostNameFor, nameUrlsIn, type Breadcrumb, type Context, type HostName, type StackFrame, type StoredEvent } from "@debugkit/schema";
 
 /**
@@ -27,6 +29,8 @@ export interface EventDetail {
   /** In-app frames first, each group in stack order. */
   frames: StackFrame[];
   stack?: string;
+  /** What the customer did next, within five minutes, from the session's later errors. */
+  after: TimelineItem[];
   /** The neighbouring occurrences of the same issue, for stepping through them. */
   newer?: string;
   older?: string;
@@ -217,6 +221,7 @@ export async function buildEventDetail(store: ReadStore, app: string, fingerprin
     request: failedRequest(ev.request, timeline, hosts),
     frames: framesInAppFirst(ev.error.frames),
     stack: ev.error.stack,
+    after: await stepsAfter(store, app, stored.sessionId, ev.ts, hosts),
     newer: index > 0 ? errors[index - 1]!.event.id : undefined,
     older: index >= 0 && index < errors.length - 1 ? errors[index + 1]!.event.id : undefined,
   };

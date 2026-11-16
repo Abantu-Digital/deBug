@@ -1,5 +1,6 @@
 import type { ReadStore } from "@debugkit/adapters";
-import { nameUrlsIn, type Breadcrumb, type Context, type StoredEvent } from "@debugkit/schema";
+import { nameUrlsIn, type Breadcrumb, type Context, type HostName, type StoredEvent } from "@debugkit/schema";
+import { isIndexError } from "./errors";
 import { byTime, readCrumb, withoutSdkTwins, type TimelineItem } from "./event";
 
 /**
@@ -185,6 +186,28 @@ export async function buildSessionDetail(store: ReadStore, app: string, sessionI
     truncated,
     read: page.length,
   };
+}
+
+/** How far after an error its "what they did next" reaches. */
+const AFTER_MS = 5 * 60_000;
+
+/**
+ * What the customer did after an error, from the trails of the session's later errors: the steps
+ * within five minutes of it, at most `limit`. Empty when nothing later was stored or the session
+ * can't be read (Firestore without its index).
+ */
+export async function stepsAfter(store: ReadStore, app: string, sessionId: string, ts: string, hosts: readonly HostName[] = [], limit = 30): Promise<TimelineItem[]> {
+  const events = await store.listSessionEvents(app, sessionId, { limit: SESSION_EVENT_LIMIT }).catch((e: Error) => {
+    // Firestore without the session index: the event page works without what came after.
+    if (isIndexError(String(e?.message))) return [];
+    throw e;
+  });
+  const t = Date.parse(ts);
+  const later = withoutSdkTwinsCarried(uniqueCrumbs(events)).filter((c) => {
+    const d = Date.parse(c.crumb.ts) - t;
+    return d > 0 && d <= AFTER_MS;
+  });
+  return byTime(later.map((c) => c.crumb)).slice(0, limit).map((b) => readCrumb(b, hosts));
 }
 
 /** withoutSdkTwins over carried breadcrumbs, keeping each one's source. */
