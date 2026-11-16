@@ -1,5 +1,15 @@
 # @debugkit/sdk
 
+## 0.9.0
+
+### Minor Changes
+
+- 4ea5fc1: In debug mode, the SDK warns once per launch when the ingest it sends to is a minor or more behind it, naming both versions and `npx debugkit upgrade`. It reads the ingest's `x-debugkit-version` response header and says nothing when there is none. (ABA-127)
+
+### Patch Changes
+
+- @debugkit/schema@0.9.0
+
 ## 0.8.0
 
 ### Minor Changes
