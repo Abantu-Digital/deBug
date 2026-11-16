@@ -50,10 +50,14 @@ export function offset(ts: string, errorTs: string) {
   if (!Number.isFinite(s)) return "";
   const a = Math.abs(s);
   if (a < 0.05) return "0 s";
-  const sign = s < 0 ? "−" : "+";
+  return `${s < 0 ? "−" : "+"}${roundedSpan(a)}`;
+}
+
+/** A span of seconds in one unit: "5.9 s", "42 s", "2 min", "3 h". */
+export function roundedSpan(a: number) {
   // Round first, then pick the unit, so 59.6 s reads "1 min", not "60 s".
-  if (a < 9.95) return `${sign}${a.toFixed(1)} s`;
-  if (Math.round(a) < 60) return `${sign}${Math.round(a)} s`;
-  if (Math.round(a / 60) < 60) return `${sign}${Math.round(a / 60)} min`;
-  return `${sign}${Math.round(a / 3600)} h`;
+  if (a < 9.95) return `${a.toFixed(1)} s`;
+  if (Math.round(a) < 60) return `${Math.round(a)} s`;
+  if (Math.round(a / 60) < 60) return `${Math.round(a / 60)} min`;
+  return `${Math.round(a / 3600)} h`;
 }

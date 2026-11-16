@@ -88,8 +88,10 @@ export const getSessionDetail = createServerFn({ method: "GET" })
     try {
       return { session: await buildSessionDetail(await getStore(), data.app, data.sessionId) };
     } catch (e) {
-      // Firestore refuses the query until the (sessionId, ts) index exists.
-      if (/index/i.test((e as Error).message)) return { session: null, missingIndex: true };
+      // Firestore refuses the query until the (sessionId, ts) index exists: FAILED_PRECONDITION, gRPC code 9.
+      const err = e as { code?: unknown; message?: unknown };
+      const noIndex = config().store === "firestore" && (err?.code === 9 || err?.code === "failed-precondition") && /index/i.test(String(err?.message ?? ""));
+      if (noIndex) return { session: null, missingIndex: true };
       throw e;
     }
   });

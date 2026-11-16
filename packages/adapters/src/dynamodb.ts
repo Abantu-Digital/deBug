@@ -13,6 +13,7 @@ import { HOURLY_ROLLUP_DAYS, type TeamInvite, type TeamMember, type AppSettings,
  *   APP#{app}#ROLLUP#{dimension} | {day}#{key}      RollupRow (ADD counters)
  *   APP#{app}#ISSUEEV#{fp}       | {ts}#{id}        StoredEvent (error events by issue)
  *   APP#{app}#EV#{day}           | {ts}#{id}        StoredEvent (all events by day)
+ *   APP#{app}#SESSEV#{sessionId} | {ts}#{id}        StoredEvent (all events by session)
  *   APP#{app}#SETTINGS           | app              AppSettings
  *   APP#{app}#USERS#{scope}      | {member}         { lastDay } (hashed ids; for "users affected")
  *
@@ -300,7 +301,11 @@ export class DynamoStore implements Store {
       const items = await this.queryAll({ pk: `APP#${app}#EV#${day}` });
       for (const item of items) {
         const ttl = Math.floor(Date.parse(item.receivedAt as string) / 1000) + retentionDays * 86_400;
-        const keys = [{ pk: item.pk, sk: item.sk }, ...(item.fingerprint ? [{ pk: `APP#${app}#ISSUEEV#${item.fingerprint}`, sk: item.sk }] : [])];
+        const keys = [
+          { pk: item.pk, sk: item.sk },
+          ...(item.fingerprint ? [{ pk: `APP#${app}#ISSUEEV#${item.fingerprint}`, sk: item.sk }] : []),
+          ...(item.sessionId ? [{ pk: `APP#${app}#SESSEV#${item.sessionId}`, sk: item.sk }] : []),
+        ];
         await Promise.all(
           keys.map((Key) =>
             this.doc
@@ -336,16 +341,24 @@ export class DynamoStore implements Store {
     return items.map((i) => clean(i as unknown as RollupRow));
   }
   async listSessionEvents(app: string, sessionId: string, { limit = 500 } = {}) {
-    const out = await this.doc.send(
-      new QueryCommand({
-        TableName: this.table,
-        KeyConditionExpression: "pk = :pk",
-        ExpressionAttributeValues: { ":pk": `APP#${app}#SESSEV#${sessionId}` },
-        ScanIndexForward: true,
-        Limit: limit,
-      }),
-    );
-    return (out.Items ?? []).map((i) => clean(i as StoredEvent));
+    // Newest first, a page at a time: a query stops at 1 MB, well short of 500 events with trails.
+    const items: Record<string, unknown>[] = [];
+    let ExclusiveStartKey: Record<string, unknown> | undefined;
+    do {
+      const out = await this.doc.send(
+        new QueryCommand({
+          TableName: this.table,
+          KeyConditionExpression: "pk = :pk",
+          ExpressionAttributeValues: { ":pk": `APP#${app}#SESSEV#${sessionId}` },
+          ScanIndexForward: false,
+          Limit: limit - items.length,
+          ExclusiveStartKey,
+        }),
+      );
+      items.push(...(out.Items ?? []));
+      ExclusiveStartKey = out.LastEvaluatedKey;
+    } while (ExclusiveStartKey && items.length < limit);
+    return items.map((i) => clean(i as unknown as StoredEvent)).reverse();
   }
 
   async listIssueEvents(app: string, fp: string, { limit = 50 } = {}) {

@@ -145,8 +145,9 @@ export interface ReadStore {
   getRollups(app: string, dimension: RollupDimension, fromDay: string, toDay: string): Promise<RollupRow[]>;
   listIssueEvents(app: string, fingerprint: string, opts?: { limit?: number }): Promise<StoredEvent[]>;
   /**
-   * One session's stored events (errors and custom events), oldest first. Firestore needs the
-   * sessionId + ts index; DynamoDB only finds events written since it started keeping them by session.
+   * One session's newest stored events (errors and custom events), up to `limit`, oldest first.
+   * Firestore needs the sessionId + ts index; DynamoDB only finds events written since it started
+   * keeping them by session.
    */
   listSessionEvents(app: string, sessionId: string, opts?: { limit?: number }): Promise<StoredEvent[]>;
 }

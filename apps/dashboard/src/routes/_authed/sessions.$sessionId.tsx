@@ -1,6 +1,6 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { CopyButton } from "~/components/copy-button";
-import { CrumbBody, ICON, clock, joined } from "~/components/timeline";
+import { CrumbBody, ICON, clock, joined, roundedSpan } from "~/components/timeline";
 import { Card } from "~/components/ui";
 import { getSessionDetail } from "~/server/fns";
 import type { SessionDetail, SessionRow, Source } from "~/server/session";
@@ -29,9 +29,7 @@ function SessionPage() {
       <main className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
         <h1 className="text-xl font-semibold">This session can't be read yet</h1>
         <p className="mt-2 text-sm text-muted">
-          {missingIndex
-            ? "Firestore needs deBug's new index on events (sessionId, ts). Deploy it with: firebase deploy --only firestore:indexes, using deBug's firestore.indexes.json. It takes a few minutes to build."
-            : "No events found for this session."}
+          {missingIndex && "Firestore needs deBug's new index on events (sessionId, ts). Deploy it with: firebase deploy --only firestore:indexes, using deBug's firestore.indexes.json. It takes a few minutes to build."}
         </p>
       </main>
     );
@@ -52,7 +50,7 @@ function SessionPage() {
 
       <section aria-label="Device and app" className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border border-line bg-panel px-4 py-3 text-sm">
         <span><span className="text-muted">Device </span>{joined([s.context.device.brand, s.context.device.model]) ?? "—"}</span>
-        <span><span className="text-muted">OS </span>{joined([s.context.os.name, s.context.os.version])}</span>
+        <span><span className="text-muted">OS </span>{joined([s.context.os.name, s.context.os.version]) ?? "—"}</span>
         <span><span className="text-muted">App </span>{joined([s.context.app.version, s.context.app.build && `(${s.context.app.build})`]) ?? "—"}</span>
         <span>
           <span className="text-muted">Errors </span>
@@ -75,9 +73,9 @@ function SessionPage() {
 
       <Card title="Timeline" subtitle="Screens, taps, API calls, flow steps and errors in this session, in order. Times are from the device, from the session's start.">
         <ol className="space-y-1.5">
-          {s.rows.map((r, i) => <Row key={i} row={r} app={s.app} start={s.start} />)}
+          {s.rows.map((r, i) => <Row key={r.kind === "crumb" ? `c${i}` : r.eventId} row={r} app={s.app} start={s.start} />)}
         </ol>
-        {s.truncated && <p className="mt-3 text-xs text-muted">Showing the first 500 events of this session.</p>}
+        {s.truncated && <p className="mt-3 text-xs text-muted">Showing the newest {s.read} events of this session; older ones are left out.</p>}
         <p className="mt-3 text-xs text-muted">Screens, taps and API calls come from the trail each error carries, so what happened after the last error isn't shown, and the trail before an error goes back as far as the SDK's breadcrumb limit.</p>
       </Card>
     </main>
@@ -141,15 +139,15 @@ function SourceLink({ source, app }: { source?: Source; app: string }) {
   );
 }
 
-/** "+1:05" from the session's start; the first row is "0:00". */
+/** "+1:05" from the session's start; the first row is "+0:00". */
 function since(ts: string, start: string) {
   const s = Math.max(0, Math.round((Date.parse(ts) - Date.parse(start)) / 1000));
   return s >= 3600 ? `+${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}` : `+${Math.floor(s / 60)}:${pad(s % 60)}`;
 }
 
 function duration(start: string, end: string) {
-  const s = Math.max(0, Math.round((Date.parse(end) - Date.parse(start)) / 1000));
-  return s < 60 ? `${s} s` : s < 3600 ? `${Math.round(s / 60)} min` : `${(s / 3600).toFixed(1)} h`;
+  const s = Math.max(0, (Date.parse(end) - Date.parse(start)) / 1000);
+  return s < 0.05 ? "0 s" : roundedSpan(s);
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");

@@ -27,8 +27,10 @@ export interface SessionDetail {
   /** Errors, of them caught by the app, and custom events shown. */
   counts: { errors: number; handled: number; events: number };
   rows: SessionRow[];
-  /** True when the session had more stored events than one page reads. */
+  /** True when the session had more stored events than one page reads: the oldest are left out. */
   truncated: boolean;
+  /** How many stored events the timeline is built from. */
+  read: number;
 }
 
 /** A stored error with a detail page. Breadcrumbs and flow events link to the first error whose trail holds them. */
@@ -64,21 +66,38 @@ export function describeEvent(name: string, outcome?: string, props?: Record<str
 /**
  * Each breadcrumb once: errors in the same session carry overlapping trails. Given the events
  * oldest first, each breadcrumb's source is the earliest error that carried it, the one it led to.
+ *
+ * When the SDK merges a repeat it moves the breadcrumb's time to the latest repeat, so a later
+ * trail can hold the same breadcrumb with a newer time and a higher count. Nothing else was
+ * recorded between it and the breadcrumb before it, so an identical one in that window is the
+ * same run: keep the copy with the highest count.
  */
 export function uniqueCrumbs(events: readonly StoredEvent[]): CarriedCrumb[] {
-  const seen = new Map<string, CarriedCrumb>();
+  const out: CarriedCrumb[] = [];
+  const exact = new Map<string, CarriedCrumb>();
+  const count = (b: Breadcrumb) => Number(b.data?.repeated ?? 1);
   for (const e of events) {
     if (e.event.type !== "error") continue;
     const source = e.fingerprint ? { eventId: e.event.id, fingerprint: e.fingerprint } : undefined;
+    let after = -Infinity;
     for (const b of e.event.breadcrumbs ?? []) {
-      const key = `${b.ts}|${b.category}|${b.message}`;
-      const had = seen.get(key);
-      if (!had) seen.set(key, { crumb: b, source });
-      // Merged repeats grow between errors: keep the copy with the highest count.
-      else if (Number(b.data?.repeated ?? 1) > Number(had.crumb.data?.repeated ?? 1)) had.crumb = b;
+      const t = Date.parse(b.ts);
+      const same = (c: CarriedCrumb) => c.crumb.category === b.category && c.crumb.message === b.message && c.crumb.level === b.level;
+      const had =
+        exact.get(`${b.ts}|${b.category}|${b.message}`) ??
+        (count(b) > 1 ? out.find((c) => same(c) && Date.parse(c.crumb.ts) > after && Date.parse(c.crumb.ts) <= t) : undefined);
+      if (!had) {
+        const c = { crumb: b, source };
+        out.push(c);
+        exact.set(`${b.ts}|${b.category}|${b.message}`, c);
+      } else if (count(b) > count(had.crumb)) {
+        had.crumb = b;
+        exact.set(`${b.ts}|${b.category}|${b.message}`, had);
+      }
+      after = t;
     }
   }
-  return [...seen.values()];
+  return out;
 }
 
 /** How far apart a custom event and its own breadcrumb, or an api.failed event and its call, can be. */
@@ -105,7 +124,8 @@ export async function buildSessionDetail(store: ReadStore, app: string, sessionI
   ]);
   if (!events.length) return null;
   const truncated = events.length > SESSION_EVENT_LIMIT;
-  const page = events.slice(0, SESSION_EVENT_LIMIT);
+  // The store gives the newest, oldest first: drop the oldest, keep the end (often the crash).
+  const page = events.slice(-SESSION_EVENT_LIMIT);
   const hosts = settings?.hosts ?? [];
 
   const carried = withoutSdkTwinsCarried(uniqueCrumbs(page));
@@ -156,6 +176,7 @@ export async function buildSessionDetail(store: ReadStore, app: string, sessionI
     counts: { errors, handled, events: sorted.filter((r) => r.kind === "event").length },
     rows: sorted,
     truncated,
+    read: page.length,
   };
 }
 

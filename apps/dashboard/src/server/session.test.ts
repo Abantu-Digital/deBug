@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MemoryStore } from "@debugkit/adapters/memory";
 import { ingest } from "@debugkit/ingest";
-import { buildSessionDetail, describeEvent, uniqueCrumbs } from "./session";
+import { buildSessionDetail, describeEvent, SESSION_EVENT_LIMIT, uniqueCrumbs } from "./session";
 
 const at = (s: number) => new Date(Date.parse("2026-11-16T09:00:00.000Z") + s * 1000).toISOString();
 const crumbs = {
@@ -74,6 +74,31 @@ describe("session timeline", () => {
     const b = { ts: at(1), category: "network" as const, message: "GET /x → failed", level: "error" as const };
     const ev = (n: number) => ({ event: { type: "error", breadcrumbs: [{ ...b, data: { repeated: n } }] } }) as never;
     expect(uniqueCrumbs([ev(2), ev(5), ev(3)]).map((c) => c.crumb.data?.repeated)).toEqual([5]);
+  });
+
+  it("treats a merged repeat whose time moved on as the same breadcrumb", () => {
+    const before = { ts: at(1), category: "navigation" as const, message: "Dashboard" };
+    const rep = (ts: string, n?: number) => ({ ts, category: "network" as const, message: "GET /x → failed", level: "error" as const, ...(n ? { data: { repeated: n } } : {}) });
+    const err = (id: string, crumbs: unknown[]) => ({ fingerprint: "fp", event: { type: "error", id, breadcrumbs: crumbs } }) as never;
+    // The first error saw it once; by the second the SDK had merged two more repeats into it.
+    const out = uniqueCrumbs([err("e1", [before, rep(at(2))]), err("e2", [before, rep(at(7), 3)])]);
+    expect(out.map((c) => [c.crumb.message, c.crumb.data?.repeated, c.source?.eventId])).toEqual([
+      ["Dashboard", undefined, "e1"],
+      ["GET /x → failed", 3, "e1"],
+    ]);
+    // A separate run after another breadcrumb is a different one.
+    const later = uniqueCrumbs([err("e1", [before, rep(at(2))]), err("e2", [before, rep(at(2)), { ...before, ts: at(4) }, rep(at(6), 2)])]);
+    expect(later.map((c) => c.crumb.ts)).toEqual([at(1), at(2), at(4), at(6)]);
+  });
+
+  it("keeps the newest events of a long session", async () => {
+    const store = new MemoryStore();
+    const context = { app: { id: "a", version: "1" }, os: { name: "android" }, runtime: { name: "react-native" }, device: {} };
+    await store.writeEvents(
+      Array.from({ length: SESSION_EVENT_LIMIT + 2 }, (_, i) => ({ app: "a", day: "2026-11-16", sessionId: "s-long", receivedAt: at(999), context, event: { type: "event", id: `evt_${String(i).padStart(9, "0")}`, ts: at(i), name: "tick" } })) as never,
+    );
+    const s = (await buildSessionDetail(store, "a", "s-long"))!;
+    expect(s).toMatchObject({ truncated: true, read: SESSION_EVENT_LIMIT, end: at(SESSION_EVENT_LIMIT + 1), start: at(2) });
   });
 
   it("describes flow events in plain words", () => {

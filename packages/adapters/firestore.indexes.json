@@ -38,7 +38,7 @@
         },
         {
           "fieldPath": "ts",
-          "order": "ASCENDING"
+          "order": "DESCENDING"
         }
       ]
     },

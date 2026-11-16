@@ -142,7 +142,7 @@ export class MemoryStore implements Store {
     return this.events
       .filter((e) => e.app === app && e.sessionId === sessionId)
       .sort((a, b) => a.event.ts.localeCompare(b.event.ts))
-      .slice(0, limit);
+      .slice(-limit);
   }
 
   async listIssueEvents(app: string, fp: string, { limit = 50 } = {}) {
