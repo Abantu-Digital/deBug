@@ -21,7 +21,8 @@ const SECRET = new Set(["DEBUG_SESSION_SECRET", "DEBUG_DASHBOARD_USERS", "DEBUG_
 
 /** The hosted dashboard's settings: the same data and login as the local one, at its public URL. */
 export function hostedEnv(local: Record<string, string>, url: string, extra: Record<string, string> = {}): { plain: Record<string, string>; secret: Record<string, string> } {
-  const plain: Record<string, string> = { DEBUG_DASHBOARD_URL: url, ...extra };
+  // The environment (--env) lets the dashboard name the exact upgrade command in its banner.
+  const plain: Record<string, string> = { DEBUG_DASHBOARD_URL: url, ...(environment.get() ? { DEBUG_ENVIRONMENT: environment.get()! } : {}), ...extra };
   const secret: Record<string, string> = {};
   for (const k of SHARED) if (local[k]) (SECRET.has(k) ? secret : plain)[k] = local[k]!;
   if (!secret.DEBUG_SESSION_SECRET || !secret.DEBUG_DASHBOARD_USERS) throw new Error(`The dashboard login isn't set up yet. Run ${cmdFor("init")} (or ${cmdFor("password")}) first.`);

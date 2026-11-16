@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { detectApp } from "./detect";
 import { DASHBOARD_CODEBASE, DASHBOARD_FUNCTION, dotenv, hostedEnv, writeDashboardSource, writeHostingConfig } from "./hosting";
 import { writeFunctionSource } from "./providers/firebase";
-import { readEnv } from "./state";
+import { environment, readEnv } from "./state";
 
 const local = {
   DEBUG_STORE: "firestore",
@@ -31,6 +31,17 @@ describe("hosted dashboard settings", () => {
 
   it("refuses to host without a login", () => {
     expect(() => hostedEnv({ DEBUG_STORE: "firestore" }, "https://x")).toThrow(/login/);
+  });
+
+  it("tells the hosted dashboard its environment, only when there is one", () => {
+    const local = { DEBUG_STORE: "firestore", DEBUG_SESSION_SECRET: "s", DEBUG_DASHBOARD_USERS: "u" };
+    expect(hostedEnv(local, "https://x").plain.DEBUG_ENVIRONMENT).toBeUndefined();
+    environment.set("preview");
+    try {
+      expect(hostedEnv(local, "https://x").plain.DEBUG_ENVIRONMENT).toBe("preview");
+    } finally {
+      environment.set(undefined);
+    }
   });
 
   it("quotes values so a = or , in a password hash survives", () => {
