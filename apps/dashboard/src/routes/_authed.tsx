@@ -22,6 +22,7 @@ function Layout() {
             <Link to="/" search={{}} className="shrink-0"><Logo /></Link>
             <nav className="flex items-center gap-3 text-sm" aria-label="Main">
               <Link to="/" search={{}} className="text-muted hover:text-ink" activeProps={{ className: "font-medium text-ink" }} activeOptions={{ exact: true }}>Overview</Link>
+              <Link to="/endpoints" search={{}} className="text-muted hover:text-ink" activeProps={{ className: "font-medium text-ink" }}>Endpoints</Link>
               <Link to="/customers" search={{}} className="text-muted hover:text-ink" activeProps={{ className: "font-medium text-ink" }}>Customers</Link>
               <Link to="/settings" search={{}} className="text-muted hover:text-ink" activeProps={{ className: "font-medium text-ink" }}>Settings</Link>
               <Link to="/team" className="text-muted hover:text-ink" activeProps={{ className: "font-medium text-ink" }}>Team</Link>

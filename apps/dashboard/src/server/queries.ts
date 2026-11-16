@@ -598,6 +598,13 @@ function buildSteps(rows: RollupRow[]): StepRow[] {
 }
 
 function buildTimings(requestRows: RollupRow[], latencyRows: RollupRow[], hosts: readonly HostName[] = []): EndpointTiming[] {
+  return endpointTimings(requestRows, latencyRows, hosts)
+    .sort((a, b) => b.requests - a.requests)
+    .slice(0, 10);
+}
+
+/** Requests, failures and p50/p95 per endpoint ("<METHOD> <url>"), from the SDK's per-minute request summaries. */
+export function endpointTimings(requestRows: readonly RollupRow[], latencyRows: readonly RollupRow[], hosts: readonly HostName[] = []): EndpointTiming[] {
   const totals = new Map<string, { requests: number; failed: number }>();
   for (const r of requestRows) {
     const t = totals.get(r.key) ?? { requests: 0, failed: 0 };
@@ -618,9 +625,7 @@ function buildTimings(requestRows: RollupRow[], latencyRows: RollupRow[], hosts:
     .map(([endpoint, t]) => {
       const b = hist.get(endpoint) ?? [];
       return { endpoint, label: endpointLabel(endpoint, hosts), requests: t.requests, failed: t.failed, errorRate: t.requests ? t.failed / t.requests : 0, p50: percentileMs(b, 0.5), p95: percentileMs(b, 0.95) };
-    })
-    .sort((a, b) => b.requests - a.requests)
-    .slice(0, 10);
+    });
 }
 
 /**

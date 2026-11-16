@@ -83,7 +83,7 @@ const API_KEYS = new Set([
 ]);
 
 /** Outcomes that mean the call did what it should. Anything else the app reports (unreachable, sessionExpired) is a failure. */
-const OK_OUTCOMES = new Set(["answered", "cached", "cancelled", "canceled", "success", "ok"]);
+const OK_OUTCOMES = new Set(["answered", "cached", "cancelled", "canceled", "aborted", "success", "ok"]);
 
 /** The SDK's own network breadcrumb: "POST api.x.com/v1/pay → 503 (120ms)", or "→ failed". */
 const SDK_NETWORK = /^([A-Z]+) (\S+) → (\d{3})?/;
