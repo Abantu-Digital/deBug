@@ -119,12 +119,12 @@ function culpritOf(ev: ErrorEvent, trail: readonly TimelineItem[], hosts: readon
 const NO_SOURCE_MAPS = "Not source-mapped: upload source maps for this build to see the file and line.";
 
 /** "08:31:44 UTC" for the logs, which are rarely in the phone's timezone. */
-function utcTime(ts: string): string {
+export function utcTime(ts: string): string {
   const t = new Date(ts);
   return Number.isNaN(t.getTime()) ? ts : `${t.toISOString().slice(11, 19)} UTC`;
 }
 
-const callLine = (c: ApiCall, withService = true) => `${withService && c.service ? `${c.service} · ` : ""}${c.method ?? ""} ${c.path ?? ""}`.replace(/\s+/g, " ").trim();
+export const callLine = (c: ApiCall, withService = true) => `${withService && c.service ? `${c.service} · ` : ""}${c.method ?? ""} ${c.path ?? ""}`.replace(/\s+/g, " ").trim();
 
 function failingHop(ev: ErrorEvent, c: Culprit, hosts: readonly HostName[]): Hop {
   const errorLine = () => nameUrlsIn(`${ev.error.name}: ${ev.error.message}`, hosts);

@@ -1,5 +1,6 @@
 import { cleanFnName, hostNameFor, CATEGORY_INFO, CAUSE_INFO, IMPACT_INFO, OWNER_INFO, type Category, type Cause, type Classification, type HostName, type StackFrame, type StoredEvent } from "@debugkit/schema";
 import { evidenceOf, NO_EVIDENCE, type Evidence } from "@debugkit/ingest";
+import type { Finding } from "./detectors";
 
 /**
  * Two explanations for every issue, built from its labels, the evidence behind them and the
@@ -293,8 +294,12 @@ export function explain(input: ExplainInput): Explanation {
   };
 }
 
-/** The explanation as Markdown lines, without a title: for tickets and prefilled links. */
-export function explanationLines(x: Explanation): string[] {
+/**
+ * The explanation as Markdown lines, without a title: for tickets and prefilled links. Specific
+ * findings from the trail (ABA-146) come before the template's advice, which is labelled "General
+ * advice" so it isn't mistaken for specific.
+ */
+export function explanationLines(x: Explanation, findings: readonly Finding[] = []): string[] {
   return [
     "### What happened",
     x.summary,
@@ -304,12 +309,16 @@ export function explanationLines(x: Explanation): string[] {
     "",
     ...x.technical.evidence.map((l) => `- ${l}`),
     ...(x.technical.where ? ["", `**Where:** ${x.technical.where}`] : []),
+    ...(findings.length ? ["", "### What the trail shows", ...findings.map(findingLine)] : []),
     "",
-    `**Suggested fix:** ${x.technical.fix}`,
+    `**General advice:** ${x.technical.fix}`,
   ];
 }
 
+/** "- Why. Fix. (2 of 2 occurrences)" */
+export const findingLine = (f: Finding) => `- ${f.why} ${f.fix}${f.of > 1 ? ` (${f.seen} of ${f.of} occurrences)` : ""}`;
+
 /** The explanation as Markdown, for pasting into a Jira or Linear ticket by hand. */
-export function explanationMarkdown(title: string, x: Explanation, link?: string): string {
-  return [`## ${title}`, ...(link ? ["", `deBug: ${link}`] : []), "", ...explanationLines(x)].join("\n");
+export function explanationMarkdown(title: string, x: Explanation, link?: string, findings: readonly Finding[] = []): string {
+  return [`## ${title}`, ...(link ? ["", `deBug: ${link}`] : []), "", ...explanationLines(x, findings)].join("\n");
 }

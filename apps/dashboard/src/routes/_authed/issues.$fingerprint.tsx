@@ -80,11 +80,32 @@ function IssuePage() {
               </p>
             )}
             <p className="mt-3 text-sm">
-              <span className="font-medium">Suggested fix: </span>
+              <span className="font-medium">General advice: </span>
               {plain(issue.explanation.technical.fix)}
             </p>
           </Card>
         </div>
+      )}
+
+      {d.findings.length > 0 && (
+        <Card title="What the trail shows" subtitle="Patterns deBug found in what the customers did before the error, with what to do about each.">
+          <ol className="space-y-3">
+            {d.findings.map((f) => (
+              <li key={f.id} className="text-sm">
+                <p className="font-medium">{f.why}</p>
+                <p className="mt-0.5">{f.fix}</p>
+                <details className="mt-1 text-xs text-muted">
+                  <summary className="cursor-pointer hover:text-ink">
+                    {f.of > 1 ? `In ${f.seen} of ${f.of} recent occurrences · ` : ""}what it read
+                  </summary>
+                  <ul className="mt-1 space-y-0.5 font-mono">
+                    {f.evidence.map((e, i) => <li key={i} className="break-words">{e}</li>)}
+                  </ul>
+                </details>
+              </li>
+            ))}
+          </ol>
+        </Card>
       )}
 
       {d.hints.length > 0 && (
