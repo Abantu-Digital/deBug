@@ -49,6 +49,7 @@ and whether it succeeded.
 | **Failed requests** (5xx, timeouts, network failures) as errors, every request as a breadcrumb | fetch, XHR | fetch, XHR (axios too) | fetch, `node:http` (axios, SDKs), plus 5xx your server sends |
 | **Sessions**: crash-free and error-free rates per release | one per page load | new session after 30 min in the background | one per process |
 | Navigation breadcrumbs | any router (History API) | add `useDebugExpoRouter` or `trackReactNavigation` | |
+| Tap breadcrumbs | clicks, by label | wrap the root in `<DebugTouchBoundary>` | |
 | Clicks on buttons and links, by their label | ✓ | | |
 | `console.warn` / `console.error` as breadcrumbs | ✓ | ✓ | off by default |
 | Foreground/background, online/offline | ✓ | foreground/background | |
@@ -220,6 +221,15 @@ export default function RootLayout() {
   );
 }
 ```
+
+Wrap the root in `<DebugTouchBoundary>` (from `@debugkit/sdk/react-native` or `/expo`) for taps
+in the trail: `<DebugTouchBoundary><Stack /></DebugTouchBoundary>`. Each short tap is recorded as
+`Tapped "Buy now"`, named by the nearest `accessibilityLabel` or `testID` at or above what was
+touched, with the screen it was on. Scrolls, drags and long presses aren't taps, text input values
+are never read, and phone numbers and emails in labels are masked. The boundary never takes the
+touch, so gestures behave as before; taps on react-native-gesture-handler buttons, which cancel the
+JS touch, count too. Options: `ignoreTestIDs`, `labelFrom: "testID"` to prefer testIDs.
+`deBug.screen` is the screen of the last navigation breadcrumb.
 
 `useDebugExpoRouter()` never throws into your navigation. `deBug.close()` (say, from a remote
 kill switch) sends what is queued and then records and sends nothing, not even errors, until the

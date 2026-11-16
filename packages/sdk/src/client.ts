@@ -257,6 +257,11 @@ export class DebugClient {
     }
   }
 
+  /** The screen the app is on, from the last navigation breadcrumb. */
+  get screen(): string | undefined {
+    return this.lastNav;
+  }
+
   get initialized() {
     return this.ready;
   }
