@@ -1,5 +1,6 @@
 import { handleAdmin } from "./admin";
 import { CORS_HEADERS, ingest, type IngestOptions } from "./index";
+import { INGEST_VERSION, VERSION_HEADER } from "./version";
 
 /**
  * Express-style handler for Firebase Cloud Functions (v2):
@@ -21,6 +22,7 @@ export function firebaseHandler(opts: IngestOptions & { adminToken?: string }) {
     req: { method: string; path?: string; query?: Record<string, unknown>; header(name: string): string | undefined; rawBody?: Buffer; body?: unknown },
     res: { set(h: Record<string, string>): unknown; status(n: number): { json(b: unknown): void; send(b?: unknown): void } },
   ) => {
+    res.set({ [VERSION_HEADER]: INGEST_VERSION });
     const rawText = () => req.rawBody?.toString("utf8") ?? (typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {}));
     // Settings routes for the dashboard (server to server: no CORS).
     if (req.path?.startsWith("/admin")) {

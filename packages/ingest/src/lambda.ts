@@ -1,5 +1,6 @@
 import { handleAdmin } from "./admin";
 import { CORS_HEADERS, ingest, type IngestOptions } from "./index";
+import { INGEST_VERSION, VERSION_HEADER } from "./version";
 
 interface HttpEvent {
   body?: string | null;
@@ -36,10 +37,10 @@ export function lambdaHandler(opts: IngestOptions & { adminToken?: string }) {
       const body = event.isBase64Encoded ? Buffer.from(event.body ?? "", "base64").toString("utf8") : (event.body ?? "");
       try {
         const out = await handleAdmin({ method, path, query: event.queryStringParameters ?? {}, body, authorization: headers.authorization }, { store: opts.store, adminToken: opts.adminToken, retentionDays: opts.retentionDays });
-        return { statusCode: out.status, headers: { "content-type": "application/json" }, body: JSON.stringify(out.body) };
+        return { statusCode: out.status, headers: { "content-type": "application/json", [VERSION_HEADER]: INGEST_VERSION }, body: JSON.stringify(out.body) };
       } catch (err) {
         console.error("[deBug] admin request failed", err);
-        return { statusCode: 500, headers: { "content-type": "application/json" }, body: JSON.stringify({ ok: false, error: "internal" }) };
+        return { statusCode: 500, headers: { "content-type": "application/json", [VERSION_HEADER]: INGEST_VERSION }, body: JSON.stringify({ ok: false, error: "internal" }) };
       }
     }
     if (method === "OPTIONS") return { statusCode: 204, headers: CORS_HEADERS, body: "" };

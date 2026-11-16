@@ -1,18 +1,20 @@
 import { createHash } from "node:crypto";
 import { Envelope, markLibraryFrames, parseStack, releaseKey, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debugkit/schema";
-import type { IssueUpsert, UserMark, WriteStore } from "@debugkit/adapters";
+import { compareVersions, type IssueUpsert, type UserMark, type WriteStore } from "@debugkit/adapters";
 import { cachedSettings, effectiveRetention } from "./admin";
 import { sendAlerts } from "./alerts";
 import { countryOf } from "./country";
 import { classify } from "./classify";
 import { assignIncidents, incidentIssueKey, type BatchError } from "./incidents";
 import { culpritOf, fingerprint, titleOf } from "./fingerprint";
+import { INGEST_VERSION, VERSION_HEADER } from "./version";
 
 export * from "./fingerprint";
 export { classify, evidenceOf, hostOwner, NO_EVIDENCE, issueCauses, withIssueCauses, type ClassifyOptions, type Evidence, type IssueFacts } from "./classify";
 export { incidentKey, incidentIssueKey, isRequestCategory, parseIncidentIssueKey, parseIncidentKey, type IncidentKey } from "./incidents";
 export { handleAdmin, effectiveRetention, cachedSettings, type AdminOptions } from "./admin";
 export { countryOf } from "./country";
+export { INGEST_VERSION, VERSION_HEADER } from "./version";
 export { sendAlerts, SLACK_WEBHOOK } from "./alerts";
 export { teamAction, hashInviteToken, publicMember, INVITE_DAYS, type TeamResult } from "./team";
 
@@ -208,6 +210,7 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
   }
 
   await opts.store.registerApp(app);
+  await noteVersions(opts.store, app, env.sdk.version, receivedAt);
   const retentionDays = stored.length ? await effectiveRetention(opts.store, app, opts.retentionDays) : undefined;
   const [, outcome] = await Promise.all([
     stored.length ? opts.store.writeEvents(stored, { retentionDays }) : undefined,
@@ -219,6 +222,26 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
   if (outcome && (outcome.created.length || outcome.regressed.length)) await sendAlerts(app, outcome, issues, settings);
 
   return { status: 202, body: { ok: true, accepted: env.events.length } };
+}
+
+/** What this instance last recorded per app, so a steady app costs one versions write a day, not one per batch. */
+const recordedVersions = new Map<string, { sdk?: string; at: number }>();
+const VERSIONS_REFRESH_MS = 86_400_000;
+
+/**
+ * Record the app's SDK version and this ingest's, when the SDK is newer than what this instance last
+ * recorded, or a day has passed. A failure here never fails the envelope.
+ */
+async function noteVersions(store: WriteStore, app: string, sdk: string, at: string) {
+  const had = recordedVersions.get(app);
+  const now = Date.parse(at);
+  if (had && compareVersions(sdk, had.sdk) <= 0 && now - had.at < VERSIONS_REFRESH_MS) return;
+  try {
+    await store.recordVersions(app, { sdk, ingest: INGEST_VERSION, at });
+    recordedVersions.set(app, { sdk: compareVersions(sdk, had?.sdk) > 0 ? sdk : had?.sdk, at: now });
+  } catch (err) {
+    console.warn("[deBug] couldn't record versions", err);
+  }
 }
 
 /** Recently written (scope, member, day) marks, so a busy user costs one write per day, not per batch. */
@@ -242,9 +265,12 @@ async function markUsers(store: WriteStore, app: string, who: string, scopes: Se
   if (marks.length) await store.markUsers(app, marks);
 }
 
+/** On every ingest response: CORS for browser SDKs, and this ingest's version, readable from the browser too. */
 export const CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "POST, OPTIONS",
   "access-control-allow-headers": "content-type, x-debug-key",
+  "access-control-expose-headers": VERSION_HEADER,
   "access-control-max-age": "86400",
+  [VERSION_HEADER]: INGEST_VERSION,
 };
