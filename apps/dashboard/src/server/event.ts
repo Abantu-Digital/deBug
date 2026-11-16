@@ -1,6 +1,7 @@
 import type { ReadStore } from "@debugkit/adapters";
 // session.ts imports from here too; both only call each other inside functions.
 import { stepsAfter } from "./session";
+import { exchangeOf, type Exchange } from "./exchange";
 import { hostNameFor, nameUrlsIn, type Breadcrumb, type Context, type HostName, type StackFrame, type StoredEvent } from "@debugkit/schema";
 
 /**
@@ -26,6 +27,8 @@ export interface EventDetail {
   timeline: TimelineItem[];
   /** The failed request: the event's own, or the last failing API call before it. */
   request?: ApiCall;
+  /** The request and response the SDK captured on a failed call (headers, redacted bodies). */
+  exchange?: Exchange;
   /** In-app frames first, each group in stack order. */
   frames: StackFrame[];
   stack?: string;
@@ -219,6 +222,7 @@ export async function buildEventDetail(store: ReadStore, app: string, fingerprin
       .sort((a, b) => a.key.localeCompare(b.key)),
     timeline,
     request: failedRequest(ev.request, timeline, hosts),
+    exchange: exchangeOf(ev),
     frames: framesInAppFirst(ev.error.frames),
     stack: ev.error.stack,
     after: await stepsAfter(store, app, stored.sessionId, ev.ts, hosts),

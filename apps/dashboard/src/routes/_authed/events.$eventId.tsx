@@ -7,6 +7,8 @@ import { Card } from "~/components/ui";
 import { getEventDetail } from "~/server/fns";
 import { shownOf, supportSummary, ticketText, ticketTime } from "~/lib/support-summary";
 import type { ApiCall, EventDetail, TimelineItem } from "~/server/event";
+import type { Exchange, ExchangeSide } from "~/server/exchange";
+import { bodyView, curlOf, size, uncut } from "~/lib/exchange-view";
 
 export const Route = createFileRoute("/_authed/events/$eventId")({
   // The range is kept only to take it back to the issue page.
@@ -74,7 +76,7 @@ function EventPage() {
         <div className="min-w-0 space-y-5 lg:col-span-2">
           {d.request && (
             <Card title="Request" subtitle="The call that failed.">
-              <RequestPanel call={d.request} />
+              <RequestPanel call={d.request} exchange={d.exchange} />
             </Card>
           )}
           <Card title="Device and app">
@@ -221,7 +223,98 @@ function Timeline({ items, after = [], errorTs, errorText }: { items: TimelineIt
   );
 }
 
-function RequestPanel({ call }: { call: ApiCall }) {
+type RequestTab = "call" | "request" | "response";
+
+/** The failed call; with what the SDK captured, its request and response in tabs of their own. */
+function RequestPanel({ call, exchange }: { call: ApiCall; exchange?: Exchange }) {
+  const [tab, setTab] = useState<RequestTab>("call");
+  if (!exchange) return <CallFacts call={call} />;
+  const tabs: [RequestTab, string][] = [["call", "Call"], ["request", "Request"], ...(exchange.response ? ([["response", "Response"]] as [RequestTab, string][]) : [])];
+  const ids = tabs.map(([id]) => id);
+  // Arrow keys, Home and End move between tabs; Tab leaves the tab list.
+  const onKey = (e: React.KeyboardEvent) => {
+    const i = ids.indexOf(tab);
+    const next = e.key === "ArrowRight" ? ids[(i + 1) % ids.length] : e.key === "ArrowLeft" ? ids[(i - 1 + ids.length) % ids.length] : e.key === "Home" ? ids[0] : e.key === "End" ? ids[ids.length - 1] : undefined;
+    if (!next) return;
+    e.preventDefault();
+    setTab(next);
+    document.getElementById(`req-tab-${next}`)?.focus();
+  };
+  return (
+    <div>
+      <div role="tablist" aria-label="Request details" onKeyDown={onKey} className="mb-3 flex gap-1 border-b border-line">
+        {tabs.map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            id={`req-tab-${id}`}
+            aria-selected={tab === id}
+            aria-controls={`req-panel-${id}`}
+            tabIndex={tab === id ? 0 : -1}
+            onClick={() => setTab(id)}
+            className={`-mb-px border-b-2 px-2.5 py-1.5 text-sm ${tab === id ? "border-ink font-medium text-ink" : "border-transparent text-muted hover:text-ink"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {tabs.map(([id]) => (
+        <div key={id} role="tabpanel" id={`req-panel-${id}`} aria-labelledby={`req-tab-${id}`} hidden={tab !== id} tabIndex={0}>
+          {id === "call" && <CallFacts call={call} />}
+          {id === "request" && <RequestSide exchange={exchange} />}
+          {id === "response" && exchange.response && <Side side={exchange.response} first={["Status", String(exchange.response.status)]} />}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RequestSide({ exchange }: { exchange: Exchange }) {
+  const r = exchange.request;
+  const curl = curlOf(exchange);
+  const query = r.query !== undefined ? uncut(r.query) : undefined;
+  return (
+    <div className="space-y-3">
+      <Side
+        side={r}
+        first={["Call", <span className="break-all font-mono text-xs">{r.method} {r.fullUrl ?? r.url}{query?.text ? `?${query.text}` : ""}{query?.cut ? " (query cut)" : ""}</span>]}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <CopyButton text={curl.command} label="Copy as cURL" ariaLabel="Copy the request as a cURL command" />
+        <span className="text-xs text-muted">Redacted as captured: secrets show as [redacted]{curl.complete ? "" : ", and the command's first line says what to fill in"}.</span>
+      </div>
+    </div>
+  );
+}
+
+/** Headers and body of one side of the call. */
+function Side({ side, first }: { side: ExchangeSide; first: [string, ReactNode | undefined] }) {
+  const body = bodyView(side);
+  const headers = Object.entries(side.headers ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  // bodySize counts characters for text, bytes for a binary body.
+  const sized = side.bodySize === undefined ? undefined : body?.binary ? size(side.bodySize) : `${side.bodySize.toLocaleString("en")} characters`;
+  return (
+    <div className="space-y-3">
+      <Facts rows={[first, ["Body size", sized]]} />
+      <div>
+        <h3 className="mb-1.5 text-xs font-medium text-muted">Headers</h3>
+        {headers.length ? <Facts mono rows={headers} /> : <p className="text-sm text-muted">None captured.</p>}
+      </div>
+      <div>
+        <h3 className="mb-1.5 text-xs font-medium text-muted">Body{body?.json ? " (JSON)" : ""}</h3>
+        {body?.note && <p className="mb-1.5 rounded-md bg-sev-medium/10 px-2 py-1 text-xs">{body.note}</p>}
+        {body?.text ? (
+          <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-md border border-line bg-panel-2 p-2 font-mono text-[11px] leading-relaxed">{body.text}</pre>
+        ) : (
+          !body?.note && <p className="text-sm text-muted">None captured.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CallFacts({ call }: { call: ApiCall }) {
   return (
     <Facts
       rows={[
