@@ -224,6 +224,15 @@ export class FirestoreStore implements Store {
       .get();
     return snap.docs.map((d) => d.data() as RollupRow);
   }
+  async listSessionEvents(app: string, sessionId: string, { limit = 500 } = {}) {
+    // Needs the events (sessionId, ts) index in firestore.indexes.json.
+    const snap = await this.app(app).collection("events").where("sessionId", "==", sessionId).orderBy("ts", "asc").limit(limit).get();
+    return snap.docs.map((d) => {
+      const { expireAt: _e, ts: _t, ...rest } = d.data();
+      return rest as StoredEvent;
+    });
+  }
+
   async listIssueEvents(app: string, fp: string, { limit = 50 } = {}) {
     const snap = await this.app(app)
       .collection("events")

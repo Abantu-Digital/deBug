@@ -93,6 +93,8 @@ export class DynamoStore implements Store {
       const base = { ...e, ttl: ttl(e) };
       const rows = [{ pk: `APP#${e.app}#EV#${e.day}`, sk, ...base }];
       if (e.fingerprint) rows.push({ pk: `APP#${e.app}#ISSUEEV#${e.fingerprint}`, sk, ...base });
+      // By session too, for the session timeline.
+      rows.push({ pk: `APP#${e.app}#SESSEV#${e.sessionId}`, sk, ...base });
       return rows;
     });
     for (let i = 0; i < items.length; i += 25) {
@@ -333,6 +335,19 @@ export class DynamoStore implements Store {
     const items = await this.queryAll({ pk: `APP#${app}#ROLLUP#${dimension}`, between: [`${fromDay}#`, `${toDay}#￿`] });
     return items.map((i) => clean(i as unknown as RollupRow));
   }
+  async listSessionEvents(app: string, sessionId: string, { limit = 500 } = {}) {
+    const out = await this.doc.send(
+      new QueryCommand({
+        TableName: this.table,
+        KeyConditionExpression: "pk = :pk",
+        ExpressionAttributeValues: { ":pk": `APP#${app}#SESSEV#${sessionId}` },
+        ScanIndexForward: true,
+        Limit: limit,
+      }),
+    );
+    return (out.Items ?? []).map((i) => clean(i as StoredEvent));
+  }
+
   async listIssueEvents(app: string, fp: string, { limit = 50 } = {}) {
     const out = await this.doc.send(
       new QueryCommand({

@@ -138,6 +138,13 @@ export class MemoryStore implements Store {
       (r) => r.app === app && r.dimension === dimension && r.day >= fromDay && r.day <= toDay,
     );
   }
+  async listSessionEvents(app: string, sessionId: string, { limit = 500 } = {}) {
+    return this.events
+      .filter((e) => e.app === app && e.sessionId === sessionId)
+      .sort((a, b) => a.event.ts.localeCompare(b.event.ts))
+      .slice(0, limit);
+  }
+
   async listIssueEvents(app: string, fp: string, { limit = 50 } = {}) {
     return this.events
       .filter((e) => e.app === app && e.fingerprint === fp)
