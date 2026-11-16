@@ -37,10 +37,10 @@ export function lambdaHandler(opts: IngestOptions & { adminToken?: string }) {
       const body = event.isBase64Encoded ? Buffer.from(event.body ?? "", "base64").toString("utf8") : (event.body ?? "");
       try {
         const out = await handleAdmin({ method, path, query: event.queryStringParameters ?? {}, body, authorization: headers.authorization }, { store: opts.store, adminToken: opts.adminToken, retentionDays: opts.retentionDays });
-        return { statusCode: out.status, headers: { "content-type": "application/json", [VERSION_HEADER]: INGEST_VERSION }, body: JSON.stringify(out.body) };
+        return adminReply(out.status, out.body);
       } catch (err) {
         console.error("[deBug] admin request failed", err);
-        return { statusCode: 500, headers: { "content-type": "application/json", [VERSION_HEADER]: INGEST_VERSION }, body: JSON.stringify({ ok: false, error: "internal" }) };
+        return adminReply(500, { ok: false, error: "internal" });
       }
     }
     if (method === "OPTIONS") return { statusCode: 204, headers: CORS_HEADERS, body: "" };
@@ -56,6 +56,13 @@ export function lambdaHandler(opts: IngestOptions & { adminToken?: string }) {
     }
   };
 }
+
+/** Admin routes are server to server: no CORS, but the version all the same. */
+const adminReply = (statusCode: number, body: unknown) => ({
+  statusCode,
+  headers: { "content-type": "application/json", [VERSION_HEADER]: INGEST_VERSION },
+  body: JSON.stringify(body),
+});
 
 const reply = (statusCode: number, body: unknown) => ({
   statusCode,

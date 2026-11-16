@@ -92,7 +92,8 @@ export class DynamoStore implements Store {
 
   /**
    * The SDK version only moves forward: a conditional update on its sortable key (versionKey), so two
-   * ingests seeing different SDKs keep the newer. The ingest version is whoever wrote last.
+   * ingests seeing different SDKs keep the newer, and the same one again moves its seenAt on. The
+   * ingest version is whoever wrote last.
    */
   async recordVersions(app: string, seen: VersionsSeen) {
     const Key = { pk: `APP#${app}#VERSIONS`, sk: "v" };
@@ -105,7 +106,7 @@ export class DynamoStore implements Store {
               TableName: this.table,
               Key,
               UpdateExpression: "SET sdk = :v, sdkKey = :k, sdkSeenAt = :at",
-              ConditionExpression: "attribute_not_exists(sdkKey) OR sdkKey < :k",
+              ConditionExpression: "attribute_not_exists(sdkKey) OR sdkKey <= :k",
               ExpressionAttributeValues: { ":v": seen.sdk, ":k": key, ":at": seen.at },
             }),
           )

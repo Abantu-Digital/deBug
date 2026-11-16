@@ -42,10 +42,17 @@ describe("versions", () => {
 
   it("never fails an envelope because the versions couldn't be written", async () => {
     const store = new MemoryStore();
+    let tries = 0;
     store.recordVersions = async () => {
+      tries++;
       throw new Error("down");
     };
-    expect((await ingest(env("v-broken", "0.8.0", "evt_000000011"), "k", { store, keys: { k: "*" } })).status).toBe(202);
+    const at = (m: number) => () => new Date(Date.parse("2026-11-16T09:00:00.000Z") + m * 60_000);
+    expect((await ingest(env("v-broken", "0.8.0", "evt_000000011"), "k", { store, keys: { k: "*" }, now: at(0) })).status).toBe(202);
+    await ingest(env("v-broken", "0.8.0", "evt_000000012"), "k", { store, keys: { k: "*" }, now: at(5) });
+    expect(tries).toBe(1);
+    await ingest(env("v-broken", "0.8.0", "evt_000000013"), "k", { store, keys: { k: "*" }, now: at(11) });
+    expect(tries).toBe(2);
   });
 
   it("sets the header on accepted, rejected and admin responses alike", async () => {

@@ -117,7 +117,6 @@ export interface WriteStore {
    * concurrent ingests) and this ingest's version. Ingest calls it when something changed, not per envelope.
    */
   recordVersions(app: string, seen: VersionsSeen): Promise<void>;
-  getVersions(app: string): Promise<Versions>;
   /** `retentionDays` sets each event's expiry; the adapter's own default applies when it's missing. */
   writeEvents(events: StoredEvent[], opts?: { retentionDays?: number }): Promise<void>;
   upsertIssues(updates: IssueUpsert[]): Promise<UpsertOutcome | void>;

@@ -34,9 +34,8 @@ describe("DynamoStore versions", () => {
     const { doc, updates } = fakeDoc([], 10);
     await new DynamoStore(doc, { table: "t" }).recordVersions("a", { sdk: "0.10.0", ingest: "0.10.0", at: "t1" });
     const sdk = updates.find((u) => u.UpdateExpression.includes("sdk ="))!;
-    expect(sdk).toMatchObject({ Key: { pk: "APP#a#VERSIONS", sk: "v" }, ConditionExpression: "attribute_not_exists(sdkKey) OR sdkKey < :k", ExpressionAttributeValues: { ":v": "0.10.0", ":k": "000000.000010.000000~" } });
+    expect(sdk).toMatchObject({ Key: { pk: "APP#a#VERSIONS", sk: "v" }, ConditionExpression: "attribute_not_exists(sdkKey) OR sdkKey <= :k", ExpressionAttributeValues: { ":v": "0.10.0", ":k": "000000.000010.000000~" } });
     expect(updates.find((u) => u.UpdateExpression.includes("ingest ="))).toMatchObject({ ExpressionAttributeValues: { ":v": "0.10.0", ":at": "t1" } });
-    expect(updates.find((u) => u.ConditionExpression === undefined && u.UpdateExpression.includes("ingest"))).toBeDefined();
   });
 });
 

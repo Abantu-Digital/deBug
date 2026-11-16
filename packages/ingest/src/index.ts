@@ -210,13 +210,13 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
   }
 
   await opts.store.registerApp(app);
-  await noteVersions(opts.store, app, env.sdk.version, receivedAt);
   const retentionDays = stored.length ? await effectiveRetention(opts.store, app, opts.retentionDays) : undefined;
   const [, outcome] = await Promise.all([
     stored.length ? opts.store.writeEvents(stored, { retentionDays }) : undefined,
     opts.store.upsertIssues([...issues.values()]),
     opts.store.incrementRollups(rollups),
     markUsers(opts.store, app, env.user?.id ?? env.user?.anonymousId ?? env.session.id, scopes, dayOf(receivedAt)),
+    noteVersions(opts.store, app, env.sdk.version, receivedAt),
   ]);
 
   if (outcome && (outcome.created.length || outcome.regressed.length)) await sendAlerts(app, outcome, issues, settings);
@@ -224,22 +224,31 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
   return { status: 202, body: { ok: true, accepted: env.events.length } };
 }
 
-/** What this instance last recorded per app, so a steady app costs one versions write a day, not one per batch. */
-const recordedVersions = new Map<string, { sdk?: string; at: number }>();
+/**
+ * What this instance last recorded (or tried to) per store and app, so a steady app costs one
+ * versions write a day, not one per batch, and a store that's down isn't retried on every batch.
+ */
+const recordedVersions = new WeakMap<WriteStore, Map<string, { sdk?: string; at: number }>>();
 const VERSIONS_REFRESH_MS = 86_400_000;
+const VERSIONS_RETRY_MS = 600_000;
 
 /**
  * Record the app's SDK version and this ingest's, when the SDK is newer than what this instance last
- * recorded, or a day has passed. A failure here never fails the envelope.
+ * recorded, or a day has passed. A failure here never fails the envelope; it's tried again in ten minutes.
  */
 async function noteVersions(store: WriteStore, app: string, sdk: string, at: string) {
-  const had = recordedVersions.get(app);
+  let byApp = recordedVersions.get(store);
+  if (!byApp) recordedVersions.set(store, (byApp = new Map()));
+  const had = byApp.get(app);
   const now = Date.parse(at);
   if (had && compareVersions(sdk, had.sdk) <= 0 && now - had.at < VERSIONS_REFRESH_MS) return;
+  const newest = compareVersions(sdk, had?.sdk) > 0 ? sdk : had?.sdk;
   try {
     await store.recordVersions(app, { sdk, ingest: INGEST_VERSION, at });
-    recordedVersions.set(app, { sdk: compareVersions(sdk, had?.sdk) > 0 ? sdk : had?.sdk, at: now });
+    byApp.set(app, { sdk: newest, at: now });
   } catch (err) {
+    // Back off: counted as written a day ago less ten minutes, so it's tried again then.
+    byApp.set(app, { sdk: newest, at: now - VERSIONS_REFRESH_MS + VERSIONS_RETRY_MS });
     console.warn("[deBug] couldn't record versions", err);
   }
 }
