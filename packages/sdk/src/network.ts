@@ -35,6 +35,14 @@ const MAX_TEXT = 200;
 const MAX_ERRORS = 500;
 
 
+/** One `network.baseUrls` entry as a base without its trailing slash, and its name; undefined for one without a URL. */
+function toBase(b: unknown): { base: string; name?: string } | undefined {
+  const url = typeof b === "string" ? b : typeof (b as { url?: unknown })?.url === "string" ? (b as { url: string }).url : undefined;
+  if (!url) return undefined;
+  const name = typeof b === "object" && typeof (b as { name?: unknown }).name === "string" ? (b as { name: string }).name.trim() : "";
+  return { base: url.replace(/\/+$/, ""), name: name || undefined };
+}
+
 /**
  * The longest base the URL starts with, ending on a path-segment boundary. Scheme and host
  * compare without case, as URLs do.
@@ -42,9 +50,8 @@ const MAX_ERRORS = 500;
 function findBase(url: string, baseUrls: readonly BaseUrl[]): { base: string; name?: string } | undefined {
   const lower = url.toLowerCase();
   return baseUrls
-    .map((b) => (typeof b === "string" ? { base: b, name: undefined } : { base: b?.url ?? "", name: b?.name?.trim() || undefined }))
-    .map((b) => ({ ...b, base: b.base.replace(/\/+$/, "") }))
-    .filter(({ base }) => base && lower.startsWith(base.toLowerCase()) && /^(?:[/?#]|$)/.test(url.slice(base.length)))
+    .map(toBase)
+    .filter((b): b is { base: string; name?: string } => !!b?.base && lower.startsWith(b.base.toLowerCase()) && /^(?:[/?#]|$)/.test(url.slice(b.base.length)))
     .sort((a, b) => b.base.length - a.base.length)[0];
 }
 

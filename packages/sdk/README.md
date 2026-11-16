@@ -107,7 +107,9 @@ was no answer), `durationMs` and `outcome` (`answered`, `unreachable` or `aborte
   any other host are named by the host, and their breadcrumb keeps the full URL.
 - **Named services.** When each backend has its own base, give it the name people know it by:
   `{ url: "https://balances.example.com/v1", name: "Balances" }`. Every call under it is service
-  `Balances`, path `/cellc/getBalances`, and the dashboard groups and titles it that way. Named and
+  `Balances`, path `/cellc/getBalances`: the trail, the failed request and the Endpoints page name
+  it that way. Issue titles name hosts from the dashboard's Settings → Host names, so name each
+  host there too. Named and
   plain bases mix in one list, and the longest match still wins.
 
   ```ts

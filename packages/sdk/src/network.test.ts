@@ -55,7 +55,7 @@ describe("nameRequest", () => {
     });
 
     it("never throws on a malformed entry", () => {
-      const bases = [null, { name: "No URL" }, "https://bal.example.com/ppd/api"] as never;
+      const bases = [null, 7, { name: "No URL" }, { url: 123, name: "Bad" }, { url: "https://bal.example.com/ppd/api", name: 5 }] as never;
       expect(nameRequest("https://bal.example.com/ppd/api/cellc/x", bases).service).toBe("cellc");
     });
   });
