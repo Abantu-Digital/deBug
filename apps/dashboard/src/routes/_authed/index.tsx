@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { FlowChart, TrendChart } from "~/components/charts";
-import { Card, DataTable, IssueLabels, LabelBadges, SeverityBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
+import { Card, DataTable, IssueLabels, LabelBadges, LevelBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
 import {
   filterIssues,
   isStatusFilter,
@@ -369,7 +369,7 @@ function Overview() {
             <tbody>
               {issues.map((i) => (
                 <tr key={i.fingerprint} className="border-b border-line last:border-0 hover:bg-panel-2">
-                  <td className="px-4 py-2.5 sm:px-2"><SeverityBadge severity={i.severity} /></td>
+                  <td className="px-4 py-2.5 sm:px-2"><LevelBadge level={i.severity} /></td>
                   <td className="max-w-[420px] px-2 py-2.5">
                     <Link to="/issues/$fingerprint" params={{ fingerprint: i.fingerprint }} search={issueSearch} className="block truncate font-medium hover:text-accent">
                       {i.title}

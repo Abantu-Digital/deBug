@@ -12,18 +12,88 @@ export function Logo() {
   );
 }
 
-const SEV_STYLE: Record<Severity, string> = {
-  critical: "bg-sev-critical text-white",
-  high: "bg-sev-high text-white",
-  medium: "bg-sev-medium text-black",
-  low: "bg-panel-2 text-muted border border-line",
+/* ---------- Issue levels (ABA-139) ----------
+   Critical red, High orange, Medium yellow, Low grey. Green is for healthy services and
+   journeys only, never for an issue. Colour never works alone: the level is always in words. */
+
+export const LEVEL_NAME: Record<Severity, string> = { critical: "Critical", high: "High", medium: "Medium", low: "Low" };
+
+type Tone = Severity | "healthy";
+
+/** Full class names (not built from parts) so Tailwind keeps them. */
+const SURFACE: Record<Tone, string> = {
+  critical: "bg-level-critical-bg text-level-critical-fg border-level-critical-edge",
+  high: "bg-level-high-bg text-level-high-fg border-level-high-edge",
+  medium: "bg-level-medium-bg text-level-medium-fg border-level-medium-edge",
+  low: "bg-level-low-bg text-level-low-fg border-level-low-edge",
+  healthy: "bg-level-healthy-bg text-level-healthy-fg border-level-healthy-edge",
 };
 
-export function SeverityBadge({ severity }: { severity: Severity }) {
+const EDGE: Record<Tone, string> = {
+  critical: "border-level-critical-edge",
+  high: "border-level-high-edge",
+  medium: "border-level-medium-edge",
+  low: "border-level-low-edge",
+  healthy: "border-level-healthy-edge",
+};
+
+const TEXT: Record<Tone, string> = {
+  critical: "text-level-critical-fg",
+  high: "text-level-high-fg",
+  medium: "text-level-medium-fg",
+  low: "text-level-low-fg",
+  healthy: "text-level-healthy-fg",
+};
+
+/** An issue's level, in words and colour. */
+export function LevelBadge({ level }: { level: Severity }) {
   return (
-    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${SEV_STYLE[severity]}`}>
-      {severity}
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${SURFACE[level]}`}>
+      {LEVEL_NAME[level]}
     </span>
+  );
+}
+
+/**
+ * One level's box on the health screen: its count and who it affects. Coloured only when
+ * something is open at that level. Wrap it in a Link to open the list filtered to the level.
+ */
+export function LevelBox({ level, count, sub, hint }: { level: Severity; count: number; sub?: ReactNode; hint?: ReactNode }) {
+  const open = count > 0;
+  return (
+    <div className={`flex h-full flex-col gap-1.5 rounded-xl border p-4 ${open ? SURFACE[level] : "border-line bg-panel text-muted"}`}>
+      <span className="text-xs font-bold uppercase tracking-wide">{LEVEL_NAME[level]}</span>
+      <span className="tabular text-4xl font-semibold leading-none">{count}</span>
+      <span className="text-xs">{sub ?? (open ? null : "None open")}</span>
+      {open && hint && <span className="text-[11px] opacity-80">{hint}</span>}
+    </div>
+  );
+}
+
+/**
+ * A row in a list ranked by level: a coloured block with the level in words (and, say, the
+ * customers affected), then the row's content. The block sits on top at phone width.
+ */
+export function LevelRow({ level, aside, children }: { level: Severity; aside?: ReactNode; children: ReactNode }) {
+  return (
+    <div className={`flex flex-col overflow-hidden rounded-xl border bg-panel sm:flex-row ${EDGE[level]}`}>
+      <div className={`flex shrink-0 flex-row items-center justify-between gap-2 px-3 py-2 sm:w-28 sm:flex-col sm:justify-center sm:py-3 sm:text-center ${SURFACE[level]}`}>
+        <strong className="text-sm">{LEVEL_NAME[level]}</strong>
+        {aside && <span className="text-xs">{aside}</span>}
+      </div>
+      <div className="min-w-0 flex-1 p-3 sm:p-4">{children}</div>
+    </div>
+  );
+}
+
+/** A service or journey, coloured by its worst open level; green when nothing is open. */
+export function HealthTile({ name, level, state }: { name: string; level: Severity | null; state: ReactNode }) {
+  const tone: Tone = level ?? "healthy";
+  return (
+    <div className={`flex h-full flex-col gap-1 rounded-xl border bg-panel px-3 py-2.5 ${EDGE[tone]}`}>
+      <strong className="text-sm">{name}</strong>
+      <span className={`text-xs ${TEXT[tone]}`}>{state}</span>
+    </div>
   );
 }
 

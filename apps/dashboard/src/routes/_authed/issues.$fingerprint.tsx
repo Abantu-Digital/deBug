@@ -2,7 +2,7 @@ import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-rout
 import { useState } from "react";
 import { HourlyChart, TrendChart } from "~/components/charts";
 import { RangePicker, rangeSearch, RetentionNote, type RangeSearch } from "~/components/range-picker";
-import { Card, DataTable, IssueLabels, SeverityBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
+import { Card, DataTable, IssueLabels, LevelBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
 import { CopyButton } from "~/components/copy-button";
 import { getIssueDetail, updateIssueStatus } from "~/server/fns";
 
@@ -36,7 +36,7 @@ function IssuePage() {
 
       <div>
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-          <SeverityBadge severity={issue.severity} />
+          <LevelBadge level={issue.severity} />
           {issue.flow && <span className="rounded bg-panel-2 px-1.5 py-0.5 font-mono">{issue.flow}</span>}
           <span>First seen {timeAgo(issue.firstSeen)} · last seen {timeAgo(issue.lastSeen)}</span>
         </div>
