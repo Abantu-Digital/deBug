@@ -222,7 +222,7 @@ export const SUMMARY_FIELDS = {
   "totals.criticalIssues": "Issues whose 24h occurrence count meets the critical threshold.",
   "flows[]": "Parts of the app as tagged by the developer (e.g. auth.login). Sorted by severity, then errors24h, then errorsRange.",
   "flows[].failureRate": "failures/(failures+successes) in the range from events logged with an outcome. null when the app logs no outcomes for that flow.",
-  "issues[]": "Grouped errors seen in the range. Sorted by severity, then count24h, then countRange.",
+  "issues[]": "Grouped errors seen in the range. Sorted by severity, then count24h, then countRange. Narrow with ?status=open|resolved|ignored|all (default all), ?flow=, ?category=, ?owner= and ?impact= (ids from breakdowns); an unknown value is a 400. _filter echoes what was applied.",
   "issues[].severity": "Derived from count24h using thresholds critical/high/medium.",
   "issues[].title": "Error name and message, with hosts named in Settings shown by their names.",
   "issues[].culprit": "Top in-app stack frame: function (file:line).",

@@ -1,17 +1,33 @@
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { FlowChart, TrendChart } from "~/components/charts";
-import { Card, DataTable, IssueLabels, SeverityBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
+import { Card, DataTable, IssueLabels, LabelBadges, SeverityBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
+import {
+  filterIssues,
+  isStatusFilter,
+  labelCounts,
+  labelFilterOf,
+  LABEL_FILTER_KEYS,
+  LABEL_FILTERS,
+  NO_LABEL_FILTERS,
+  STATUS_FILTERS,
+  type IssueFilter,
+  type LabelFilterKey,
+  type StatusFilter,
+} from "~/lib/issue-filter";
 import { RangePicker, rangeSearch, RetentionNote, type RangeSearch } from "~/components/range-picker";
 import { getOverview } from "~/server/fns";
 
-type Search = { app?: string; flow?: string; status?: string } & RangeSearch;
+type Search = { app?: string; flow?: string; status?: StatusFilter } & Pick<IssueFilter, LabelFilterKey> & RangeSearch;
+
+const labelName = (k: LabelFilterKey, id: string) => LABEL_FILTERS[k].info[id]?.name ?? id;
 
 export const Route = createFileRoute("/_authed/")({
   validateSearch: (s: Record<string, unknown>): Search => ({
     app: typeof s.app === "string" ? s.app : undefined,
     flow: typeof s.flow === "string" ? s.flow : undefined,
-    status: typeof s.status === "string" ? s.status : undefined,
+    status: isStatusFilter(s.status) ? s.status : undefined,
+    ...labelFilterOf((k) => s[k]),
     ...rangeSearch(s),
   }),
   loaderDeps: ({ search }) => ({ app: search.app, range: search.range, from: search.from, to: search.to }),
@@ -32,11 +48,18 @@ function Overview() {
   /** Keep the app and range when opening an issue. */
   const issueSearch = { app: summary.app, range: range.preset === "14d" ? undefined : range.preset, ...(range.preset === "custom" ? { from: range.from, to: range.to } : {}) };
   const statusFilter = search.status ?? "open";
-  const byStatus = summary.issues.filter((i) =>
-    statusFilter === "all" ? true : statusFilter === "open" ? i.status === "open" || i.status === "regressed" : i.status === statusFilter,
-  );
-  const issues = flow ? byStatus.filter((i) => (i.flow ?? "untagged") === flow) : byStatus;
-  const countFor = (st: string) => summary.issues.filter((i) => (st === "open" ? i.status === "open" || i.status === "regressed" : i.status === st)).length;
+  const filter: IssueFilter = { status: statusFilter, flow, category: search.category, owner: search.owner, impact: search.impact };
+  const issues = filterIssues(summary.issues, filter);
+  const countFor = (st: StatusFilter) => filterIssues(summary.issues, { ...filter, status: st }).length;
+  const labelFiltered = LABEL_FILTER_KEYS.filter((k) => filter[k]);
+  const toggleLabel = (k: LabelFilterKey, v: string) => navigate({ search: (s) => ({ ...s, [k]: s[k] === v ? undefined : v }), resetScroll: false });
+  /** "Whose is it" for a label-filtered list: its issues by owner, worst first. */
+  const owners = labelFiltered.length && !filter.owner ? [...labelCounts(summary.issues, filter, "owner")].sort((a, b) => b[1] - a[1]) : [];
+  /** Issues hidden only by the status filter: a bar's errors can all belong to resolved issues. */
+  const otherStatuses = issues.length === 0 && statusFilter !== "all" ? countFor("all") : 0;
+  const issuesTitle = labelFiltered.length
+    ? `Issues: ${labelFiltered.map((k) => labelName(k, filter[k]!)).join(" · ")}${flow ? ` in ${flow}` : ""}`
+    : flow ? `Issues in ${flow}` : "Issues by severity";
   const change = totals.changePct;
 
   return (
@@ -101,7 +124,7 @@ function Overview() {
       <div className="grid gap-5 lg:grid-cols-5">
         <div className="min-w-0 lg:col-span-3">
           <Card title="Where the app is failing" subtitle={`Errors in ${range.label} by flow, coloured by worst severity. Click a bar to filter issues.`}>
-            <FlowChart data={summary.flows} onSelect={(f) => navigate({ search: (s) => ({ ...s, flow: s.flow === f ? undefined : f }) })} />
+            <FlowChart data={summary.flows} onSelect={(f) => navigate({ search: (s) => ({ ...s, flow: s.flow === f ? undefined : f }), resetScroll: false })} />
             <DataTable
               columns={["Flow", "Severity", "Errors 24h", `Errors (${span})`, "Issues", `Failure rate (${span})`]}
               rows={summary.flows.map((f) => [
@@ -254,16 +277,41 @@ function Overview() {
         </Card>
       )}
 
+      {summary.breakdowns.impact.length > 0 && (
+        <Card title="Who it hurts and whose it is" subtitle={`Errors in ${range.label}, by how badly they hurt users, who likely fixes them, and what kind of problem. Click one to filter issues.`}>
+          <div className="grid gap-5 md:grid-cols-3">
+            {LABEL_FILTER_KEYS.map((k) => (
+              <div key={k} className="min-w-0">
+                <h3 className="mb-2 text-xs font-medium text-muted">{LABEL_FILTERS[k].title}</h3>
+                <ShareBars
+                  rows={summary.breakdowns[k].map((r) => ({ key: r.key, label: labelName(k, r.key), value: r.errors }))}
+                  selected={filter[k]}
+                  onSelect={(v) => toggleLabel(k, v)}
+                />
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-xs text-muted">
+            Bars count every error in the range, as labelled when it arrived, whatever its issue's status. The list below shows each issue's labels now, including host owners set in Settings since.
+          </p>
+        </Card>
+      )}
+
       <Card
-        title={flow ? `Issues in ${flow}` : "Issues by severity"}
+        title={issuesTitle}
         subtitle={`Grouped errors seen in ${range.label}. Severity is set by occurrences in the last 24 hours.`}
         right={
           <div className="flex flex-wrap items-center justify-end gap-1 text-xs">
-            {flow && <button className="mr-2 text-accent" onClick={() => navigate({ search: (s) => ({ ...s, flow: undefined }) })}>Clear flow ×</button>}
-            {(["open", "resolved", "ignored", "all"] as const).map((st) => (
+            {flow && <button type="button" className="mr-2 text-accent" onClick={() => navigate({ search: (s) => ({ ...s, flow: undefined }), resetScroll: false })}>Clear flow ×</button>}
+            {labelFiltered.length > 0 && (
+              <button type="button" className="mr-2 text-accent" onClick={() => navigate({ search: (s) => ({ ...s, ...NO_LABEL_FILTERS }), resetScroll: false })}>Clear labels ×</button>
+            )}
+            {STATUS_FILTERS.map((st) => (
               <button
                 key={st}
-                onClick={() => navigate({ search: (s) => ({ ...s, status: st === "open" ? undefined : st }) })}
+                type="button"
+                aria-pressed={statusFilter === st}
+                onClick={() => navigate({ search: (s) => ({ ...s, status: st === "open" ? undefined : st }), resetScroll: false })}
                 className={`rounded-md border px-2 py-1 capitalize ${statusFilter === st ? "border-accent bg-accent-soft text-accent" : "border-line text-muted hover:bg-panel-2"}`}
               >
                 {st}
@@ -273,6 +321,38 @@ function Overview() {
           </div>
         }
       >
+        <div className="mb-3 flex flex-wrap gap-2">
+          {LABEL_FILTER_KEYS.map((k) => {
+            const counts = labelCounts(summary.issues, filter, k);
+            return (
+              <select
+                key={k}
+                aria-label={`Filter by ${LABEL_FILTERS[k].title.toLowerCase()}`}
+                value={filter[k] ?? ""}
+                onChange={(e) => navigate({ search: (s) => ({ ...s, [k]: e.target.value || undefined }), resetScroll: false })}
+                className={`rounded-md border bg-panel px-2 py-1 text-xs ${filter[k] ? "border-accent text-accent" : "border-line"}`}
+              >
+                <option value="">Any {LABEL_FILTERS[k].title.toLowerCase()}</option>
+                {Object.entries(LABEL_FILTERS[k].info)
+                  .filter(([id]) => counts.has(id) || filter[k] === id)
+                  .map(([id, info]) => (
+                    <option key={id} value={id}>{info.name} ({counts.get(id) ?? 0})</option>
+                  ))}
+              </select>
+            );
+          })}
+        </div>
+        {owners.length > 0 && (
+          <p className="mb-3 text-sm">
+            <span className="text-muted">Whose: </span>
+            {owners.map(([o, n], idx) => (
+              <span key={o}>
+                {idx > 0 && ", "}
+                <button type="button" className="text-accent hover:underline" onClick={() => toggleLabel("owner", o)}>{labelName("owner", o)}</button> {n}
+              </span>
+            ))}
+          </p>
+        )}
         <div className="-mx-4 overflow-x-auto sm:mx-0">
           <table className="tabular w-full min-w-[640px] text-left text-sm">
             <thead className="text-xs text-muted">
@@ -295,7 +375,7 @@ function Overview() {
                       {i.title}
                     </Link>
                     {i.culprit && <div className="truncate font-mono text-xs text-muted">{i.culprit}</div>}
-                    <IssueLabels issue={i} />
+                    <div><LabelBadges labels={i.labels} /><IssueLabels issue={i} /></div>
                   </td>
                   <td className="px-2 py-2.5 text-xs">{i.flow ?? <span className="text-muted">untagged</span>}</td>
                   <td className="px-2 py-2.5 text-right text-muted">{i.users ?? "—"}</td>
@@ -305,7 +385,14 @@ function Overview() {
                 </tr>
               ))}
               {!issues.length && (
-                <tr><td colSpan={7} className="px-2 py-6 text-center text-muted">No issues.</td></tr>
+                <tr><td colSpan={7} className="px-2 py-6 text-center text-muted">{otherStatuses > 0 ? (
+                  <>
+                    No {statusFilter} issues match.{" "}
+                    <button type="button" className="text-accent hover:underline" onClick={() => navigate({ search: (s) => ({ ...s, status: "all" }), resetScroll: false })}>
+                      Show {otherStatuses} in other statuses
+                    </button>
+                  </>
+                ) : labelFiltered.length || flow ? "No issues match these filters." : "No issues."}</td></tr>
               )}
             </tbody>
           </table>

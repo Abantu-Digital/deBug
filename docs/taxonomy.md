@@ -139,6 +139,26 @@ error when it arrives, using the Settings of that moment: marking a flow critica
 relabel earlier errors. The issue causes (`new_in_release`, `regressed`, `single_device`) are
 worked out when the dashboard reads the issue, so they're always current.
 
+## On the dashboard
+
+- **Badges:** each issue on the overview shows its impact and category as badges, and its likely
+  owner.
+- **Breakdown:** "Who it hurts and whose it is" splits the range's errors by impact, owner and
+  category, from the rollups. Click a bar to filter the issue list.
+- **Filters:** the issue list has a filter per label, next to the status and flow filters, and
+  each option shows how many issues it would leave. They combine, and a filtered list says whose
+  its issues are: clicking "Blocked" answers "what's blocking users, and whose is it?". Filters
+  live in the URL, so a filtered view can be shared.
+- **API:** `GET /api/summary` takes the same filters: `?category=`, `?owner=`, `?impact=`, plus
+  `?status=` (`open`, `resolved`, `ignored` or `all`) and `?flow=`. Unlike the page, it lists
+  every status unless `?status=` is given, as it did before filters existed. An unknown id or
+  status is a 400.
+
+The breakdown counts every error in the range, with the labels it got when it arrived, whatever
+its issue's status. The badges and filters use each issue's labels now, including host owners
+saved since (see Host names). So a bar can count errors whose issues are resolved: the list then
+offers to show the other statuses.
+
 ## Incidents
 
 Issues that fail together for the same reason are one problem. An incident is keyed by a
