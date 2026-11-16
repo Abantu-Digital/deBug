@@ -1,5 +1,32 @@
 # @debugkit/sdk
 
+## 0.8.0
+
+### Minor Changes
+
+- 15ffb48: The full request and response of a failed call. With `network.bodies: { onFailure: true }` (on by default with `initReactNative`), a failed call's error carries its method, URL with query string, headers and body, and the response's status, headers and body. Secrets are redacted on the device first: auth and cookie headers and any header named for a token, key or secret; password, PIN, one-time-code, card, token and API-key fields at any depth (including JSON cut short, JSON or forms inside a string, `user[password]` form keys and plain text); JWTs and Luhn-valid card numbers anywhere, also as JSON numbers. Each body is cut at 16 KB, binary bodies are recorded by size and type, and ingest cuts oversized bodies rather than reject the event. Uploads are now also limited by size, so queued failures with bodies never exceed ingest's 512 KB limit.
+- 8efbb16: React Native and Expo defaults: `initReactNative` now counts a 4xx response as a failure (`network.isFailure`: 400 and above) and keeps 50 breadcrumbs instead of 30. Pass `network.isFailure` or `maxBreadcrumbs` to keep the old behaviour.
+- b052b63: Named API calls and backend error details. Set `network.baseUrls` and each request's breadcrumb is named by service (the first path segment after the base, so services behind one gateway each get a name) with its path, method, status, duration and outcome. When a call fails, what the backend said in its problem-details body (`title`, `code`, `traceId`, `errors`) is added to the breadcrumb, with phone numbers and emails masked, for fetch and XHR (axios on React Native, including `arraybuffer` responses). A fetch failure is reported once its body is read, at most 3 seconds later. Error messages, and so issue grouping, are unchanged. An `isFailure` that throws now counts the call as not failed, instead of throwing inside the request's listener.
+- f1bf94b: Taps on React Native and Expo. Wrap the app's root in `<DebugTouchBoundary>` and each short tap becomes a `ui` breadcrumb, `Tapped "Buy now"`, named by the nearest `accessibilityLabel` or `testID`, with the screen it was on (`deBug.screen`). It never takes the touch responder, ignores scrolls, drags and long presses, and never reads text input values.
+
+### Patch Changes
+
+- 465fb44: React Native: the culprit is now the app's own code, not a library's. Hermes keeps function names, so known axios, React, React Native runtime and TanStack Query functions are marked as not in-app (`markLibraryFrames`, applied by `parseStack` and again at ingest for older SDKs). Hermes async names like `?anon_0_attemptApiRequest` show as `attemptApiRequest`.
+
+  Names that could just as well be an app's own (`request`, `fetchQuery`, `settle`, TanStack's `run` and `fetch`) count as library code only directly under a known library frame at the top of the stack; lower down they're left as app code.
+
+  Errors that aren't failed requests are grouped by their top in-app frame, and Hermes names are now cleaned in the grouping key too, so some of them start a new issue once after upgrading ingest. Failed requests still group by endpoint and aren't affected; their culprit updates on the next occurrence.
+
+- 62bf2f4: React Native and Expo: errors and events carry a `device.details` tag, `full` when react-native-device-info is linked and `limited` when it isn't (Expo Go, or an app not rebuilt), so a release build missing it shows on the dashboard instead of failing silently. Leave it out with `collect: { details: false }`; `deviceInfo: null` (bare React Native) sends no tag either.
+- 4aacee5: `close()` now really stops the client: after sending what is queued, errors, events, sessions and breadcrumbs are ignored until the next `init()`, so a remote kill switch that calls `close()` needs no guard of its own. `breadcrumb()`, `navigated()` and the router hooks (`useDebugExpoRouter`, `useDebugNavigation`) never throw into the app.
+- Updated dependencies [465fb44]
+- Updated dependencies [11be9b3]
+- Updated dependencies [9e9ee72]
+- Updated dependencies [15ffb48]
+- Updated dependencies [9015841]
+- Updated dependencies [ebe215d]
+  - @debugkit/schema@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes
