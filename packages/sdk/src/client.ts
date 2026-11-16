@@ -1,5 +1,5 @@
 import type { Breadcrumb, ContextInput, EnvelopeInput, EventInput, Severity } from "@debugkit/schema/core";
-import { latencyBucket, LATENCY_BUCKETS_MS, markLibraryFrames, parseStack } from "@debugkit/schema/core";
+import { latencyBucket, LATENCY_BUCKETS_MS, markLibraryFrames, MAX_BREADCRUMBS, MAX_CAPTURED_BODY, parseStack } from "@debugkit/schema/core";
 import { browserContext, mergeContext, type ContextPatch } from "./context";
 import {
   instrumentClicks,
@@ -12,6 +12,10 @@ import {
   type AutoSink,
   type RequestInfo,
 } from "./auto";
+import { nameRequest, readProblemDetails } from "./network";
+import { bodyOf, redactHeaders, redactText, type RedactOptions } from "./redact";
+
+type ErrorEventInput = Extract<EventInput, { type: "error" }>;
 
 export const SDK_NAME = "@debugkit/sdk";
 declare const __DEBUGKIT_SDK_VERSION__: string | undefined;
@@ -110,10 +114,29 @@ export interface NetworkOptions {
    * `flows: [["/v2/auth/", "auth.login"], [/\/payments\//, "checkout.payment"]]`.
    */
   flows?: [string | RegExp, string][];
-  /** Which HTTP statuses count as failures. Default: 500 and above. Network failures and timeouts always count. */
+  /**
+   * Your backends' base URLs, to name each call in the trail. The longest base a URL starts
+   * with is stripped and the first path segment left names the service:
+   * `baseUrls: ["https://api.x.com/v1"]` turns "https://api.x.com/v1/orders/42" into service
+   * "orders", path "/orders/:id". Calls to other hosts are named by their host.
+   */
+  baseUrls?: string[];
+  /** Which HTTP statuses count as failures. Default: 500 and above (400 and above with `initReactNative`). Network failures and timeouts always count. */
   isFailure?: (status: number, url: string) => boolean;
   /** Requests slower than this get a warning breadcrumb. Default 3000ms. */
   slowMs?: number;
+  /**
+   * The full request and response of a failed call: method, URL with its query string, headers
+   * and both bodies, with secrets redacted on the device (passwords, PINs, one-time codes, card
+   * details, tokens; see `redact.ts`) and each body cut to `maxChars`. Off by default; on with
+   * `initReactNative`. Successful calls never carry bodies.
+   */
+  bodies?: {
+    onFailure?: boolean;
+    /** Default 16384 (16 KB) per body. */
+    maxChars?: number;
+    redact?: RedactOptions;
+  };
 }
 
 export interface EventMeta {
@@ -123,6 +146,8 @@ export interface EventMeta {
 }
 
 const QUEUE_KEY = "@debugkit/queue";
+/** About the most of events one upload carries, leaving room for the context under ingest's 512 KB. */
+const MAX_BATCH_CHARS = 384 * 1024;
 /** One id per install, so "users affected" counts people rather than app launches. */
 const ANON_KEY = "@debugkit/anonymousId";
 
@@ -161,11 +186,15 @@ export class DebugClient {
   private backoffUntil = 0;
   private failures = 0;
   private ready = false;
+  /** Set by close(): nothing more is recorded or queued until the next init(). */
+  private closed = false;
   private handlersInstalled = false;
   private auto: Required<AutoCaptureOptions> = { errors: false, network: false, console: false, navigation: false, clicks: false, lifecycle: false, sessions: false };
   private restores: (() => void)[] = [];
   private sessionState = { errored: false, crashed: false };
   private lastNav: string | undefined;
+  /** Failures waiting for their response body (fetch), reported on close if it hasn't come. */
+  private pendingReports = new Set<() => void>();
   private limits = new Map<string, { n: number; since: number }>();
   /** fetch as it was before instrumentation, so our own uploads are never recorded. */
   private rawFetch: typeof fetch | undefined;
@@ -173,7 +202,9 @@ export class DebugClient {
   init(options: InitOptions): this {
     if (this.timer) clearInterval(this.timer);
     this.uninstrument();
-    this.opts = { flushIntervalMs: 5000, maxBatch: 50, maxBreadcrumbs: 30, ...options };
+    // An error event carries at most 50 breadcrumbs: ingest rejects a batch with more.
+    this.opts = { flushIntervalMs: 5000, maxBatch: 50, ...options, maxBreadcrumbs: Math.min(options.maxBreadcrumbs ?? 30, MAX_BREADCRUMBS) };
+    this.closed = false;
     this.globalTags = { ...options.tags };
     if (options.enabled === false) {
       // Switched off: stay inert. Handlers from an earlier init() check `ready` and do nothing.
@@ -217,9 +248,13 @@ export class DebugClient {
 
   /** Record a navigation breadcrumb ("from → to"). Repeated paths are ignored. */
   navigated(to: string) {
-    if (!to || to === this.lastNav) return;
-    this.breadcrumb("navigation", this.lastNav ? `${this.lastNav} → ${to}` : to);
-    this.lastNav = to;
+    if (this.closed || !to || to === this.lastNav) return;
+    try {
+      this.breadcrumb("navigation", this.lastNav ? `${this.lastNav} → ${to}` : to);
+      this.lastNav = String(to);
+    } catch (err) {
+      this.log("navigation breadcrumb failed", err);
+    }
   }
 
   get initialized() {
@@ -264,16 +299,29 @@ export class DebugClient {
     this.user = { ...this.user, id };
   }
 
+  /** Record a breadcrumb. Never throws; does nothing after close(). */
   breadcrumb(category: Breadcrumb["category"], message: string, data?: Record<string, string | number | boolean | null>, level: Breadcrumb["level"] = "info") {
-    const msg = message.slice(0, 500);
+    if (this.closed) return;
+    try {
+      this.addCrumb(category, message, data, level);
+    } catch (err) {
+      this.log("breadcrumb failed", err);
+    }
+  }
+
+  /** Records a breadcrumb and returns the one stored (a repeat collapses into the last). */
+  private addCrumb(category: Breadcrumb["category"], message: string, data: Record<string, string | number | boolean | null> | undefined, level: Breadcrumb["level"]): Breadcrumb {
+    const msg = String(message).slice(0, 500);
     const last = this.crumbs[this.crumbs.length - 1];
     if (last && last.category === category && last.message === msg && last.level === level) {
       last.ts = now();
       last.data = { ...data, repeated: Number(last.data?.repeated ?? 1) + 1 };
-      return;
+      return last;
     }
-    this.crumbs.push({ ts: now(), category, message: msg, data, level });
+    const crumb: Breadcrumb = { ts: now(), category, message: msg, data, level };
+    this.crumbs.push(crumb);
     if (this.crumbs.length > (this.opts?.maxBreadcrumbs ?? 30)) this.crumbs.shift();
+    return crumb;
   }
 
   /** Log an error. `flow` is the part of the app it belongs to, e.g. "auth.login". */
@@ -330,13 +378,33 @@ export class DebugClient {
     this.timingsSince = Date.now();
   }
 
+  /**
+   * How many queued events the next upload takes: at most `maxBatch`, and no more than about
+   * 384 KB of events (ingest refuses uploads over 512 KB), but always at least one.
+   */
+  private batchSize(): number {
+    let size = 0;
+    let n = 0;
+    for (const e of this.queue) {
+      if (n >= this.opts.maxBatch) break;
+      try {
+        size += JSON.stringify(e).length;
+      } catch {
+        size += 1024;
+      }
+      if (n > 0 && size > MAX_BATCH_CHARS) break;
+      n++;
+    }
+    return Math.max(1, n);
+  }
+
   async flush(): Promise<void> {
     this.queueTimings(this.closing);
     // Wait for an upload in progress, then send whatever was queued meanwhile (a crash marker, say).
     if (this.flushing) await this.flushing.catch(() => {});
     if (this.flushing) return this.flushing;
     if (!this.ready || this.queue.length === 0 || Date.now() < this.backoffUntil) return;
-    const batch = this.queue.splice(0, this.opts.maxBatch);
+    const batch = this.queue.splice(0, this.batchSize());
     this.inflight = batch;
     this.flushing = this.send(batch)
       .then(() => {
@@ -360,9 +428,17 @@ export class DebugClient {
   /** Stop the flush timer, undo automatic instrumentation and send what is queued. */
   private closing = false;
 
+  /**
+   * Sends what is queued and stops: automatic capture is removed, and errors, events, sessions
+   * and breadcrumbs are ignored until the next init(). A remote kill switch can rely on it.
+   */
   close() {
     if (this.timer) clearInterval(this.timer);
     this.uninstrument();
+    // Failures still waiting for their response body are reported now, so the last flush sends them.
+    for (const report of [...this.pendingReports]) report();
+    this.closed = true;
+    this.lastNav = undefined;
     this.closing = true;
     return this.flush().finally(() => (this.closing = false));
   }
@@ -373,9 +449,12 @@ export class DebugClient {
   captureError(
     e: { name: string; message: string; stack?: string; frames?: ReturnType<typeof parseStack> },
     meta: EventMeta & { severity?: Severity; handled?: boolean; fatal?: boolean },
-    request?: { method: string; url: string; status?: number; durationMs?: number },
+    request?: ErrorEventInput["request"],
+    /** The trail as it was when the error happened, when it is reported later. */
+    breadcrumbs: Breadcrumb[] = [...this.crumbs],
+    response?: ErrorEventInput["response"],
   ) {
-    if (!this.ready) return;
+    if (!this.ready || this.closed) return;
     const handled = meta.handled ?? true;
     const frames = e.frames ?? parseStack(e.stack);
     if (!meta.fatal && !this.allowError(`${e.name}|${e.message.slice(0, 120)}|${frames[0]?.file ?? ""}:${frames[0]?.line ?? ""}`)) return;
@@ -401,8 +480,9 @@ export class DebugClient {
       severity: meta.severity ?? (meta.fatal ? "critical" : undefined),
       handled,
       error: { name: e.name, message: e.message, stack: e.stack, frames },
-      breadcrumbs: [...this.crumbs],
+      breadcrumbs,
       request,
+      response,
     });
   }
 
@@ -433,7 +513,8 @@ export class DebugClient {
 
   /** Queue without sampling (sessions must be complete for crash-free rates to be right). */
   private push(e: EventInput) {
-    if (!this.ready) return;
+    // After close(), only the final flush may still add (its request timings).
+    if (!this.ready || (this.closed && !this.closing)) return;
     let out: EventInput | null | undefined = e.type === "error" || e.type === "event" ? this.withTags(e) : e;
     if (this.opts.beforeSend) {
       try {
@@ -649,6 +730,8 @@ export class DebugClient {
         }
       },
       ignored: (url) => this.isIgnored(url),
+      wantsBody: (status, url) => this.isFailedStatus(status, url),
+      capturesBodies: () => !!this.bodiesOption(),
     };
   }
 
@@ -659,15 +742,47 @@ export class DebugClient {
     return (this.opts.network?.ignoreUrls ?? []).some((p) => (typeof p === "string" ? url.includes(p) : p.test(url)));
   }
 
-  private recordRequest(r: RequestInfo) {
+  private isFailedStatus(status: number, rawUrl: string): boolean {
+    try {
+      return (this.opts.network?.isFailure ?? ((s: number) => s >= 500))(status, normaliseUrl(rawUrl));
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Records one request: a breadcrumb now, in call order, and an error for a failure. When the
+   * body is still being read (fetch), returns a function that adds what the backend said to the
+   * breadcrumb and then reports the error, since an error is sent as soon as it is queued.
+   */
+  private recordRequest(r: RequestInfo): ((responseBody: string) => void) | void {
     if (!this.ready) return;
     const net = this.opts.network ?? {};
     const url = normaliseUrl(r.url);
     const ms = Math.round(r.durationMs);
-    const failed = r.status === undefined ? !r.aborted : (net.isFailure ?? ((s: number) => s >= 500))(r.status, url);
+    const failed = r.status === undefined ? !r.aborted : this.isFailedStatus(r.status, r.url);
     const slow = ms >= (net.slowMs ?? 3000);
-    const outcome = r.aborted ? "aborted" : r.timedOut ? "timed out" : r.status !== undefined ? String(r.status) : "failed";
-    this.breadcrumb("network", `${r.method} ${url} → ${outcome} (${ms}ms)`, { status: r.status ?? null, durationMs: ms }, failed ? "error" : slow ? "warning" : "info");
+    // How the call ended: in words for the message, and as one of a few values for the data.
+    const [ended, outcome] = r.aborted
+      ? ["aborted", "aborted"]
+      : r.timedOut
+        ? ["timed out", "unreachable"]
+        : r.status !== undefined
+          ? [String(r.status), "answered"]
+          : ["failed", "unreachable"];
+    // Named by service, with what the backend said when it failed. The message keeps the full
+    // URL unless the call matched a base URL, so existing trails read the same.
+    const name = nameRequest(r.url, net.baseUrls);
+    const data: Record<string, string | number | boolean | null> = {
+      service: name.service,
+      path: name.path,
+      method: r.method,
+      status: r.status ?? null,
+      durationMs: ms,
+      outcome,
+      ...(failed && readProblemDetails(r.responseBody)),
+    };
+    const crumb = this.addCrumb("network", `${r.method} ${name.matched ? name.path : url} → ${ended} (${ms}ms)`, data, failed ? "error" : slow ? "warning" : "info");
     if (!r.aborted) this.timeRequest(`${r.method} ${url}`, ms, failed);
     if (!failed) return;
 
@@ -678,11 +793,70 @@ export class DebugClient {
     // The first frame is our own wrapper; the rest is the code that made the request. Mark library
     // frames again without it: the wrapper on top hides the library run below it.
     const frames = markLibraryFrames(parseStack(r.stack).slice(1));
-    this.captureError(
-      { name: r.status !== undefined ? "HttpError" : "NetworkError", message, stack: r.stack, frames },
-      { flow, handled: true, tags: { source: "network" } },
-      { method: r.method, url, status: r.status, durationMs: ms },
-    );
+    const trail = [...this.crumbs];
+    const bodies = this.bodiesOption();
+    // Tells the dashboard this failure's error carries its request and response.
+    if (bodies) data.hasBodies = true;
+    const report = (responseBody = r.responseBody) => {
+      const http = bodies ? this.describeFailedCall(r, responseBody, bodies) : undefined;
+      this.captureError(
+        { name: r.status !== undefined ? "HttpError" : "NetworkError", message, stack: r.stack, frames },
+        { flow, handled: true, tags: { source: "network" } },
+        { method: r.method, url, status: r.status, durationMs: ms, ...http?.request },
+        trail,
+        http?.response,
+      );
+    };
+    if (!r.bodyPending) return report();
+    // The trail is kept as it was at the failure; its breadcrumb gains the backend's details.
+    let done = false;
+    const finish = (responseBody?: string) => {
+      if (done) return;
+      done = true;
+      this.pendingReports.delete(finishNow);
+      const backend = readProblemDetails(responseBody);
+      if (backend) crumb.data = { ...crumb.data, ...backend };
+      report(responseBody);
+    };
+    const finishNow = () => finish();
+    this.pendingReports.add(finishNow);
+    return (responseBody: string) => finish(responseBody);
+  }
+
+  /** `network.bodies` when it is on, else undefined: the one place that decides. */
+  private bodiesOption(): NonNullable<NetworkOptions["bodies"]> | undefined {
+    const b = this.opts.network?.bodies;
+    return b?.onFailure ? b : undefined;
+  }
+
+  /** A failed call's request and response, redacted and cut, for `network.bodies`. Never throws. */
+  private describeFailedCall(
+    r: RequestInfo,
+    responseBody: string | undefined,
+    bodies: NonNullable<NetworkOptions["bodies"]>,
+  ): { request: Partial<NonNullable<ErrorEventInput["request"]>>; response?: ErrorEventInput["response"] } {
+    try {
+      const max = bodies.maxChars ?? MAX_CAPTURED_BODY;
+      const redact = bodies.redact ?? {};
+      const rawQuery = /\?([^#]*)/.exec(r.url)?.[1];
+      const request = {
+        query: rawQuery ? redactText(rawQuery, redact).slice(0, max) : undefined,
+        headers: redactHeaders(r.requestHeaders, redact),
+        ...bodyOf(r.requestBody, r.requestBinary, max, redact),
+      };
+      const response =
+        r.status === undefined
+          ? undefined
+          : {
+              status: r.status,
+              headers: redactHeaders(r.responseHeaders, redact),
+              ...bodyOf(responseBody, r.responseBinary, max, redact),
+            };
+      return { request, response };
+    } catch (err) {
+      this.log("couldn't describe the failed call", err);
+      return { request: {} };
+    }
   }
 
   private log(...args: unknown[]) {
@@ -715,15 +889,15 @@ function resolveAuto(o: InitOptions): Required<AutoCaptureOptions> {
   };
 }
 
-const hasNewFields = (events: EventInput[]) => events.some((e) => e.type === "session" || (e.type === "error" && e.request));
+const hasNewFields = (events: EventInput[]) => events.some((e) => e.type === "session" || (e.type === "error" && (e.request || e.response)));
 
 /** Events as a 0.1 ingest accepts them: no session markers, no request details. */
 function toLegacy(events: EventInput[]): EventInput[] {
   const out: EventInput[] = [];
   for (const e of events) {
     if (e.type === "session" || e.type === "metric") continue;
-    if (e.type === "error" && e.request) {
-      const { request: _r, ...rest } = e;
+    if (e.type === "error" && (e.request || e.response)) {
+      const { request: _r, response: _s, ...rest } = e;
       out.push(rest);
     } else out.push(e);
   }

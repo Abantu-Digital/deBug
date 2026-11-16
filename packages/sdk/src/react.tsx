@@ -49,7 +49,12 @@ export class DebugErrorBoundary extends Component<DebugErrorBoundaryProps, State
 /** Adds a navigation breadcrumb whenever `path` changes. Works with any router. */
 export function useDebugNavigation(path: string | undefined, client: DebugClient = deBug) {
   useEffect(() => {
-    if (path) client.navigated(path);
+    if (!path) return;
+    try {
+      client.navigated(path);
+    } catch {
+      // Recording a screen must never break navigation.
+    }
   }, [path, client]);
 }
 

@@ -57,10 +57,14 @@ and whether it succeeded.
 Every error carries the last 30 breadcrumbs, so the dashboard shows what happened just
 before it: the screen, the click, the request that failed.
 
-**Privacy.** Query strings and fragments are dropped from every URL before anything is
-recorded, and ids in paths become `:id` (`/v1/orders/8812?token=…` becomes `/v1/orders/:id`).
-Request and response bodies, headers and what users type are never read. Use `beforeSend` to
-scrub anything else.
+**Privacy.** Query strings and fragments are dropped from the URLs in breadcrumbs, issues and
+timings, and ids in paths become `:id` (`/v1/orders/8812?token=…` becomes `/v1/orders/:id`). Only
+a failed call's captured request (below) keeps its query string, redacted.
+What users type is never read. A failed call's response body is read to pick out the backend's
+error details (see below), with phone numbers and email addresses in them masked. Bodies and
+headers themselves are sent only if you turn on `network.bodies` (on by default with
+`initReactNative`), only for failed calls, and only after their secrets are redacted on the device.
+Use `beforeSend` to scrub anything else.
 
 **Noise control.** At most 60 errors a minute are sent (`maxErrorsPerMinute`), and one repeating
 error gets at most a sixth of that. Breadcrumbs that repeat are collapsed into one. `sampleRate`
@@ -74,9 +78,10 @@ deBug.init({
   endpoint, ingestKey, app: { id: "your-app", version: "2.4.0" },
   autoCapture: { console: false, clicks: false }, // or `false` to turn everything off
   network: {
+    baseUrls: ["https://api.example.com/v1"], // name calls by service (below)
     flows: [["/v2/auth/", "auth.login"], [/\/payments\//, "checkout.payment"]], // tag requests by URL
     ignoreUrls: ["analytics.example.com"],
-    isFailure: (status) => status >= 500 || status === 429, // default: 500 and above
+    isFailure: (status) => status >= 500 || status === 429, // default: 500 and above (400 and above on React Native)
     slowMs: 3000, // slower requests get a warning breadcrumb
   },
   sampleRate: 1,
@@ -85,6 +90,55 @@ deBug.init({
 ```
 
 Requests to your ingest endpoint and to the Metro and Expo dev servers are never recorded.
+
+### Named calls and backend error details
+
+Each request's network breadcrumb carries `service`, `path`, `method`, `status` (null when there
+was no answer), `durationMs` and `outcome` (`answered`, `unreachable` or `aborted`).
+
+- **Service names.** Pass your backends' base URLs as `network.baseUrls`. The longest base a URL
+  starts with is stripped, and the first path segment left names the service, so services that
+  share one gateway base still get their own names:
+  `"https://api.example.com/v1/orders/42"` with base `"https://api.example.com/v1"` is service
+  `orders`, path `/orders/:id`, and its breadcrumb reads `GET /orders/:id → 200 (85ms)`. Calls to
+  any other host are named by the host, and their breadcrumb keeps the full URL.
+- **What the backend said.** When a call fails, the SDK reads its JSON response and, if it holds
+  [problem details](https://www.rfc-editor.org/rfc/rfc9457) (`title`, `code`, `traceId`, `errors`,
+  as .NET and Spring send, or `message`, `trace_id`, `correlationId`), adds `backendTitle`,
+  `backendCode`, `traceId` and `backendErrors` to the breadcrumb. The dashboard shows them on the
+  failed request, with the trace id to search your backend's logs. Bytes (`arraybuffer`) are read
+  only when they decode as text; blobs never are. Phone numbers and email addresses the backend
+  quotes are masked. A fetch failure is reported once its body has been read (at most 3 seconds,
+  or at once on `close()`); an XHR failure, as axios sends on React Native, straight away.
+
+### The full request and response of a failed call
+
+With `network.bodies: { onFailure: true }` (the default with `initReactNative`), a failed call's
+error carries its request (method, URL with its query string, headers and body) and its response
+(status, headers and body). The dashboard shows them on the failed request. Successful calls never
+carry bodies.
+
+Secrets are redacted on the device, before anything is queued:
+
+| What | Redacted |
+|---|---|
+| Headers | `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, and any name containing `token`, `key` or `secret` |
+| Body and query fields, at any depth, without case | `password`, `pin`, `otp`, `otpCode`, `verificationCode`, `cvv`, `cvc`, `cardNumber`, `pan`, `idToken`, `accessToken`, `refreshToken`, `token`, `secret`, `apiKey` |
+| Values, in any field or plain text | JWTs become `[redacted]`; card numbers that pass the Luhn check become `•••• 1234`, even when sent as JSON numbers |
+
+Fields are found in JSON at any depth (and in JSON or forms held inside a string field), in form
+bodies and query strings (`user[password]` counts as `password`), in JSON that was cut short, and
+in plain text (`otp: 123456`).
+
+Plain `code` is kept: it's usually the backend's error code. Add your own with
+`redact: { fields: ["idNumber"], headers: ["x-session"] }`. Each body is cut at 16 KB
+(`maxChars`) with `…[truncated, N KB total]`, and ingest cuts again rather than reject an event.
+Bodies that aren't text (files, images, form data) are recorded as `[binary 412 KB, application/pdf]`.
+Uploads stay under ingest's size limit however many failures are queued.
+
+```ts
+network: { bodies: { onFailure: true, maxChars: 16_384, redact: { fields: ["idNumber"] } } }
+```
 
 ## Response times
 
@@ -167,8 +221,27 @@ export default function RootLayout() {
 }
 ```
 
+`useDebugExpoRouter()` never throws into your navigation. `deBug.close()` (say, from a remote
+kill switch) sends what is queued and then records and sends nothing, not even errors, until the
+next `init()`.
+
 In Expo Go, the app version reported is Expo Go's own. Development and production builds
 report yours.
+
+## React Native and Expo defaults
+
+`initReactNative` tunes three defaults for an app talking to its own backend. Pass any of these
+options to change it.
+
+- **A 4xx is a failure** (`network.isFailure`: status 400 and above). On mobile a 4xx is usually a
+  business rule the customer hit, such as "not enough airtime", and those are the failures support
+  is asked about. Each becomes a handled `HttpError` with the call's breadcrumb, not a crash.
+  A burst of 401s after a session expires counts against the error limit (60 a minute); pass
+  `isFailure: (s) => s >= 400 && s !== 401` if your app handles those itself.
+- **A longer trail** (`maxBreadcrumbs: 50`, up from 30): screens, API calls and taps fit before a
+  failure. 50 is the most an error event carries, on any platform, so a larger value is capped.
+- **A failed call's request and response** (`network.bodies: { onFailure: true }`), redacted on the
+  device as described above.
 
 ## Device details on React Native and Expo
 

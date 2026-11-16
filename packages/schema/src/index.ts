@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SCHEMA_VERSION, type Classification } from "./core";
+import { MAX_BREADCRUMBS, MAX_CAPTURED_BODY, SCHEMA_VERSION, type Classification } from "./core";
 
 // Everything that does not need zod lives in ./core so client bundles stay small.
 export * from "./core";
@@ -68,6 +68,25 @@ export const Breadcrumb = z.object({
   data: z.record(z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
 });
 
+/**
+ * Captured bodies: the SDK cuts at MAX_CAPTURED_BODY and adds a marker; ingest cuts again here
+ * rather than reject an event that came in longer.
+ */
+const CUT_MARKER = "…[truncated]";
+const CapturedText = z
+  .string()
+  .transform((s) => (s.length > MAX_CAPTURED_BODY + 64 ? `${s.slice(0, MAX_CAPTURED_BODY)}${CUT_MARKER}` : s));
+const CapturedHeaders = z
+  .record(z.string().transform((s) => s.slice(0, 2000)))
+  .optional()
+  .transform((h) => (h ? Object.fromEntries(Object.entries(h).slice(0, 100)) : h));
+const CapturedBody = {
+  body: CapturedText.optional(),
+  /** The body's size before it was cut, in characters (bytes for a binary body). */
+  bodySize: z.number().int().nonnegative().optional(),
+  truncated: z.boolean().optional(),
+};
+
 export const StackFrame = z.object({
   fn: z.string().optional(),
   file: z.string().optional(),
@@ -97,7 +116,7 @@ export const ErrorEvent = EventBase.extend({
     stack: z.string().max(20_000).optional(),
     frames: z.array(StackFrame).max(100).optional(),
   }),
-  breadcrumbs: z.array(Breadcrumb).max(50).optional(),
+  breadcrumbs: z.array(Breadcrumb).max(MAX_BREADCRUMBS).optional(),
   /** Set when the error is a failed HTTP request captured by the SDK's network instrumentation. */
   request: z
     .object({
@@ -106,6 +125,18 @@ export const ErrorEvent = EventBase.extend({
       url: z.string().max(500),
       status: z.number().int().optional(), // absent for network failures and timeouts
       durationMs: z.number().optional(),
+      /** Below: only with the SDK's `network.bodies`, already redacted on the device. */
+      query: CapturedText.optional(),
+      headers: CapturedHeaders,
+      ...CapturedBody,
+    })
+    .optional(),
+  /** The failed request's response, with `network.bodies` (absent when there was no answer). */
+  response: z
+    .object({
+      status: z.number().int(),
+      headers: CapturedHeaders,
+      ...CapturedBody,
     })
     .optional(),
 });
