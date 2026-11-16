@@ -105,7 +105,7 @@ function Row({ row, app, start }: { row: SessionRow; app: string; start: string 
         <span aria-hidden className={`pt-0.5 text-center ${row.failed ? "text-sev-high" : "text-muted"}`}>◆</span>
         <div className="min-w-0">
           <span className="mr-2 rounded bg-panel-2 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted">flow</span>
-          <span className={row.failed ? "font-medium" : ""}>{row.detail}</span>
+          <span className={`break-words ${row.failed ? "font-medium" : ""}`}>{row.detail}</span>
           <SourceLink source={row.source} app={app} />
         </div>
       </li>
