@@ -40,7 +40,7 @@ It uses the same login as your local dashboard, and you can keep running it loca
 | Reads data as | a service account `debugkit-dashboard` with Cloud Datastore Viewer only (needs `gcloud`; without it, the project's default account) | an IAM role with the read-only policy `init` created |
 | Secrets | `.debugkit/firebase/dashboard/.env.<project>`, gitignored | the Lambda's environment |
 
-- Run it again after upgrading deBug, or after `npx debugkit password`, to update the hosted copy.
+- Run it again after `npx debugkit password` to update the hosted copy. After updating deBug, run `npx debugkit upgrade` instead (below).
 - Slack alerts link to the hosted dashboard once it exists.
 - Anyone with the link sees the sign-in page; only people with a login get in.
 - If Firebase Hosting can't reach a function in your database's region, the CLI offers to retry with the function in `us-central1`.
@@ -63,6 +63,24 @@ send it however you like. The person opens it, picks a password, and is signed i
   DynamoDB) as scrypt hashes. Invite links are stored only as SHA-256 hashes.
 - Changes go through your ingest function, like settings. Redeploy ingest (`npx debugkit init`)
   if the Team page says it's too old.
+
+## Upgrading
+
+Updating `@debugkit/sdk` in your app doesn't change what's deployed in your cloud. Once you have, run:
+
+```bash
+npx debugkit upgrade
+```
+
+It reads the setup `init` saved and brings everything to the CLI's version, in the same project or account, region and environment:
+
+1. Shows what's deployed and what it will deploy, with versions, and asks once.
+2. Redeploys ingest: the same Cloud Function or Lambda, at the same URL, with the same keys, retention and admin token.
+3. On Firebase, adds any Firestore indexes the new version needs (your own are left alone). They take a few minutes to build.
+4. Redeploys the hosted dashboard, if you host one, with the same login.
+5. Ends with the dashboard link and one line per version you skipped.
+
+`--dry-run` shows the plan and deploys nothing. Add `--env <name>` for each environment. If something deployed is newer than the CLI you ran, it stops and names the version to run instead. The local dashboard (`npx debugkit dashboard`) always runs the CLI's version, so it needs nothing.
 
 ## Several environments (preview, production…)
 
@@ -97,6 +115,7 @@ Every command below also works as `npx @debugkit/cli <command>`.
 | `npx debugkit init` | The full setup above |
 | `npx debugkit dashboard` | Runs the dashboard on this machine against your data. On "just this machine", it also receives your app's events |
 | `npx debugkit deploy-dashboard` | Hosts the dashboard in your Firebase project or AWS account, at a link to share |
+| `npx debugkit upgrade` | Brings ingest, its indexes and the hosted dashboard to the CLI's version. `--dry-run` shows the plan only |
 | `npx debugkit test` | Sends test events and checks they're accepted |
 | `npx debugkit guide` | Replays the walkthrough |
 

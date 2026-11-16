@@ -3,11 +3,10 @@ import { cpSync, renameSync, existsSync, mkdirSync, mkdtempSync, readdirSync, re
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { zipSync } from "fflate";
-import FIRESTORE_INDEXES from "../../adapters/firestore.indexes.json" with { type: "json" };
 import { DASHBOARD_VERSION } from "./dashboard";
 import { capture, interactive, which } from "./exec";
 import { lookup } from "./providers/aws";
-import { asArray, firebaseCli, writeFirebaseJson } from "./providers/firebase";
+import { asArray, deployIndexes, firebaseAccount, firebaseCli, writeFirebaseJson } from "./providers/firebase";
 import { cmdFor, environment, paths, readEnv, upsertEnv, writeConfig, type DebugkitConfig } from "./state";
 import { bail, bold, choose, code, dim, p, yes } from "./ui";
 
@@ -22,7 +21,8 @@ const SECRET = new Set(["DEBUG_SESSION_SECRET", "DEBUG_DASHBOARD_USERS", "DEBUG_
 
 /** The hosted dashboard's settings: the same data and login as the local one, at its public URL. */
 export function hostedEnv(local: Record<string, string>, url: string, extra: Record<string, string> = {}): { plain: Record<string, string>; secret: Record<string, string> } {
-  const plain: Record<string, string> = { DEBUG_DASHBOARD_URL: url, ...extra };
+  // The environment (--env) lets the dashboard name the exact upgrade command in its banner.
+  const plain: Record<string, string> = { DEBUG_DASHBOARD_URL: url, ...(environment.get() ? { DEBUG_ENVIRONMENT: environment.get()! } : {}), ...extra };
   const secret: Record<string, string> = {};
   for (const k of SHARED) if (local[k]) (SECRET.has(k) ? secret : plain)[k] = local[k]!;
   if (!secret.DEBUG_SESSION_SECRET || !secret.DEBUG_DASHBOARD_USERS) throw new Error(`The dashboard login isn't set up yet. Run ${cmdFor("init")} (or ${cmdFor("password")}) first.`);
@@ -41,7 +41,7 @@ export const dotenv = (values: Record<string, string>) =>
  */
 async function dashboardDependency(into: string): Promise<string> {
   const dir = process.env.DEBUGKIT_DASHBOARD_DIR;
-  if (!dir || !existsSync(join(dir, "handler.mjs"))) return `^${DASHBOARD_VERSION}`;
+  if (!dir || !existsSync(join(dir, "handler.mjs"))) return DASHBOARD_VERSION;
   for (const f of readdirSync(into)) if (f.endsWith(".tgz")) rmSync(join(into, f));
   const r = await capture("npm", ["pack", "--silent", "--pack-destination", into], { cwd: dir });
   const tgz = r.stdout.trim().split(/\r?\n/).pop();
@@ -104,8 +104,10 @@ export interface HostResult {
 export interface HostOptions {
   /** "skip": part of init, so a problem skips hosting and setup carries on. "exit" (default): deploy-dashboard. */
   onProblem?: "skip" | "exit";
-  /** The user already said yes to hosting (init asks first), so don't ask again. */
+  /** The user already said yes to hosting (init and upgrade ask first), so don't ask again. */
   confirmed?: boolean;
+  /** The Firestore indexes were just deployed (upgrade does them first), so don't deploy them again. */
+  indexesDeployed?: boolean;
 }
 
 /** Leave hosting out (init) or stop (deploy-dashboard). */
@@ -239,7 +241,7 @@ export function writeHostingConfig(dir: string, site: string, region: string) {
 async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<string, string>, opts: HostOptions) {
   const fbc = cfg.firebase ?? fail(opts, `This setup has no Firebase project saved. Run ${cmdFor("init")} again.`);
   const [fbCmd, fbPre] = await firebaseCli();
-  const account = local.DEBUGKIT_FIREBASE_ACCOUNT || fbc.account;
+  const account = firebaseAccount(local, cfg);
   const acct = account ? ["--account", account] : [];
   const proj = ["--project", fbc.projectId, ...acct];
   const fb = (args: string[], o: { cwd?: string } = {}) => capture(fbCmd, [...fbPre, ...args], o);
@@ -311,9 +313,7 @@ async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<stri
 
   // A newer dashboard can query with indexes an older setup never added. Add deBug's current
   // ones; never with --force, which would delete indexes the project has that aren't in the file.
-  writeFileSync(join(dir, "firestore.indexes.json"), JSON.stringify(FIRESTORE_INDEXES, null, 2) + "\n");
-  p.log.step("Adding any Firestore indexes this version of deBug needs (existing ones are left alone)");
-  if ((await fbLive(["deploy", "--only", "firestore:indexes", "--non-interactive", ...proj], { cwd: dir })) !== 0)
+  if (!opts.indexesDeployed && !(await deployIndexes(fbLive, proj, dir)))
     p.log.warn("The indexes didn't deploy. Some counts on the dashboard may be missing until they do.");
 
   for (;;) {
@@ -337,7 +337,7 @@ async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<stri
     }
   }
   return {
-    hosted: { url, region, functionName: DASHBOARD_FUNCTION, site, deployedAt: new Date().toISOString() },
+    hosted: { url, region, functionName: DASHBOARD_FUNCTION, site, deployedAt: new Date().toISOString(), version: DASHBOARD_VERSION },
     created: [`Hosted dashboard at ${code(url)} (Hosting site ${code(site)}, function ${code(DASHBOARD_FUNCTION)} in ${region})`],
   };
 }
@@ -486,7 +486,7 @@ async function hostAws(cfg: DebugkitConfig, local: Record<string, string>, opts:
   await waitUpdated(lambda, lambdaMod, functionName);
   s.stop(`Lambda ${functionName} serves the dashboard`);
   return {
-    hosted: { url, region: aws.region, functionName, deployedAt: new Date().toISOString() },
+    hosted: { url, region: aws.region, functionName, deployedAt: new Date().toISOString(), version: DASHBOARD_VERSION },
     created: [`Hosted dashboard at ${code(url)} (Lambda ${code(functionName)}, read-only role ${code(roleName)})`],
   };
 }

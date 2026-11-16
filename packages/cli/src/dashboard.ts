@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { join } from "node:path";
 import { capture } from "./exec";
-import { paths, readEnv, upsertEnv } from "./state";
+import { environment, paths, readEnv, upsertEnv } from "./state";
 import { ask, code, dim, flags, must, p } from "./ui";
 
 declare const __DEBUGKIT_VERSION__: string | undefined;
@@ -102,7 +102,7 @@ export async function startDashboard(cwd: string): Promise<RunningDashboard> {
     cwd,
     // The dashboard runs on this machine over plain http, where browsers drop Secure cookies
     // (the login would bounce straight back to the sign-in page). Behind HTTPS, set DEBUG_INSECURE_COOKIES=0.
-    env: { ...process.env, ...env, DEBUG_ENV_FILE: envFile, NODE_ENV: "production", DEBUG_INSECURE_COOKIES: env.DEBUG_INSECURE_COOKIES ?? "1" },
+    env: { ...process.env, ...env, ...(environment.get() ? { DEBUG_ENVIRONMENT: environment.get()! } : {}), DEBUG_ENV_FILE: envFile, NODE_ENV: "production", DEBUG_INSECURE_COOKIES: env.DEBUG_INSECURE_COOKIES ?? "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let log = "";
