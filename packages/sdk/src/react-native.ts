@@ -7,6 +7,7 @@ export * from "./react";
 
 export type { CollectOptions, DeviceInfoModule } from "./device";
 export { mmkvStorage, type MMKVLike } from "./storage";
+export { DebugTouchBoundary, type DebugTouchBoundaryProps } from "./touch-boundary";
 
 type RNConstants = {
   Release?: string;
