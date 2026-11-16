@@ -71,7 +71,12 @@ export function initReactNative(options: ReactNativeInitOptions, client: DebugCl
   client.init({
     maxBreadcrumbs: MOBILE_MAX_BREADCRUMBS,
     ...rest,
-    network: { ...rest.network, isFailure: rest.network?.isFailure ?? mobileIsFailure },
+    network: {
+      ...rest.network,
+      isFailure: rest.network?.isFailure ?? mobileIsFailure,
+      // A failed call's request and response, redacted on the device.
+      bodies: { onFailure: true, ...rest.network?.bodies },
+    },
     app: { ...(base.app as object), ...rest.app },
     context: mergeContext(base, rest.context ?? {}),
   });

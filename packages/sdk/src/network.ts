@@ -4,6 +4,7 @@
  */
 
 import { normaliseUrl } from "./auto";
+import { redactValues } from "./redact";
 
 export interface RequestName {
   /** "buy" for ".../ppd/api/buy/purchase-history" with that base; otherwise the host. */
@@ -58,9 +59,9 @@ function text(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() ? v.trim().slice(0, MAX_TEXT) : undefined;
 }
 
-/** Backend messages can quote the customer ("0821234567 not found"): mask that before it leaves. */
+/** Backend messages can quote the customer ("0821234567 not found") or a token: mask those. */
 function masked(v: string | undefined): string | undefined {
-  return v?.replace(PERSONAL_TEXT, "•••");
+  return v === undefined ? undefined : redactValues(v).replace(PERSONAL_TEXT, "•••");
 }
 
 /** Validation errors as one line: ["a", "b"] or { Amount: ["too high"] } → "Amount: too high". */

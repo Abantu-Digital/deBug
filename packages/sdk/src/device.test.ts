@@ -171,6 +171,15 @@ describe("mobile defaults", () => {
     expect(e?.breadcrumbs).toHaveLength(50);
   });
 
+  it("captures a failed call's bodies, even when the app only tunes the option", () => {
+    const { c, fetch } = client();
+    initReactNative({ ...opts, fetch, network: { bodies: { maxChars: 4096 } } }, c);
+    expect((c as unknown as { opts: { network: { bodies: unknown } } }).opts.network.bodies).toEqual({ onFailure: true, maxChars: 4096 });
+    const { c: off, fetch: offFetch } = client();
+    initReactNative({ ...opts, fetch: offFetch, network: { bodies: { onFailure: false } } }, off);
+    expect((off as unknown as { opts: { network: { bodies: unknown } } }).opts.network.bodies).toEqual({ onFailure: false });
+  });
+
   it("keeps the app's own choices, and never more breadcrumbs than an event carries", () => {
     const { c: own, fetch } = client();
     initReactNative({ ...opts, fetch, maxBreadcrumbs: 10, network: { isFailure: (s) => s >= 500 } }, own);
