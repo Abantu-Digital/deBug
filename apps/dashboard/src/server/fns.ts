@@ -5,6 +5,7 @@ import { config } from "./config";
 import { buildEventDetail } from "./event";
 import { buildSessionDetail } from "./session";
 import { lookupCustomer } from "./customers";
+import { buildEndpoints } from "./endpoints";
 import { isMissingIndex } from "./errors";
 import { buildIssueDetail, buildSummary } from "./queries";
 import { readSettings, restampStep, seenHosts, settingsWriter, testAlert, validRetention, writeIssueStatus, writeRetention, writeSettings } from "./settings";
@@ -66,6 +67,13 @@ export const getOverview = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     await requireUser();
     return buildSummary(await getStore(), data.app, config().severity, Date.now(), { range: data, retentionDays: config().retentionDays });
+  });
+
+export const getEndpoints = createServerFn({ method: "GET" })
+  .validator((d: { app?: string; endpoint?: string } & RangeInput) => ({ app: str(d?.app), endpoint: str(d?.endpoint)?.slice(0, 400), ...rangeOf(d) }))
+  .handler(async ({ data }) => {
+    await requireUser();
+    return buildEndpoints(await getStore(), data.app, Date.now(), { range: data, endpoint: data.endpoint, retentionDays: config().retentionDays });
   });
 
 export const getIssueDetail = createServerFn({ method: "GET" })
