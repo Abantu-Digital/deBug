@@ -12,6 +12,7 @@ import {
   type AutoSink,
   type RequestInfo,
 } from "./auto";
+import { nameRequest, readProblemDetails } from "./network";
 
 export const SDK_NAME = "@debugkit/sdk";
 declare const __DEBUGKIT_SDK_VERSION__: string | undefined;
@@ -110,6 +111,13 @@ export interface NetworkOptions {
    * `flows: [["/v2/auth/", "auth.login"], [/\/payments\//, "checkout.payment"]]`.
    */
   flows?: [string | RegExp, string][];
+  /**
+   * Your backends' base URLs, to name each call in the trail. The longest base a URL starts
+   * with is stripped and the first path segment left names the service:
+   * `baseUrls: ["https://api.x.com/v1"]` turns "https://api.x.com/v1/orders/42" into service
+   * "orders", path "/orders/:id". Calls to other hosts are named by their host.
+   */
+  baseUrls?: string[];
   /** Which HTTP statuses count as failures. Default: 500 and above. Network failures and timeouts always count. */
   isFailure?: (status: number, url: string) => boolean;
   /** Requests slower than this get a warning breadcrumb. Default 3000ms. */
@@ -166,6 +174,8 @@ export class DebugClient {
   private restores: (() => void)[] = [];
   private sessionState = { errored: false, crashed: false };
   private lastNav: string | undefined;
+  /** Failures waiting for their response body (fetch), reported on close if it hasn't come. */
+  private pendingReports = new Set<() => void>();
   private limits = new Map<string, { n: number; since: number }>();
   /** fetch as it was before instrumentation, so our own uploads are never recorded. */
   private rawFetch: typeof fetch | undefined;
@@ -265,15 +275,22 @@ export class DebugClient {
   }
 
   breadcrumb(category: Breadcrumb["category"], message: string, data?: Record<string, string | number | boolean | null>, level: Breadcrumb["level"] = "info") {
+    this.addCrumb(category, message, data, level);
+  }
+
+  /** Records a breadcrumb and returns the one stored (a repeat collapses into the last). */
+  private addCrumb(category: Breadcrumb["category"], message: string, data: Record<string, string | number | boolean | null> | undefined, level: Breadcrumb["level"]): Breadcrumb {
     const msg = message.slice(0, 500);
     const last = this.crumbs[this.crumbs.length - 1];
     if (last && last.category === category && last.message === msg && last.level === level) {
       last.ts = now();
       last.data = { ...data, repeated: Number(last.data?.repeated ?? 1) + 1 };
-      return;
+      return last;
     }
-    this.crumbs.push({ ts: now(), category, message: msg, data, level });
+    const crumb: Breadcrumb = { ts: now(), category, message: msg, data, level };
+    this.crumbs.push(crumb);
     if (this.crumbs.length > (this.opts?.maxBreadcrumbs ?? 30)) this.crumbs.shift();
+    return crumb;
   }
 
   /** Log an error. `flow` is the part of the app it belongs to, e.g. "auth.login". */
@@ -363,6 +380,8 @@ export class DebugClient {
   close() {
     if (this.timer) clearInterval(this.timer);
     this.uninstrument();
+    // Failures still waiting for their response body are reported now, so the last flush sends them.
+    for (const report of [...this.pendingReports]) report();
     this.closing = true;
     return this.flush().finally(() => (this.closing = false));
   }
@@ -374,6 +393,8 @@ export class DebugClient {
     e: { name: string; message: string; stack?: string; frames?: ReturnType<typeof parseStack> },
     meta: EventMeta & { severity?: Severity; handled?: boolean; fatal?: boolean },
     request?: { method: string; url: string; status?: number; durationMs?: number },
+    /** The trail as it was when the error happened, when it is reported later. */
+    breadcrumbs: Breadcrumb[] = [...this.crumbs],
   ) {
     if (!this.ready) return;
     const handled = meta.handled ?? true;
@@ -401,7 +422,7 @@ export class DebugClient {
       severity: meta.severity ?? (meta.fatal ? "critical" : undefined),
       handled,
       error: { name: e.name, message: e.message, stack: e.stack, frames },
-      breadcrumbs: [...this.crumbs],
+      breadcrumbs,
       request,
     });
   }
@@ -649,6 +670,7 @@ export class DebugClient {
         }
       },
       ignored: (url) => this.isIgnored(url),
+      wantsBody: (status, url) => this.isFailedStatus(status, url),
     };
   }
 
@@ -659,15 +681,47 @@ export class DebugClient {
     return (this.opts.network?.ignoreUrls ?? []).some((p) => (typeof p === "string" ? url.includes(p) : p.test(url)));
   }
 
-  private recordRequest(r: RequestInfo) {
+  private isFailedStatus(status: number, rawUrl: string): boolean {
+    try {
+      return (this.opts.network?.isFailure ?? ((s: number) => s >= 500))(status, normaliseUrl(rawUrl));
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Records one request: a breadcrumb now, in call order, and an error for a failure. When the
+   * body is still being read (fetch), returns a function that adds what the backend said to the
+   * breadcrumb and then reports the error, since an error is sent as soon as it is queued.
+   */
+  private recordRequest(r: RequestInfo): ((responseBody: string) => void) | void {
     if (!this.ready) return;
     const net = this.opts.network ?? {};
     const url = normaliseUrl(r.url);
     const ms = Math.round(r.durationMs);
-    const failed = r.status === undefined ? !r.aborted : (net.isFailure ?? ((s: number) => s >= 500))(r.status, url);
+    const failed = r.status === undefined ? !r.aborted : this.isFailedStatus(r.status, r.url);
     const slow = ms >= (net.slowMs ?? 3000);
-    const outcome = r.aborted ? "aborted" : r.timedOut ? "timed out" : r.status !== undefined ? String(r.status) : "failed";
-    this.breadcrumb("network", `${r.method} ${url} → ${outcome} (${ms}ms)`, { status: r.status ?? null, durationMs: ms }, failed ? "error" : slow ? "warning" : "info");
+    // How the call ended: in words for the message, and as one of a few values for the data.
+    const [ended, outcome] = r.aborted
+      ? ["aborted", "aborted"]
+      : r.timedOut
+        ? ["timed out", "unreachable"]
+        : r.status !== undefined
+          ? [String(r.status), "answered"]
+          : ["failed", "unreachable"];
+    // Named by service, with what the backend said when it failed. The message keeps the full
+    // URL unless the call matched a base URL, so existing trails read the same.
+    const name = nameRequest(r.url, net.baseUrls);
+    const data: Record<string, string | number | boolean | null> = {
+      service: name.service,
+      path: name.path,
+      method: r.method,
+      status: r.status ?? null,
+      durationMs: ms,
+      outcome,
+      ...(failed && readProblemDetails(r.responseBody)),
+    };
+    const crumb = this.addCrumb("network", `${r.method} ${name.matched ? name.path : url} → ${ended} (${ms}ms)`, data, failed ? "error" : slow ? "warning" : "info");
     if (!r.aborted) this.timeRequest(`${r.method} ${url}`, ms, failed);
     if (!failed) return;
 
@@ -678,11 +732,28 @@ export class DebugClient {
     // The first frame is our own wrapper; the rest is the code that made the request. Mark library
     // frames again without it: the wrapper on top hides the library run below it.
     const frames = markLibraryFrames(parseStack(r.stack).slice(1));
-    this.captureError(
-      { name: r.status !== undefined ? "HttpError" : "NetworkError", message, stack: r.stack, frames },
-      { flow, handled: true, tags: { source: "network" } },
-      { method: r.method, url, status: r.status, durationMs: ms },
-    );
+    const trail = [...this.crumbs];
+    const report = () =>
+      this.captureError(
+        { name: r.status !== undefined ? "HttpError" : "NetworkError", message, stack: r.stack, frames },
+        { flow, handled: true, tags: { source: "network" } },
+        { method: r.method, url, status: r.status, durationMs: ms },
+        trail,
+      );
+    if (!r.bodyPending) return report();
+    // The trail is kept as it was at the failure; its breadcrumb gains the backend's details.
+    let done = false;
+    const finish = (responseBody?: string) => {
+      if (done) return;
+      done = true;
+      this.pendingReports.delete(finishNow);
+      const backend = readProblemDetails(responseBody);
+      if (backend) crumb.data = { ...crumb.data, ...backend };
+      report();
+    };
+    const finishNow = () => finish();
+    this.pendingReports.add(finishNow);
+    return (responseBody: string) => finish(responseBody);
   }
 
   private log(...args: unknown[]) {

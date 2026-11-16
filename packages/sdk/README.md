@@ -59,8 +59,10 @@ before it: the screen, the click, the request that failed.
 
 **Privacy.** Query strings and fragments are dropped from every URL before anything is
 recorded, and ids in paths become `:id` (`/v1/orders/8812?token=…` becomes `/v1/orders/:id`).
-Request and response bodies, headers and what users type are never read. Use `beforeSend` to
-scrub anything else.
+Request bodies, headers and what users type are never read. A failed call's response body is
+read only to pick out the backend's error details (see below), with phone numbers and email
+addresses in them masked; the body itself is never sent.
+Use `beforeSend` to scrub anything else.
 
 **Noise control.** At most 60 errors a minute are sent (`maxErrorsPerMinute`), and one repeating
 error gets at most a sixth of that. Breadcrumbs that repeat are collapsed into one. `sampleRate`
@@ -74,6 +76,7 @@ deBug.init({
   endpoint, ingestKey, app: { id: "your-app", version: "2.4.0" },
   autoCapture: { console: false, clicks: false }, // or `false` to turn everything off
   network: {
+    baseUrls: ["https://api.example.com/v1"], // name calls by service (below)
     flows: [["/v2/auth/", "auth.login"], [/\/payments\//, "checkout.payment"]], // tag requests by URL
     ignoreUrls: ["analytics.example.com"],
     isFailure: (status) => status >= 500 || status === 429, // default: 500 and above
@@ -85,6 +88,26 @@ deBug.init({
 ```
 
 Requests to your ingest endpoint and to the Metro and Expo dev servers are never recorded.
+
+### Named calls and backend error details
+
+Each request's network breadcrumb carries `service`, `path`, `method`, `status` (null when there
+was no answer), `durationMs` and `outcome` (`answered`, `unreachable` or `aborted`).
+
+- **Service names.** Pass your backends' base URLs as `network.baseUrls`. The longest base a URL
+  starts with is stripped, and the first path segment left names the service, so services that
+  share one gateway base still get their own names:
+  `"https://api.example.com/v1/orders/42"` with base `"https://api.example.com/v1"` is service
+  `orders`, path `/orders/:id`, and its breadcrumb reads `GET /orders/:id → 200 (85ms)`. Calls to
+  any other host are named by the host, and their breadcrumb keeps the full URL.
+- **What the backend said.** When a call fails, the SDK reads its JSON response and, if it holds
+  [problem details](https://www.rfc-editor.org/rfc/rfc9457) (`title`, `code`, `traceId`, `errors`,
+  as .NET and Spring send, or `message`, `trace_id`, `correlationId`), adds `backendTitle`,
+  `backendCode`, `traceId` and `backendErrors` to the breadcrumb. The dashboard shows them on the
+  failed request, with the trace id to search your backend's logs. Bytes (`arraybuffer`) are read
+  only when they decode as text; blobs never are. Phone numbers and email addresses the backend
+  quotes are masked. A fetch failure is reported once its body has been read (at most 3 seconds,
+  or at once on `close()`); an XHR failure, as axios sends on React Native, straight away.
 
 ## Response times
 
