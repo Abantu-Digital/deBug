@@ -27,6 +27,12 @@ function parts(s: string): { host: string; path: string; suffix: string } {
   return { host, path: cut < 0 ? "" : main.slice(cut), suffix };
 }
 
+/** "https://API.example.com:443/v1/?x" → "api.example.com". Empty for a path with no host ("/v1/me"). */
+export function hostOf(url: string): string {
+  const { host } = parts(url);
+  return host.includes(".") || host === "localhost" ? host : "";
+}
+
 /** "https://API.example.com:443/v1/?x" → "api.example.com/v1". Lowercases the host only. */
 export function normaliseHostMatch(s: string): string {
   const { host, path } = parts(s);

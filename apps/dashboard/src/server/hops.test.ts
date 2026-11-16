@@ -88,7 +88,8 @@ describe("where an error comes from", () => {
         breadcrumbs: [crumb(40, { category: "navigation", message: "/buy → /buy/confirm" }), crumb(41, { category: "ui", message: 'Tapped "Data 1 GB"' })],
       }),
     );
-    expect(w.line).toBe('buy.checkout › /buy/confirm › Tapped "Data 1 GB" › BuyConfirm at BuyConfirm.tsx:88 › src/features/buy/BuyConfirm.tsx');
+    expect(w.line).toBe('buy.checkout › /buy/confirm › Tapped "Data 1 GB" › BuyConfirm at BuyConfirm.tsx:88');
+    expect(w.hops[4]).toEqual({ kind: "source", value: "src/features/buy/BuyConfirm.tsx" });
   });
 
   it("a screen crash with only library frames: says the file needs source maps", () => {
@@ -133,7 +134,7 @@ describe("where an error comes from", () => {
         ],
       }),
     );
-    expect(w.line).toBe('/errorTesting › Tapped "errorTesting.screenCrash" › readMissingBalance (in the built bundle)');
+    expect(w.line).toBe('/errorTesting › Tapped "errorTesting.screenCrash" › readMissingBalance (not source-mapped)');
     expect(w.hops[4]).toEqual({ kind: "source", missing: true, ask: "Not source-mapped: upload source maps for this build to see the file and line." });
   });
 
@@ -155,17 +156,57 @@ describe("where an error comes from", () => {
   });
 });
 
+describe("more of what the backend and the app already send", () => {
+  const call500 = (body?: string) =>
+    event({
+      error: { name: "HttpError", message: "POST api.example.com/v1/pay responded 500" },
+      request: { method: "POST", url: "https://api.example.com:8443/v1/pay", status: 500 },
+      ...(body ? { response: { status: 500, body } } : {}),
+    });
+
+  it("a trace id in the JSON error body, when there's no trace header", () => {
+    expect(whereOf(call500('{"message":"boom","traceId":"abc123"}')).hops[4]).toEqual({ kind: "source", value: "api.example.com · traceId abc123" });
+  });
+
+  it("an error code in the body, when there's no trace id anywhere", () => {
+    expect(whereOf(call500('{"code":"PAY_DOWN"}')).hops[4]).toEqual({ kind: "source", value: "api.example.com · code PAY_DOWN" });
+  });
+
+  it("a URL with a scheme and port still names its host in the log search, and ignores a cut body", () => {
+    expect(whereOf(call500('{"traceId":"abc…[truncated]')).hops[4]).toEqual({ kind: "source", missing: true, ask: "No trace id in this response: search the api.example.com logs for POST https://api.example.com:8443/v1/pay at 08:31:44 UTC." });
+  });
+
+  it("a tap known only by its testID, whatever the breadcrumb says", () => {
+    const w = whereOf(event({ error: { name: "Error", message: "x" }, breadcrumbs: [crumb(40, { category: "ui", message: "Press", data: { label: null, testID: "buy-confirm" } })] }));
+    expect(w.hops[2]).toEqual({ kind: "action", value: "Tapped buy-confirm" });
+  });
+
+  it("an unreadable event time doesn't break the log search", () => {
+    const w = whereOf({ ...call500(), ts: "not a time" });
+    expect(w.hops[4]).toMatchObject({ missing: true, ask: expect.stringContaining("at not a time.") });
+  });
+});
+
 describe("trace ids the backend already sends", () => {
-  it("reads W3C traceparent and Google Cloud's header down to the trace id", () => {
+  it("reads W3C traceparent, Google Cloud's and AWS X-Ray's headers down to the trace id", () => {
     expect(traceIdIn("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
     expect(traceIdIn("x-cloud-trace-context", "105445aa7843bc8bf206b12000100000/1;o=1")).toBe("105445aa7843bc8bf206b12000100000");
+    expect(traceIdIn("x-amzn-trace-id", "Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1")).toBe("1-5759e988-bd862e3fe1be46a994272793");
     expect(traceIdIn("x-request-id", "abc-123")).toBe("abc-123");
   });
 
-  it("prefers traceparent, skips redacted values, and falls back to the app's breadcrumb", () => {
-    expect(traceOf({ "x-request-id": "r1", traceparent: "00-t1-s1-01" }, undefined)).toEqual({ header: "traceparent", id: "t1" });
-    expect(traceOf({ traceparent: "[redacted]", "x-request-id": "r1" }, undefined)).toEqual({ header: "x-request-id", id: "r1" });
-    expect(traceOf(undefined, { traceId: "4f2c9a", failed: true })).toEqual({ header: "traceId", id: "4f2c9a" });
-    expect(traceOf({}, { failed: true })).toBeUndefined();
+  it("rejects a malformed or all-zero traceparent", () => {
+    expect(traceIdIn("traceparent", "garbage-x")).toBeUndefined();
+    expect(traceIdIn("traceparent", "00-00000000000000000000000000000000-00f067aa0ba902b7-01")).toBeUndefined();
+  });
+
+  it("prefers traceparent, skips redacted or invalid values, then the body, then the app's breadcrumb", () => {
+    const tp = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+    expect(traceOf({ "x-request-id": "r1", traceparent: tp }, undefined, undefined)).toEqual({ from: "traceparent", id: "4bf92f3577b34da6a3ce929d0e0e4736" });
+    expect(traceOf({ traceparent: "[redacted]", "x-request-id": "r1" }, undefined, undefined)).toEqual({ from: "x-request-id", id: "r1" });
+    expect(traceOf({ traceparent: "garbage-x", "x-request-id": "r1" }, undefined, undefined)).toEqual({ from: "x-request-id", id: "r1" });
+    expect(traceOf({}, '{"trace_id":"b1"}', { traceId: "c1", failed: true })).toEqual({ from: "traceId", id: "b1" });
+    expect(traceOf(undefined, undefined, { traceId: "4f2c9a", failed: true })).toEqual({ from: "traceId", id: "4f2c9a" });
+    expect(traceOf({}, undefined, { failed: true })).toBeUndefined();
   });
 });
