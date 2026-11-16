@@ -1,4 +1,17 @@
 import type { ApiCall, TimelineItem } from "~/server/event";
+import type { SessionDetail } from "~/server/session";
+
+const OUTCOME: Record<SessionDetail["outcome"], { label: string; title: string; className: string }> = {
+  crashed: { label: "Crashed", title: "A fatal error ended the app.", className: "bg-sev-critical text-white" },
+  errored: { label: "Errored", title: "An error the app didn't catch, but no crash.", className: "bg-sev-high text-white" },
+  clean: { label: "Clean", title: "No crash and no uncaught errors. Errors the app caught are counted apart.", className: "border border-line text-muted" },
+};
+
+/** A session's outcome: crashed, errored or clean. */
+export function OutcomeBadge({ outcome }: { outcome: SessionDetail["outcome"] }) {
+  const o = OUTCOME[outcome];
+  return <span title={o.title} className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${o.className}`}>{o.label}</span>;
+}
 
 /** One glyph per breadcrumb category, next to its label. */
 export const ICON: Record<TimelineItem["category"], string> = { navigation: "→", network: "⇅", ui: "◉", log: "≡", event: "◆", custom: "✱" };

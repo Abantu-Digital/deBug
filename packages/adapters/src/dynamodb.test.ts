@@ -44,4 +44,18 @@ describe("DynamoStore sessions", () => {
     await new DynamoStore(doc, { table: "t" }).restampExpiry("a", 7);
     expect(updates.map((u) => u.Key.pk).sort()).toEqual([`APP#a#EV#${day}`, "APP#a#ISSUEEV#fp", "APP#a#SESSEV#s1"]);
   });
+
+  it("keeps each event by customer number and install id too, and restamps those copies", async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const { doc, updates } = fakeDoc([{ ...row(`APP#a#EV#${day}`, 1), user: { id: "0841234567", anonymousId: "inst-1" } }], 10);
+    await new DynamoStore(doc, { table: "t" }).restampExpiry("a", 7);
+    expect(updates.map((u) => u.Key.pk).sort()).toEqual([`APP#a#EV#${day}`, "APP#a#SESSEV#s1", "APP#a#USEREV#anonymousId#inst-1", "APP#a#USEREV#id#0841234567"]);
+  });
+
+  it("merges a lookup over several customer-number formats, newest first", async () => {
+    const rows = [row("APP#a#USEREV#id#0841234567", 1), row("APP#a#USEREV#id#27841234567", 3), row("APP#a#USEREV#id#0841234567", 2)];
+    const { doc } = fakeDoc(rows, 1);
+    const out = await new DynamoStore(doc, { table: "t" }).listUserEvents("a", "id", ["0841234567", "27841234567"], { limit: 2 });
+    expect(out.map((e) => e.event.id)).toEqual(["e3", "e2"]);
+  });
 });

@@ -2,7 +2,7 @@ import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { BatchWriteCommand, type BatchWriteCommandOutput, GetCommand, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { isRegression, type Issue, type RollupDimension, type RollupIncrement, type RollupRow, type StoredEvent } from "@debugkit/schema";
 import { coalesceRollups } from "./rollups";
-import { HOURLY_ROLLUP_DAYS, type TeamInvite, type TeamMember, type AppSettings, type IssueStatusChange, type IssueUpsert, type RestampResult, type Store, type UpsertOutcome, type UserMark } from "./index";
+import { HOURLY_ROLLUP_DAYS, type TeamInvite, type TeamMember, type AppSettings, type IssueStatusChange, type IssueUpsert, type RestampResult, type Store, type UpsertOutcome, type UserField, type UserMark } from "./index";
 
 /**
  * Single-table layout. Table needs: partition key `pk` (S), sort key `sk` (S),
@@ -14,6 +14,8 @@ import { HOURLY_ROLLUP_DAYS, type TeamInvite, type TeamMember, type AppSettings,
  *   APP#{app}#ISSUEEV#{fp}       | {ts}#{id}        StoredEvent (error events by issue)
  *   APP#{app}#EV#{day}           | {ts}#{id}        StoredEvent (all events by day)
  *   APP#{app}#SESSEV#{sessionId} | {ts}#{id}        StoredEvent (all events by session)
+ *   APP#{app}#USEREV#id#{userId} | {ts}#{id}        StoredEvent (by customer number, user.id)
+ *   APP#{app}#USEREV#anonymousId#{anonymousId} | {ts}#{id}   StoredEvent (by install id)
  *   APP#{app}#SETTINGS           | app              AppSettings
  *   APP#{app}#USERS#{scope}      | {member}         { lastDay } (hashed ids; for "users affected")
  *
@@ -92,11 +94,7 @@ export class DynamoStore implements Store {
     const items = events.flatMap((e) => {
       const sk = `${e.event.ts}#${e.event.id}`;
       const base = { ...e, ttl: ttl(e) };
-      const rows = [{ pk: `APP#${e.app}#EV#${e.day}`, sk, ...base }];
-      if (e.fingerprint) rows.push({ pk: `APP#${e.app}#ISSUEEV#${e.fingerprint}`, sk, ...base });
-      // By session too, for the session timeline.
-      rows.push({ pk: `APP#${e.app}#SESSEV#${e.sessionId}`, sk, ...base });
-      return rows;
+      return [`APP#${e.app}#EV#${e.day}`, ...copyKeys(e)].map((pk) => ({ pk, sk, ...base }));
     });
     for (let i = 0; i < items.length; i += 25) {
       let req: Record<string, any> | undefined = {
@@ -301,11 +299,7 @@ export class DynamoStore implements Store {
       const items = await this.queryAll({ pk: `APP#${app}#EV#${day}` });
       for (const item of items) {
         const ttl = Math.floor(Date.parse(item.receivedAt as string) / 1000) + retentionDays * 86_400;
-        const keys = [
-          { pk: item.pk, sk: item.sk },
-          ...(item.fingerprint ? [{ pk: `APP#${app}#ISSUEEV#${item.fingerprint}`, sk: item.sk }] : []),
-          ...(item.sessionId ? [{ pk: `APP#${app}#SESSEV#${item.sessionId}`, sk: item.sk }] : []),
-        ];
+        const keys = [item.pk, ...copyKeys(item as unknown as StoredEvent)].map((pk) => ({ pk, sk: item.sk }));
         await Promise.all(
           keys.map((Key) =>
             this.doc
@@ -341,7 +335,12 @@ export class DynamoStore implements Store {
     return items.map((i) => clean(i as unknown as RollupRow));
   }
   async listSessionEvents(app: string, sessionId: string, { limit = 500 } = {}) {
-    // Newest first, a page at a time: a query stops at 1 MB, well short of 500 events with trails.
+    const items = await this.newest(`APP#${app}#SESSEV#${sessionId}`, limit);
+    return items.map((i) => clean(i as unknown as StoredEvent)).reverse();
+  }
+
+  /** A partition's newest `limit` items, a page at a time: a query stops at 1 MB, well short of 500 events with trails. */
+  private async newest(pk: string, limit: number) {
     const items: Record<string, unknown>[] = [];
     let ExclusiveStartKey: Record<string, unknown> | undefined;
     do {
@@ -349,7 +348,7 @@ export class DynamoStore implements Store {
         new QueryCommand({
           TableName: this.table,
           KeyConditionExpression: "pk = :pk",
-          ExpressionAttributeValues: { ":pk": `APP#${app}#SESSEV#${sessionId}` },
+          ExpressionAttributeValues: { ":pk": pk },
           ScanIndexForward: false,
           Limit: limit - items.length,
           ExclusiveStartKey,
@@ -358,7 +357,16 @@ export class DynamoStore implements Store {
       items.push(...(out.Items ?? []));
       ExclusiveStartKey = out.LastEvaluatedKey;
     } while (ExclusiveStartKey && items.length < limit);
-    return items.map((i) => clean(i as unknown as StoredEvent)).reverse();
+    return items;
+  }
+
+  async listUserEvents(app: string, field: UserField, values: readonly string[], { limit = 500 } = {}) {
+    const each = await Promise.all(values.map((v) => this.newest(userKey(app, field, v), limit)));
+    return each
+      .flat()
+      .sort((a, b) => String(b.sk).localeCompare(String(a.sk)))
+      .slice(0, limit)
+      .map((i) => clean(i as unknown as StoredEvent));
   }
 
   async listIssueEvents(app: string, fp: string, { limit = 50 } = {}) {
@@ -391,6 +399,18 @@ export class DynamoStore implements Store {
     } while (ExclusiveStartKey);
     return items;
   }
+}
+
+const userKey = (app: string, field: UserField, value: string) => `APP#${app}#USEREV#${field}#${value}`;
+
+/** The partitions an event is copied into besides its day: by issue, session and user. */
+function copyKeys(e: StoredEvent): string[] {
+  return [
+    ...(e.fingerprint ? [`APP#${e.app}#ISSUEEV#${e.fingerprint}`] : []),
+    ...(e.sessionId ? [`APP#${e.app}#SESSEV#${e.sessionId}`] : []),
+    ...(e.user?.id ? [userKey(e.app, "id", e.user.id)] : []),
+    ...(e.user?.anonymousId ? [userKey(e.app, "anonymousId", e.user.anonymousId)] : []),
+  ];
 }
 
 function clean<T>(item: T): T {

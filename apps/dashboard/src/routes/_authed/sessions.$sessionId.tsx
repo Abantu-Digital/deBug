@@ -1,9 +1,9 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { CopyButton } from "~/components/copy-button";
-import { CrumbBody, ICON, clock, joined, roundedSpan } from "~/components/timeline";
+import { CrumbBody, ICON, OutcomeBadge, clock, joined, roundedSpan } from "~/components/timeline";
 import { Card } from "~/components/ui";
 import { getSessionDetail } from "~/server/fns";
-import type { SessionDetail, SessionRow, Source } from "~/server/session";
+import type { SessionRow, Source } from "~/server/session";
 
 export const Route = createFileRoute("/_authed/sessions/$sessionId")({
   validateSearch: (s: Record<string, unknown>): { app: string } => ({ app: typeof s.app === "string" ? s.app : "" }),
@@ -15,12 +15,6 @@ export const Route = createFileRoute("/_authed/sessions/$sessionId")({
   },
   component: SessionPage,
 });
-
-const OUTCOME: Record<SessionDetail["outcome"], { label: string; title: string; className: string }> = {
-  crashed: { label: "Crashed", title: "A fatal error ended the app.", className: "bg-sev-critical text-white" },
-  errored: { label: "Errored", title: "An error the app didn't catch, but no crash.", className: "bg-sev-high text-white" },
-  clean: { label: "Clean", title: "No crash and no uncaught errors. Errors the app caught are counted below.", className: "border border-line text-muted" },
-};
 
 function SessionPage() {
   const { session: s, missingIndex } = Route.useLoaderData();
@@ -34,7 +28,6 @@ function SessionPage() {
       </main>
     );
   }
-  const o = OUTCOME[s.outcome];
   const customer = s.user.id;
   return (
     <main className="mx-auto max-w-5xl space-y-5 px-4 py-6 sm:px-6">
@@ -44,7 +37,12 @@ function SessionPage() {
         </p>
         <div className="mt-1 flex flex-wrap items-center gap-3">
           <h1 className="text-xl font-semibold tracking-tight">{customer ? <span className="break-all font-mono">{customer}</span> : "Not signed in"}</h1>
-          <span title={o.title} className={`rounded px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${o.className}`}>{o.label}</span>
+          <OutcomeBadge outcome={s.outcome} />
+          {(customer || s.user.anonymousId) && (
+            <Link to="/customers" search={{ app: s.app, q: customer ?? s.user.anonymousId }} className="text-sm text-accent hover:underline">
+              All their sessions →
+            </Link>
+          )}
         </div>
       </div>
 

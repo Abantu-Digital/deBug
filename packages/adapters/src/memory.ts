@@ -1,6 +1,6 @@
 import { isRegression, type Issue, type RollupDimension, type RollupIncrement, type RollupRow, type StoredEvent } from "@debugkit/schema";
 import { coalesceRollups, rollupId } from "./rollups";
-import type { TeamInvite, TeamMember, AppSettings, IssueStatusChange, IssueUpsert, RestampResult, Store, UpsertOutcome, UserMark } from "./index";
+import type { TeamInvite, TeamMember, AppSettings, IssueStatusChange, IssueUpsert, RestampResult, Store, UpsertOutcome, UserField, UserMark } from "./index";
 
 /** In-process store for tests and the dashboard's demo mode. */
 export class MemoryStore implements Store {
@@ -143,6 +143,13 @@ export class MemoryStore implements Store {
       .filter((e) => e.app === app && e.sessionId === sessionId)
       .sort((a, b) => a.event.ts.localeCompare(b.event.ts))
       .slice(-limit);
+  }
+
+  async listUserEvents(app: string, field: UserField, values: readonly string[], { limit = 500 } = {}) {
+    return this.events
+      .filter((e) => e.app === app && e.user?.[field] !== undefined && values.includes(e.user[field]!))
+      .sort((a, b) => b.event.ts.localeCompare(a.event.ts))
+      .slice(0, limit);
   }
 
   async listIssueEvents(app: string, fp: string, { limit = 50 } = {}) {
