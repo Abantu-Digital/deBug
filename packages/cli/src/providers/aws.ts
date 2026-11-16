@@ -6,7 +6,7 @@ import { zipSync } from "fflate";
 import { interactive, which } from "../exec";
 import { keyEntry, mergeKeys } from "../keys";
 import { cmdFor, dynamoTableUsedBy, environment, type DebugkitConfig } from "../state";
-import { ask, bail, choose, code, dim, next, p, yes } from "../ui";
+import { ask, bail, choose, code, dim, fail, next, p, yes } from "../ui";
 import { adminEnv, type ProviderResult, type SetupContext } from "./types";
 
 const REGIONS = [
@@ -341,24 +341,29 @@ export async function upgradeAwsIngest(cfg: DebugkitConfig): Promise<void> {
   const lambda = new lambdaMod.LambdaClient({ region: aws.region, credentials: fromNodeProviderChain(aws.profile ? { profile: aws.profile } : {}) });
   const s = p.spinner();
   s.start(`Updating Lambda ${aws.functionName} in ${aws.region}`);
-  let fn: import("@aws-sdk/client-lambda").GetFunctionCommandOutput | undefined;
-  try {
-    fn = await lookup(() => lambda.send(new lambdaMod.GetFunctionCommand({ FunctionName: aws.functionName })));
-  } catch (err) {
-    s.error("AWS didn't accept these credentials");
+  // A missing or foreign function is checked before anything changes; AWS errors stop with what AWS said.
+  const stop = (summary: string, err: unknown): never => {
+    s.error(summary);
+    const name = (err as { name?: string }).name ?? "";
+    const signIn = /Credential|Token|Expired|SSO|UnrecognizedClient/i.test(name + (err as Error).message);
     const sso = aws.profile && awsProfiles().find((x) => x.name === aws.profile)?.sso;
-    bail(`${(err as Error).message}${sso ? `\nSign in again with ${code(`aws sso login --profile ${aws.profile}`)}, then rerun ${code(cmdFor("upgrade"))}.` : ""}`);
-  }
+    fail(`${(err as Error).message}${signIn && sso ? `\nSign in again with ${code(`aws sso login --profile ${aws.profile}`)}, then rerun ${code(cmdFor("upgrade"))}.` : ""}`);
+  };
+  const fn = await lookup(() => lambda.send(new lambdaMod.GetFunctionCommand({ FunctionName: aws.functionName }))).catch((err) => stop(`Couldn't read ${aws.functionName}`, err));
   if (!fn) {
     s.error(`${aws.functionName} isn't in ${aws.region}`);
-    bail(`The ingest function is gone. Run ${cmdFor("init")} to set it up again.`);
+    fail(`The ingest function is gone. Run ${cmdFor("init")} to set it up again.`);
   }
   if (fn.Tags?.[CREATED_BY] !== "debugkit") {
     s.error(`${aws.functionName} wasn't created by deBug`);
-    bail(`deBug won't overwrite a function it didn't create.`);
+    fail("deBug won't overwrite a function it didn't create.");
   }
-  await lambda.send(new lambdaMod.UpdateFunctionCodeCommand({ FunctionName: aws.functionName, ZipFile: lambdaZip() }));
-  await waitUpdated(lambda, lambdaMod, aws.functionName);
+  try {
+    await lambda.send(new lambdaMod.UpdateFunctionCodeCommand({ FunctionName: aws.functionName, ZipFile: lambdaZip() }));
+    await waitUpdated(lambda, lambdaMod, aws.functionName);
+  } catch (err) {
+    stop(`Couldn't update ${aws.functionName}`, err);
+  }
   s.stop(`Lambda ${aws.functionName} runs this version`);
 }
 

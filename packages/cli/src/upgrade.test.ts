@@ -80,6 +80,10 @@ describe("release notes", () => {
     expect(notesBetween(notes, "0.8.0", "0.8.0")).toEqual([]);
   });
 
+  it("doesn't end a headline at an abbreviation", () => {
+    expect(releaseNotes(["## 0.9.0\n\n- abcdef1: Taps, e.g. buttons and links, as breadcrumbs. More."])[0]!.headlines).toEqual(["Taps, e.g. buttons and links, as breadcrumbs"]);
+  });
+
   it("compares versions by number, not text", () => {
     expect(compareVersions("0.10.0", "0.9.0")).toBeGreaterThan(0);
     expect(compareVersions("^0.7.2", "0.7.2")).toBe(0);
@@ -117,7 +121,7 @@ describe("upgrade plan", () => {
 
   it("shows each part from its version to the CLI's, and what changed since the oldest", () => {
     const plan = upgradePlan(firebase, { ingest: "0.7.0", dashboard: "0.6.1" }, "0.8.0", notes);
-    expect(plan.tooOld).toBeUndefined();
+    expect(plan.cliBehind).toBeUndefined();
     expect(plan.upToDate).toBe(false);
     expect(plan.lines.join("\n")).toMatch(/Ingest.*0\.7\.0 → 0\.8\.0/);
     expect(plan.lines.join("\n")).toMatch(/Firestore indexes/);
@@ -127,8 +131,8 @@ describe("upgrade plan", () => {
 
   it("refuses when something deployed is newer than the CLI", () => {
     const plan = upgradePlan(firebase, { ingest: "0.9.0", dashboard: "0.8.0" }, "0.8.0", notes);
-    expect(plan.tooOld).toMatch(/0\.9\.0, newer than this CLI \(0\.8\.0\)/);
-    expect(plan.tooOld).toMatch(/@debugkit\/cli@0\.9\.0 upgrade/);
+    expect(plan.cliBehind).toMatch(/0\.9\.0, newer than this CLI \(0\.8\.0\)/);
+    expect(plan.cliBehind).toMatch(/@debugkit\/cli@0\.9\.0 upgrade/);
   });
 
   it("is up to date only when every part is known to be at the CLI's version", () => {
@@ -138,7 +142,8 @@ describe("upgrade plan", () => {
 
   it("on AWS has no indexes, and lists no notes when the version isn't recorded", () => {
     const plan = upgradePlan(aws, {}, "0.8.0", notes);
-    expect(plan.lines.join("\n")).not.toMatch(/indexes/);
+    expect(plan.lines.join("\n")).toMatch(/none needed \(DynamoDB\)/);
+    expect(plan.lines.join("\n")).not.toMatch(/Firestore/);
     expect(plan.lines.join("\n")).toMatch(/Lambda debugkit-ingest-debugkit in af-south-1/);
     expect(plan.lines.join("\n")).toMatch(/not set up/);
     expect(plan.notes).toEqual([]);

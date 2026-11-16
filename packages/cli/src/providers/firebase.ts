@@ -5,7 +5,7 @@ import FIRESTORE_INDEXES from "../../../adapters/firestore.indexes.json" with { 
 import { VERSION } from "../dashboard";
 import { mergeKeys } from "../keys";
 import { cmdFor, environment, firebaseProjectUsedBy, paths, readEnv, type DebugkitConfig } from "../state";
-import { ask, bail, bold, choose, code, dim, flags, next, p, yes } from "../ui";
+import { ask, bail, bold, choose, code, dim, fail, flags, next, p, yes } from "../ui";
 import { adminEnv, type ProviderResult, type SetupContext } from "./types";
 
 /** Firestore locations offered, with the Cloud Functions region that sits closest to each. */
@@ -18,7 +18,7 @@ const LOCATIONS: { value: string; label: string; region: string }[] = [
   { value: "asia-southeast1", label: "Singapore (asia-southeast1)", region: "asia-southeast1" },
 ];
 
-const FUNCTION_NAME = "debugIngest";
+export const FUNCTION_NAME = "debugIngest";
 const CODEBASE = "debugkit";
 
 /** Oldest firebase-tools that deploys the nodejs22 runtime. Older installs fall back to npx. */
@@ -198,8 +198,7 @@ async function installFunctionDependencies(dir: string) {
   const inst = await capture("npm", ["install", "--no-audit", "--no-fund"], { cwd: join(dir, "functions") });
   if (inst.code !== 0) {
     s.error("npm install failed");
-    p.log.error(inst.stderr.slice(-600));
-    bail();
+    fail(`npm install failed in ${join(dir, "functions")}:\n${inst.stderr.slice(-600)}`);
   }
   s.stop("Installed the ingest function's dependencies");
 }
@@ -239,6 +238,10 @@ async function deployIngestFunction(fbLive: Run, proj: string[], dir: string, pr
   }
 }
 
+/** The Google account this setup deploys with: kept in the gitignored dashboard env (older configs had it in config.json). */
+export const firebaseAccount = (dashboardEnv: Record<string, string>, cfg: DebugkitConfig): string | undefined =>
+  dashboardEnv.DEBUGKIT_FIREBASE_ACCOUNT || cfg.firebase?.account;
+
 /** The Firebase CLI, signed in as the account this setup uses. */
 export async function firebaseFor(cfg: DebugkitConfig, account: string | undefined) {
   const fbc = cfg.firebase ?? bail(`This setup has no Firebase project saved. Run ${cmdFor("init")} again.`);
@@ -252,12 +255,12 @@ export async function firebaseFor(cfg: DebugkitConfig, account: string | undefin
  * Upgrade: the same ingest function at this CLI's version, in the same project and region, with
  * the keys, retention and admin token it already has. Then deBug's current indexes.
  */
-export async function upgradeFirebaseIngest(cwd: string, cfg: DebugkitConfig, account: string | undefined): Promise<{ indexes: boolean }> {
-  const { fbc, proj, fbLive } = await firebaseFor(cfg, account);
+export async function upgradeFirebaseIngest(cwd: string, cfg: DebugkitConfig): Promise<{ indexes: boolean }> {
+  const { fbc, proj, fbLive } = await firebaseFor(cfg, firebaseAccount(readEnv(paths(cwd).dashboardEnv), cfg));
   const dir = paths(cwd).firebase;
   const fnEnv = readEnv(join(dir, "functions", ".env"));
   const adminToken = readEnv(join(dir, "functions", `.env.${fbc.projectId}`)).DEBUG_ADMIN_TOKEN ?? readEnv(paths(cwd).dashboardEnv).DEBUG_ADMIN_TOKEN;
-  if (!adminToken) bail(`The ingest function's admin token is missing from ${dir}/functions. Run ${cmdFor("init")} again to set it up.`);
+  if (!adminToken) fail(`The ingest function's admin token is missing from ${dir}/functions. Run ${cmdFor("init")} again to set it up.`);
   writeFunctionSource(
     { app: { cwd, appId: cfg.appId }, ingestKey: cfg.ingestKey, adminToken, retentionDays: Number(fnEnv.DEBUG_RETENTION_DAYS) || cfg.retentionDays || 30 },
     fbc.region,
@@ -265,7 +268,8 @@ export async function upgradeFirebaseIngest(cwd: string, cfg: DebugkitConfig, ac
   );
   await installFunctionDependencies(dir);
   const indexes = await deployIndexes(fbLive, proj, dir);
-  if (!indexes) p.log.warn(`The indexes didn't deploy. Run ${cmdFor("upgrade")} again, or deploy them by hand: cd ${dir} && firebase deploy --only firestore:indexes --project ${fbc.projectId}`);
+  if (indexes) p.log.info("New indexes take a few minutes to build. Pages that need them say so until then.");
+  else p.log.warn(`The indexes didn't deploy. Run ${cmdFor("upgrade")} again, or deploy them by hand: cd ${dir} && npx firebase-tools@latest deploy --only firestore:indexes --project ${fbc.projectId}`);
   p.log.step(`Deploying ${code(FUNCTION_NAME)} in ${fbc.region}`);
   await deployIngestFunction(fbLive, proj, dir, fbc.projectId);
   return { indexes };
@@ -344,9 +348,10 @@ export function writeFunctionSource(ctx: IngestSource, region: string, projectId
         main: "index.js",
         engines: { node: "22" },
         dependencies: {
-          // Same release as this CLI (the packages are versioned together).
-          "@debugkit/adapters": `^${VERSION}`,
-          "@debugkit/ingest": `^${VERSION}`,
+          // Exactly this CLI's release (the packages are versioned together), so the version
+          // upgrade records is the one deployed.
+          "@debugkit/adapters": VERSION,
+          "@debugkit/ingest": VERSION,
           "firebase-admin": "^13.0.0",
           "firebase-functions": "^7.0.0",
         },

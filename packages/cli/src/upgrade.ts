@@ -4,10 +4,10 @@ import FIRESTORE_INDEXES from "../../adapters/firestore.indexes.json" with { typ
 import { VERSION } from "./dashboard";
 import { hostDashboard } from "./hosting";
 import { upgradeAwsIngest } from "./providers/aws";
-import { upgradeFirebaseIngest } from "./providers/firebase";
+import { FUNCTION_NAME, upgradeFirebaseIngest } from "./providers/firebase";
 import { compareVersions, notesBetween, parseVersion, RELEASES, type ReleaseNotes } from "./releases";
-import { cmdFor, environment, paths, readConfig, readEnv, writeConfig, type DebugkitConfig } from "./state";
-import { bail, bold, code, dim, p, pc, yes } from "./ui";
+import { cmdFor, environment, paths, readConfig, writeConfig, type DebugkitConfig } from "./state";
+import { bail, bold, code, dim, fail, p, pc, yes } from "./ui";
 
 /** The deBug versions deployed for this setup. Undefined when the setup doesn't say. */
 export interface Deployed {
@@ -35,7 +35,7 @@ function installedVersion(folder: string, pkg: string): string | undefined {
 }
 
 /**
- * What's deployed: saved in the config from 0.8.1. Older Firebase setups are read from the source
+ * What's deployed: saved in the config by CLIs that have `upgrade`. Older Firebase setups are read from the source
  * deBug wrote in .debugkit/firebase; older AWS setups don't record it.
  */
 export function deployedVersions(cwd: string, cfg: DebugkitConfig): Deployed {
@@ -50,39 +50,42 @@ export function deployedVersions(cwd: string, cfg: DebugkitConfig): Deployed {
 export interface UpgradePlan {
   /** One line per part, "what: from → to". */
   lines: string[];
-  /** Set when something deployed is newer than this CLI: upgrading would take it back. */
-  tooOld?: string;
+  /** Set when something deployed is newer than this CLI (upgrading would take it back): what to run instead. */
+  cliBehind?: string;
   /** Every part is known to be at this CLI's version already. */
   upToDate: boolean;
   /** One line per version between the oldest part deployed and this CLI. Empty when that isn't known. */
   notes: string[];
 }
 
-const from = (v: string | undefined) => (v ? `${v} → ` : `${dim("version not recorded")} → `);
+/** "0.7.0 → ", the start of a "from → to" line. */
+const fromVersion = (v: string | undefined) => (v ? `${v} → ` : `${dim("version not recorded")} → `);
 
 export function upgradePlan(cfg: DebugkitConfig, deployed: Deployed, cli = VERSION, releases: ReleaseNotes = RELEASES): UpgradePlan {
   const ahead = [deployed.ingest, deployed.dashboard].filter((v) => v && compareVersions(v, cli) > 0);
   const newest = ahead.sort((a, b) => compareVersions(b, a))[0];
-  const tooOld = newest
+  const cliBehind = newest
     ? `This setup runs deBug ${newest}, newer than this CLI (${cli}). Run the newer CLI instead: ${code(`npx @debugkit/cli@${newest} upgrade${environment.get() ? ` --env ${environment.get()}` : ""}`)}.`
     : undefined;
 
   const ingest =
     cfg.provider === "firebase"
-      ? `Cloud Function debugIngest in ${cfg.firebase?.region} (${cfg.firebase?.projectId})`
+      ? `Cloud Function ${FUNCTION_NAME} in ${cfg.firebase?.region} (${cfg.firebase?.projectId})`
       : `Lambda ${cfg.aws?.functionName} in ${cfg.aws?.region}`;
   const lines = [
-    `${bold("Ingest")}: ${from(deployed.ingest)}${cli} · ${ingest}, same URL and keys`,
-    ...(cfg.provider === "firebase" ? [`${bold("Firestore indexes")}: deBug's ${FIRESTORE_INDEXES.indexes.length}, added where missing (your own indexes are left alone)`] : []),
+    `${bold("Ingest")}: ${fromVersion(deployed.ingest)}${cli} · ${ingest}, same URL and keys`,
+    cfg.provider === "firebase"
+      ? `${bold("Firestore indexes")}: deBug's ${FIRESTORE_INDEXES.indexes.length}, added where missing (your own indexes are left alone)`
+      : `${bold("Indexes")}: ${dim("none needed (DynamoDB)")}`,
     cfg.hosted
-      ? `${bold("Hosted dashboard")}: ${from(deployed.dashboard)}${cli} · ${cfg.hosted.url}, same login`
+      ? `${bold("Hosted dashboard")}: ${fromVersion(deployed.dashboard)}${cli} · ${cfg.hosted.url}, same login`
       : `${bold("Hosted dashboard")}: ${dim(`not set up (host it with ${cmdFor("deploy-dashboard")})`)}`,
   ];
   const parts = [deployed.ingest, ...(cfg.hosted ? [deployed.dashboard] : [])];
   const upToDate = parts.every((v) => v !== undefined && compareVersions(v, cli) === 0);
   // From the oldest part, so every change that part hasn't had yet is listed.
   const oldest = parts.every(Boolean) ? (parts as string[]).sort(compareVersions)[0] : undefined;
-  return { lines, tooOld, upToDate, notes: oldest ? notesBetween(releases, oldest, cli) : [] };
+  return { lines, cliBehind, upToDate, notes: oldest ? notesBetween(releases, oldest, cli) : [] };
 }
 
 /** npx debugkit upgrade: bring ingest, the indexes and the hosted dashboard to this CLI's version. */
@@ -94,11 +97,7 @@ export async function upgrade(cwd: string, cfg: DebugkitConfig, opts: { dryRun: 
     return;
   }
   const plan = upgradePlan(cfg, deployedVersions(cwd, cfg));
-  if (plan.tooOld) {
-    // A failure, not a choice: scripts should see it.
-    p.cancel(plan.tooOld);
-    process.exit(1);
-  }
+  if (plan.cliBehind) fail(plan.cliBehind);
   p.note(plan.lines.join("\n"), opts.dryRun ? "Would deploy" : "About to deploy");
   const whatsNew = () => {
     if (plan.notes.length) p.note(plan.notes.join("\n"), "What's new");
@@ -116,12 +115,12 @@ export async function upgrade(cwd: string, cfg: DebugkitConfig, opts: { dryRun: 
 
   // Ingest first: the new dashboard reads fields only the new ingest writes.
   let indexes = false;
-  if (cfg.provider === "firebase") {
-    const account = readEnv(paths(cwd).dashboardEnv).DEBUGKIT_FIREBASE_ACCOUNT || cfg.firebase?.account;
-    indexes = (await upgradeFirebaseIngest(cwd, cfg, account)).indexes;
-  } else await upgradeAwsIngest(cfg);
-  writeConfig(cwd, { ...cfg, version: VERSION });
+  if (cfg.provider === "firebase") indexes = (await upgradeFirebaseIngest(cwd, cfg)).indexes;
+  else await upgradeAwsIngest(cfg);
   p.log.success(`Ingest runs deBug ${VERSION} at ${code(cfg.endpoint)}`);
+  // The version covers the indexes too: if they didn't deploy, keep the old one so the next run tries again.
+  const complete = cfg.provider !== "firebase" || indexes;
+  if (complete) writeConfig(cwd, { ...cfg, version: VERSION });
 
   let url = cfg.hosted?.url;
   if (cfg.hosted) {
@@ -134,7 +133,7 @@ export async function upgrade(cwd: string, cfg: DebugkitConfig, opts: { dryRun: 
   p.outro(
     [
       `deBug${env} is at ${VERSION}.`,
-      indexes ? "New Firestore indexes take a few minutes to build; pages that need them say so until then." : "",
+      cfg.provider === "firebase" && !indexes ? `The Firestore indexes didn't deploy: run ${code(cmdFor("upgrade"))} again to add them.` : "",
       url ? `Dashboard: ${code(url)}` : `Open the dashboard with ${code(cmdFor("dashboard"))}.`,
     ]
       .filter(Boolean)

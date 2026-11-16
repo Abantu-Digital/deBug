@@ -49,7 +49,8 @@ export function releaseNotes(changelogs: readonly string[]): ReleaseNotes {
 function headlineOf(text: string): string {
   // A colon inside `code` (like `npx debugkit init`) isn't the end of the headline.
   const plain = text.replace(/`[^`]*`/g, (s) => s.replace(/[:.]/g, "\u0000"));
-  const end = plain.search(/[:.](\s|$)/);
+  // A sentence ends at ": " or at ". " before a capital, so "e.g. " doesn't end it.
+  const end = plain.search(/:(\s|$)|\.(\s+[A-Z(`]|\s*$)/);
   const headline = (end > 0 ? text.slice(0, end) : text).trim();
   // One line per version: a headline that runs on is cut.
   return headline.length > 70 ? `${headline.slice(0, 69).trimEnd()}…` : headline;

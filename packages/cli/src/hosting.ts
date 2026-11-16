@@ -6,7 +6,7 @@ import { zipSync } from "fflate";
 import { DASHBOARD_VERSION } from "./dashboard";
 import { capture, interactive, which } from "./exec";
 import { lookup } from "./providers/aws";
-import { asArray, deployIndexes, firebaseCli, writeFirebaseJson } from "./providers/firebase";
+import { asArray, deployIndexes, firebaseAccount, firebaseCli, writeFirebaseJson } from "./providers/firebase";
 import { cmdFor, environment, paths, readEnv, upsertEnv, writeConfig, type DebugkitConfig } from "./state";
 import { bail, bold, choose, code, dim, p, yes } from "./ui";
 
@@ -40,7 +40,7 @@ export const dotenv = (values: Record<string, string>) =>
  */
 async function dashboardDependency(into: string): Promise<string> {
   const dir = process.env.DEBUGKIT_DASHBOARD_DIR;
-  if (!dir || !existsSync(join(dir, "handler.mjs"))) return `^${DASHBOARD_VERSION}`;
+  if (!dir || !existsSync(join(dir, "handler.mjs"))) return DASHBOARD_VERSION;
   for (const f of readdirSync(into)) if (f.endsWith(".tgz")) rmSync(join(into, f));
   const r = await capture("npm", ["pack", "--silent", "--pack-destination", into], { cwd: dir });
   const tgz = r.stdout.trim().split(/\r?\n/).pop();
@@ -240,7 +240,7 @@ export function writeHostingConfig(dir: string, site: string, region: string) {
 async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<string, string>, opts: HostOptions) {
   const fbc = cfg.firebase ?? fail(opts, `This setup has no Firebase project saved. Run ${cmdFor("init")} again.`);
   const [fbCmd, fbPre] = await firebaseCli();
-  const account = local.DEBUGKIT_FIREBASE_ACCOUNT || fbc.account;
+  const account = firebaseAccount(local, cfg);
   const acct = account ? ["--account", account] : [];
   const proj = ["--project", fbc.projectId, ...acct];
   const fb = (args: string[], o: { cwd?: string } = {}) => capture(fbCmd, [...fbPre, ...args], o);
