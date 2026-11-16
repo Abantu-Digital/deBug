@@ -3,7 +3,7 @@ import { CopyButton } from "~/components/copy-button";
 import { CrumbBody, ICON, clock, joined } from "~/components/timeline";
 import { Card } from "~/components/ui";
 import { getSessionDetail } from "~/server/fns";
-import type { SessionDetail, SessionRow } from "~/server/session";
+import type { SessionDetail, SessionRow, Source } from "~/server/session";
 
 export const Route = createFileRoute("/_authed/sessions/$sessionId")({
   validateSearch: (s: Record<string, unknown>): { app: string } => ({ app: typeof s.app === "string" ? s.app : "" }),
@@ -16,10 +16,10 @@ export const Route = createFileRoute("/_authed/sessions/$sessionId")({
   component: SessionPage,
 });
 
-const OUTCOME: Record<SessionDetail["outcome"], { label: string; className: string }> = {
-  crashed: { label: "Crashed", className: "bg-sev-critical text-white" },
-  errored: { label: "Uncaught error", className: "bg-sev-high text-white" },
-  clean: { label: "No uncaught errors", className: "border border-line text-muted" },
+const OUTCOME: Record<SessionDetail["outcome"], { label: string; title: string; className: string }> = {
+  crashed: { label: "Crashed", title: "A fatal error ended the app.", className: "bg-sev-critical text-white" },
+  errored: { label: "Errored", title: "An error the app didn't catch, but no crash.", className: "bg-sev-high text-white" },
+  clean: { label: "Clean", title: "No crash and no uncaught errors. Errors the app caught are counted below.", className: "border border-line text-muted" },
 };
 
 function SessionPage() {
@@ -41,10 +41,12 @@ function SessionPage() {
   return (
     <main className="mx-auto max-w-5xl space-y-5 px-4 py-6 sm:px-6">
       <div>
-        <p className="text-xs uppercase tracking-wide text-muted">Session · {clock(s.start)} to {clock(s.end)} · {duration(s.start, s.end)}</p>
+        <p className="text-xs uppercase tracking-wide text-muted" title="From the earliest step recorded to the last stored event. The session may have started earlier and gone on after.">
+          Session · recorded {clock(s.start)} to {clock(s.end)} · {duration(s.start, s.end)}
+        </p>
         <div className="mt-1 flex flex-wrap items-center gap-3">
           <h1 className="text-xl font-semibold tracking-tight">{customer ? <span className="break-all font-mono">{customer}</span> : "Not signed in"}</h1>
-          <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${o.className}`}>{o.label}</span>
+          <span title={o.title} className={`rounded px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${o.className}`}>{o.label}</span>
         </div>
       </div>
 
@@ -62,6 +64,12 @@ function SessionPage() {
           <span className="break-all font-mono text-xs">{s.sessionId}</span>
           <span className="ml-2"><CopyButton text={s.sessionId} label="Copy" ariaLabel="Copy session id" /></span>
         </span>
+        {s.user.anonymousId && (
+          <span>
+            <span className="text-muted">Install </span>
+            <span className="break-all font-mono text-xs">{s.user.anonymousId}</span>
+          </span>
+        )}
         {customer && <span className="ml-auto"><CopyButton text={customer} label="Copy customer" ariaLabel="Copy customer id" /></span>}
       </section>
 
@@ -85,7 +93,10 @@ function Row({ row, app, start }: { row: SessionRow; app: string; start: string 
       <li className={`${cls} ${t.failed ? "bg-sev-critical/10" : t.level === "warning" ? "bg-sev-medium/10" : ""}`}>
         {at}
         <span aria-hidden className={`pt-0.5 text-center ${t.failed ? "text-sev-critical" : "text-muted"}`}>{ICON[t.category]}</span>
-        <div className="min-w-0"><CrumbBody item={t} /></div>
+        <div className="min-w-0">
+          <CrumbBody item={t} />
+          <SourceLink source={row.source} app={app} />
+        </div>
       </li>
     );
   }
@@ -97,6 +108,7 @@ function Row({ row, app, start }: { row: SessionRow; app: string; start: string 
         <div className="min-w-0">
           <span className="mr-2 rounded bg-panel-2 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted">flow</span>
           <span className={row.failed ? "font-medium" : ""}>{row.detail}</span>
+          <SourceLink source={row.source} app={app} />
         </div>
       </li>
     );
@@ -116,6 +128,16 @@ function Row({ row, app, start }: { row: SessionRow; app: string; start: string 
         )}
       </div>
     </li>
+  );
+}
+
+/** Opens the error whose trail holds this row, where the steps around it are shown. */
+function SourceLink({ source, app }: { source?: Source; app: string }) {
+  if (!source) return null;
+  return (
+    <Link to="/events/$eventId" params={{ eventId: source.eventId }} search={{ app, issue: source.fingerprint }} className="ml-2 whitespace-nowrap text-xs text-muted hover:text-ink hover:underline" title="Open the error this step led to">
+      in error →
+    </Link>
   );
 }
 

@@ -6,6 +6,8 @@ import { buildSessionDetail, describeEvent, uniqueCrumbs } from "./session";
 const at = (s: number) => new Date(Date.parse("2026-11-16T09:00:00.000Z") + s * 1000).toISOString();
 const crumbs = {
   open: { ts: at(0), category: "navigation", message: "Dashboard" },
+  // The SDK's own breadcrumb for the auth.login event below.
+  login: { ts: at(3), category: "event", message: "auth.login", data: { reason: "wrongOtp" } },
   buy: { ts: at(5), category: "navigation", message: "Dashboard → Buy" },
   tap: { ts: at(8), category: "ui", message: "Tapped \"Pay\"" },
   pay: { ts: at(9), category: "network", message: "POST /buy/with-airtime → 422 (98 ms)", level: "error", data: { service: "buy", path: "/buy/with-airtime", method: "POST", status: 422, outcome: "answered", backendCode: 4102 } },
@@ -29,7 +31,7 @@ describe("session timeline", () => {
   it("merges errors, flow events and their trails into one timeline, each breadcrumb once", async () => {
     const store = await session([
       { type: "event", id: "evt_000000001", ts: at(3), name: "auth.login", flow: "auth.login", outcome: "failure", props: { reason: "wrongOtp" } },
-      { type: "error", id: "evt_000000002", ts: at(10), error: { name: "HttpError", message: "POST /buy/with-airtime → 422" }, breadcrumbs: [crumbs.open, crumbs.buy, crumbs.tap, crumbs.pay] },
+      { type: "error", id: "evt_000000002", ts: at(10), error: { name: "HttpError", message: "POST /buy/with-airtime → 422" }, breadcrumbs: [crumbs.open, crumbs.login, crumbs.buy, crumbs.tap, crumbs.pay] },
       { type: "event", id: "evt_000000003", ts: at(9.5), name: "api.failed", props: { service: "buy", path: "/buy/with-airtime", status: 422 } },
       { type: "error", id: "evt_000000004", ts: at(25), handled: false, error: { name: "TypeError", message: "x is undefined" }, breadcrumbs: [crumbs.buy, crumbs.tap, crumbs.pay, crumbs.back] },
     ]);
@@ -47,11 +49,22 @@ describe("session timeline", () => {
     expect(s).toMatchObject({ outcome: "errored", counts: { errors: 2, handled: 1, events: 1 }, user: { id: "0841234567" }, start: at(0), end: at(25), truncated: false });
     const err = s.rows.find((r) => r.kind === "error")!;
     expect(err).toMatchObject({ eventId: "evt_000000002", fingerprint: expect.any(String) });
+    // Every step links to the first error whose trail holds it; the last screen came only with the second.
+    const sourceOf = (text: string) => {
+      const r = s.rows.find((x) => (x.kind === "crumb" ? x.item.message : x.kind === "event" ? x.detail : undefined) === text);
+      return r && r.kind !== "error" ? r.source?.eventId : undefined;
+    };
+    expect(sourceOf("Dashboard")).toBe("evt_000000002");
+    expect(sourceOf("auth.login: failed, wrongOtp")).toBe("evt_000000002");
+    expect(sourceOf("Buy → Dashboard")).toBe("evt_000000004");
   });
 
   it("calls a session with a fatal crash crashed, and one with only caught errors clean", async () => {
     const crash = await session([{ type: "error", id: "evt_000000011", ts: at(1), handled: false, severity: "critical", tags: { source: "global-handler" }, error: { name: "Error", message: "boom" } }], "s-crash");
     expect((await buildSessionDetail(crash, "a", "s-crash"))!.outcome).toBe("crashed");
+    // A fatal error the classifier didn't call a crash (here, a failed call) still crashed the session.
+    const fatal = await session([{ type: "error", id: "evt_000000013", ts: at(1), handled: false, severity: "critical", error: { name: "HttpError", message: "GET /x → 500" }, request: { method: "GET", url: "/x", status: 500 } }], "s-fatal");
+    expect((await buildSessionDetail(fatal, "a", "s-fatal"))!.outcome).toBe("crashed");
     const caught = await session([{ type: "error", id: "evt_000000012", ts: at(1), error: { name: "Error", message: "declined" } }], "s-ok");
     expect((await buildSessionDetail(caught, "a", "s-ok"))!).toMatchObject({ outcome: "clean", counts: { errors: 1, handled: 1 } });
     expect(await buildSessionDetail(caught, "a", "nope")).toBeNull();
@@ -60,7 +73,7 @@ describe("session timeline", () => {
   it("keeps the copy of a merged repeat with the highest count", () => {
     const b = { ts: at(1), category: "network" as const, message: "GET /x → failed", level: "error" as const };
     const ev = (n: number) => ({ event: { type: "error", breadcrumbs: [{ ...b, data: { repeated: n } }] } }) as never;
-    expect(uniqueCrumbs([ev(2), ev(5), ev(3)]).map((c) => c.data?.repeated)).toEqual([5]);
+    expect(uniqueCrumbs([ev(2), ev(5), ev(3)]).map((c) => c.crumb.data?.repeated)).toEqual([5]);
   });
 
   it("describes flow events in plain words", () => {

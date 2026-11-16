@@ -144,27 +144,38 @@ function sdkTwins(crumbs: readonly Breadcrumb[]): Set<Breadcrumb> {
 
 /** The breadcrumbs in time order (stable for equal times), each read for what it says. */
 export function timelineOf(crumbs: readonly Breadcrumb[] = [], hosts: readonly HostName[] = []): TimelineItem[] {
+  return byTime(withoutSdkTwins(crumbs)).map((b) => readCrumb(b, hosts));
+}
+
+/** Oldest first, stable for equal times. By time, not by string: "09:00:00Z" and "09:00:00.500Z" don't sort as text. */
+export function byTime<T extends { ts: string }>(items: readonly T[]): T[] {
+  return items
+    .map((x, i) => ({ x, i }))
+    .sort((p, q) => Date.parse(p.x.ts) - Date.parse(q.x.ts) || p.i - q.i)
+    .map(({ x }) => x);
+}
+
+/** The breadcrumbs without the SDK's own copy of a call the app also described. */
+export function withoutSdkTwins<B extends Breadcrumb>(crumbs: readonly B[]): B[] {
   const twins = sdkTwins(crumbs);
-  return crumbs
-    .filter((b) => !twins.has(b))
-    .map((b, i) => ({ b, i }))
-    // By time, not by string: "09:00:00Z" and "09:00:00.500Z" don't sort as text.
-    .sort((x, y) => Date.parse(x.b.ts) - Date.parse(y.b.ts) || x.i - y.i)
-    .map(({ b }) => {
-      const api = apiCallOf(b, hosts);
-      const rest = Object.entries(b.data ?? {}).filter(([k]) => k !== "repeated" && !(api && API_KEYS.has(k)));
-      const repeated = num(b.data?.repeated);
-      return {
-        ts: b.ts,
-        category: b.category,
-        message: nameUrlsIn(b.message, hosts),
-        level: b.level,
-        failed: api ? api.failed : b.level === "error",
-        ...(api ? { api } : {}),
-        ...(rest.length ? { data: Object.fromEntries(rest) } : {}),
-        ...(repeated && repeated > 1 ? { repeated } : {}),
-      };
-    });
+  return crumbs.filter((b) => !twins.has(b));
+}
+
+/** One breadcrumb read for what it says: the API call it describes, or its message. */
+export function readCrumb(b: Breadcrumb, hosts: readonly HostName[] = []): TimelineItem {
+  const api = apiCallOf(b, hosts);
+  const rest = Object.entries(b.data ?? {}).filter(([k]) => k !== "repeated" && !(api && API_KEYS.has(k)));
+  const repeated = num(b.data?.repeated);
+  return {
+    ts: b.ts,
+    category: b.category,
+    message: nameUrlsIn(b.message, hosts),
+    level: b.level,
+    failed: api ? api.failed : b.level === "error",
+    ...(api ? { api } : {}),
+    ...(rest.length ? { data: Object.fromEntries(rest) } : {}),
+    ...(repeated && repeated > 1 ? { repeated } : {}),
+  };
 }
 
 /** In-app frames first, keeping stack order within each group. */
