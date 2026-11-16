@@ -92,6 +92,8 @@ deBug.init({
 
 Requests to your ingest endpoint and to the Metro and Expo dev servers are never recorded.
 
+Pass `debug: true` while you build to see `[deBug]` warnings for what the SDK drops or can't do. Once per launch, it also warns when your ingest is a minor version or more behind the SDK, and names the fix: `npx debugkit upgrade`.
+
 ### Named calls and backend error details
 
 Each request's network breadcrumb carries `service`, `path`, `method`, `status` (null when there
