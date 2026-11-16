@@ -18,8 +18,10 @@ export interface DebugkitConfig {
   createdAt: string;
   /** Raw-event retention chosen at init (the dashboard's Settings page can change it per app). */
   retentionDays?: number;
-  /** The hosted dashboard, when init or deploy-dashboard put it online. */
-  hosted?: { url: string; region: string; functionName: string; site?: string; deployedAt: string };
+  /** The hosted dashboard, when init or deploy-dashboard put it online. `version` is the dashboard's, from 0.8.1. */
+  hosted?: { url: string; region: string; functionName: string; site?: string; deployedAt: string; version?: string };
+  /** The deBug version of the deployed ingest (and its Firestore indexes). Saved from 0.8.1; see deployedVersions for older setups. */
+  version?: string;
   /** Set when this is one of several environments (npx debugkit init --env preview). */
   environment?: string;
 }

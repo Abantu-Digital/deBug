@@ -4,8 +4,8 @@ import { capture, interactive, openUrl, which } from "../exec";
 import FIRESTORE_INDEXES from "../../../adapters/firestore.indexes.json" with { type: "json" };
 import { VERSION } from "../dashboard";
 import { mergeKeys } from "../keys";
-import { cmdFor, environment, firebaseProjectUsedBy, paths } from "../state";
-import { ask, bail, bold, choose, code, dim, next, p, yes } from "../ui";
+import { cmdFor, environment, firebaseProjectUsedBy, paths, readEnv, type DebugkitConfig } from "../state";
+import { ask, bail, bold, choose, code, dim, flags, next, p, yes } from "../ui";
 import { adminEnv, type ProviderResult, type SetupContext } from "./types";
 
 /** Firestore locations offered, with the Cloud Functions region that sits closest to each. */
@@ -152,14 +152,7 @@ export async function setupFirebase(ctx: SetupContext): Promise<ProviderResult> 
 
   /* ---------- 5. The ingest function ---------- */
   const dir = writeFunctionSource(ctx, region, projectId);
-  s.start("Installing the ingest function's dependencies");
-  const inst = await capture("npm", ["install", "--no-audit", "--no-fund"], { cwd: join(dir, "functions") });
-  if (inst.code !== 0) {
-    s.error("npm install failed");
-    p.log.error(inst.stderr.slice(-600));
-    bail();
-  }
-  s.stop("Installed the ingest function's dependencies");
+  await installFunctionDependencies(dir);
 
   // Say exactly what's about to change in the project, and get a yes.
   p.note(
@@ -175,33 +168,11 @@ export async function setupFirebase(ctx: SetupContext): Promise<ProviderResult> 
   );
   if (!(await yes(`Deploy deBug into ${projectId}?`))) bail("Nothing was deployed.");
 
-  // Indexes first, and never with --force: that would delete indexes the project already has
-  // that aren't in deBug's file. Non-interactive, firebase-tools adds ours and leaves the rest alone.
-  p.log.step("Adding deBug's Firestore indexes (your existing indexes are left alone)");
-  if ((await fbLive(["deploy", "--only", "firestore:indexes", "--non-interactive", ...proj], { cwd: dir })) !== 0)
+  if (!(await deployIndexes(fbLive, proj, dir)))
     p.log.warn("The indexes didn't deploy. The dashboard needs them; deploy them later with the command printed at the end.");
 
   p.log.step(`Deploying ${code(FUNCTION_NAME)}. The first deploy turns on the Google APIs it needs and takes a few minutes.`);
-  for (;;) {
-    // --force only answers the functions prompts (like the container cleanup policy).
-    const exit = await fbLive(["deploy", "--only", `functions:${CODEBASE}`, "--force", ...proj], { cwd: dir });
-    if (exit === 0) break;
-    p.log.warn("The deploy didn't finish: see the error above. Common causes: the project isn't on the Blaze plan, or your account lacks permission to deploy functions.");
-    const again = await choose(
-      "What now?",
-      [
-        { value: "retry", label: "Retry the deploy" },
-        { value: "billing", label: "Open billing, then retry" },
-        { value: "stop", label: "Stop here" },
-      ],
-      "retry",
-    );
-    if (again === "stop") bail(`Fix the error above, then run ${cmdFor("init")} again (it reuses what's already set up), or deploy by hand: cd ${paths(ctx.app.cwd).firebase} && npx firebase-tools@latest deploy --only functions:${CODEBASE} --project ${projectId}`);
-    if (again === "billing") {
-      openUrl(`https://console.firebase.google.com/project/${projectId}/usage/details`);
-      await next("Upgraded: retry the deploy");
-    }
-  }
+  await deployIngestFunction(fbLive, proj, dir, projectId);
   const endpoint = `https://${region}-${projectId}.cloudfunctions.net/${FUNCTION_NAME}`;
 
   /* ---------- 6. Read access for the dashboard ---------- */
@@ -217,6 +188,87 @@ export async function setupFirebase(ctx: SetupContext): Promise<ProviderResult> 
       `Function source in ${code(".debugkit/firebase")}, so you can redeploy it with the Firebase CLI`,
     ],
   };
+}
+
+type Run = (args: string[], opts?: { cwd?: string }) => Promise<number>;
+
+async function installFunctionDependencies(dir: string) {
+  const s = p.spinner();
+  s.start("Installing the ingest function's dependencies");
+  const inst = await capture("npm", ["install", "--no-audit", "--no-fund"], { cwd: join(dir, "functions") });
+  if (inst.code !== 0) {
+    s.error("npm install failed");
+    p.log.error(inst.stderr.slice(-600));
+    bail();
+  }
+  s.stop("Installed the ingest function's dependencies");
+}
+
+/**
+ * Add deBug's Firestore indexes to the project. Never with --force: that would delete indexes the
+ * project already has that aren't in deBug's file. Non-interactive, firebase-tools adds ours and
+ * leaves the rest alone. False when the deploy failed.
+ */
+export async function deployIndexes(fbLive: Run, proj: string[], dir: string): Promise<boolean> {
+  writeFileSync(join(dir, "firestore.indexes.json"), JSON.stringify(FIRESTORE_INDEXES, null, 2) + "\n");
+  p.log.step("Adding any Firestore indexes this version of deBug needs (your existing indexes are left alone)");
+  return (await fbLive(["deploy", "--only", "firestore:indexes", "--non-interactive", ...proj], { cwd: dir })) === 0;
+}
+
+/** Deploy the ingest function, offering a retry until it works or the user stops. */
+async function deployIngestFunction(fbLive: Run, proj: string[], dir: string, projectId: string) {
+  for (;;) {
+    // --force only answers the functions prompts (like the container cleanup policy).
+    const exit = await fbLive(["deploy", "--only", `functions:${CODEBASE}`, "--force", ...proj], { cwd: dir });
+    if (exit === 0) return;
+    p.log.warn("The deploy didn't finish: see the error above. Common causes: the project isn't on the Blaze plan, or your account lacks permission to deploy functions.");
+    const again = await choose(
+      "What now?",
+      [
+        { value: "retry", label: "Retry the deploy" },
+        { value: "billing", label: "Open billing, then retry" },
+        { value: "stop", label: "Stop here" },
+      ],
+      "retry",
+    );
+    if (again === "stop") bail(`Fix the error above, then run ${cmdFor(flags.command)} again (it reuses what's already set up), or deploy by hand: cd ${dir} && npx firebase-tools@latest deploy --only functions:${CODEBASE} --project ${projectId}`);
+    if (again === "billing") {
+      openUrl(`https://console.firebase.google.com/project/${projectId}/usage/details`);
+      await next("Upgraded: retry the deploy");
+    }
+  }
+}
+
+/** The Firebase CLI, signed in as the account this setup uses. */
+export async function firebaseFor(cfg: DebugkitConfig, account: string | undefined) {
+  const fbc = cfg.firebase ?? bail(`This setup has no Firebase project saved. Run ${cmdFor("init")} again.`);
+  const [fbCmd, fbPre] = await firebaseCli();
+  const proj = ["--project", fbc.projectId, ...(account ? ["--account", account] : [])];
+  const fbLive: Run = (args, opts = {}) => interactive(fbCmd, [...fbPre, ...args], opts);
+  return { fbc, proj, fbLive };
+}
+
+/**
+ * Upgrade: the same ingest function at this CLI's version, in the same project and region, with
+ * the keys, retention and admin token it already has. Then deBug's current indexes.
+ */
+export async function upgradeFirebaseIngest(cwd: string, cfg: DebugkitConfig, account: string | undefined): Promise<{ indexes: boolean }> {
+  const { fbc, proj, fbLive } = await firebaseFor(cfg, account);
+  const dir = paths(cwd).firebase;
+  const fnEnv = readEnv(join(dir, "functions", ".env"));
+  const adminToken = readEnv(join(dir, "functions", `.env.${fbc.projectId}`)).DEBUG_ADMIN_TOKEN ?? readEnv(paths(cwd).dashboardEnv).DEBUG_ADMIN_TOKEN;
+  if (!adminToken) bail(`The ingest function's admin token is missing from ${dir}/functions. Run ${cmdFor("init")} again to set it up.`);
+  writeFunctionSource(
+    { app: { cwd, appId: cfg.appId }, ingestKey: cfg.ingestKey, adminToken, retentionDays: Number(fnEnv.DEBUG_RETENTION_DAYS) || cfg.retentionDays || 30 },
+    fbc.region,
+    fbc.projectId,
+  );
+  await installFunctionDependencies(dir);
+  const indexes = await deployIndexes(fbLive, proj, dir);
+  if (!indexes) p.log.warn(`The indexes didn't deploy. Run ${cmdFor("upgrade")} again, or deploy them by hand: cd ${dir} && firebase deploy --only firestore:indexes --project ${fbc.projectId}`);
+  p.log.step(`Deploying ${code(FUNCTION_NAME)} in ${fbc.region}`);
+  await deployIngestFunction(fbLive, proj, dir, fbc.projectId);
+  return { indexes };
 }
 
 /** The dashboard reads Firestore with Google Application Default Credentials from gcloud. */
@@ -268,8 +320,11 @@ export function functionRegion(location: string): string {
   return /^[a-z]+-[a-z]+\d+$/.test(location) ? location : "us-central1";
 }
 
+/** What the ingest function's source is written from: at init, or from the saved setup on upgrade. */
+type IngestSource = Pick<SetupContext, "ingestKey" | "retentionDays" | "adminToken"> & { app: Pick<SetupContext["app"], "cwd" | "appId"> };
+
 /** The Cloud Function the setup deploys, written to .debugkit/firebase in the app's repo. */
-export function writeFunctionSource(ctx: SetupContext, region: string, projectId = "default"): string {
+export function writeFunctionSource(ctx: IngestSource, region: string, projectId = "default"): string {
   const dir = paths(ctx.app.cwd).firebase;
   mkdirSync(join(dir, "functions"), { recursive: true });
   // Merge: keep the hosted dashboard (another codebase, and hosting) when ingest is set up again.

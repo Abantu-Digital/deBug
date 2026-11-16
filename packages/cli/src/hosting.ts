@@ -3,11 +3,10 @@ import { cpSync, renameSync, existsSync, mkdirSync, mkdtempSync, readdirSync, re
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { zipSync } from "fflate";
-import FIRESTORE_INDEXES from "../../adapters/firestore.indexes.json" with { type: "json" };
 import { DASHBOARD_VERSION } from "./dashboard";
 import { capture, interactive, which } from "./exec";
 import { lookup } from "./providers/aws";
-import { asArray, firebaseCli, writeFirebaseJson } from "./providers/firebase";
+import { asArray, deployIndexes, firebaseCli, writeFirebaseJson } from "./providers/firebase";
 import { cmdFor, environment, paths, readEnv, upsertEnv, writeConfig, type DebugkitConfig } from "./state";
 import { bail, bold, choose, code, dim, p, yes } from "./ui";
 
@@ -104,8 +103,10 @@ export interface HostResult {
 export interface HostOptions {
   /** "skip": part of init, so a problem skips hosting and setup carries on. "exit" (default): deploy-dashboard. */
   onProblem?: "skip" | "exit";
-  /** The user already said yes to hosting (init asks first), so don't ask again. */
+  /** The user already said yes to hosting (init and upgrade ask first), so don't ask again. */
   confirmed?: boolean;
+  /** The Firestore indexes were just deployed (upgrade does them first), so don't deploy them again. */
+  indexesDeployed?: boolean;
 }
 
 /** Leave hosting out (init) or stop (deploy-dashboard). */
@@ -311,9 +312,7 @@ async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<stri
 
   // A newer dashboard can query with indexes an older setup never added. Add deBug's current
   // ones; never with --force, which would delete indexes the project has that aren't in the file.
-  writeFileSync(join(dir, "firestore.indexes.json"), JSON.stringify(FIRESTORE_INDEXES, null, 2) + "\n");
-  p.log.step("Adding any Firestore indexes this version of deBug needs (existing ones are left alone)");
-  if ((await fbLive(["deploy", "--only", "firestore:indexes", "--non-interactive", ...proj], { cwd: dir })) !== 0)
+  if (!opts.indexesDeployed && !(await deployIndexes(fbLive, proj, dir)))
     p.log.warn("The indexes didn't deploy. Some counts on the dashboard may be missing until they do.");
 
   for (;;) {
@@ -337,7 +336,7 @@ async function hostFirebase(cwd: string, cfg: DebugkitConfig, local: Record<stri
     }
   }
   return {
-    hosted: { url, region, functionName: DASHBOARD_FUNCTION, site, deployedAt: new Date().toISOString() },
+    hosted: { url, region, functionName: DASHBOARD_FUNCTION, site, deployedAt: new Date().toISOString(), version: DASHBOARD_VERSION },
     created: [`Hosted dashboard at ${code(url)} (Hosting site ${code(site)}, function ${code(DASHBOARD_FUNCTION)} in ${region})`],
   };
 }
@@ -486,7 +485,7 @@ async function hostAws(cfg: DebugkitConfig, local: Record<string, string>, opts:
   await waitUpdated(lambda, lambdaMod, functionName);
   s.stop(`Lambda ${functionName} serves the dashboard`);
   return {
-    hosted: { url, region: aws.region, functionName, deployedAt: new Date().toISOString() },
+    hosted: { url, region: aws.region, functionName, deployedAt: new Date().toISOString(), version: DASHBOARD_VERSION },
     created: [`Hosted dashboard at ${code(url)} (Lambda ${code(functionName)}, read-only role ${code(roleName)})`],
   };
 }

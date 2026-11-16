@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { zipSync } from "fflate";
 import { interactive, which } from "../exec";
 import { keyEntry, mergeKeys } from "../keys";
-import { cmdFor, dynamoTableUsedBy, environment } from "../state";
+import { cmdFor, dynamoTableUsedBy, environment, type DebugkitConfig } from "../state";
 import { ask, bail, choose, code, dim, next, p, yes } from "../ui";
 import { adminEnv, type ProviderResult, type SetupContext } from "./types";
 
@@ -329,6 +329,38 @@ export async function setupAws(ctx: SetupContext): Promise<ProviderResult> {
 }
 
 const CREATED_BY = "created-by";
+
+/**
+ * Upgrade: new code for the same ingest Lambda, keeping its URL, role, keys and settings. Only a
+ * function deBug created is touched.
+ */
+export async function upgradeAwsIngest(cfg: DebugkitConfig): Promise<void> {
+  const aws = cfg.aws ?? bail(`This setup has no AWS function saved. Run ${cmdFor("init")} again.`);
+  const { fromNodeProviderChain } = await import("@aws-sdk/credential-providers");
+  const lambdaMod = await import("@aws-sdk/client-lambda");
+  const lambda = new lambdaMod.LambdaClient({ region: aws.region, credentials: fromNodeProviderChain(aws.profile ? { profile: aws.profile } : {}) });
+  const s = p.spinner();
+  s.start(`Updating Lambda ${aws.functionName} in ${aws.region}`);
+  let fn: import("@aws-sdk/client-lambda").GetFunctionCommandOutput | undefined;
+  try {
+    fn = await lookup(() => lambda.send(new lambdaMod.GetFunctionCommand({ FunctionName: aws.functionName })));
+  } catch (err) {
+    s.error("AWS didn't accept these credentials");
+    const sso = aws.profile && awsProfiles().find((x) => x.name === aws.profile)?.sso;
+    bail(`${(err as Error).message}${sso ? `\nSign in again with ${code(`aws sso login --profile ${aws.profile}`)}, then rerun ${code(cmdFor("upgrade"))}.` : ""}`);
+  }
+  if (!fn) {
+    s.error(`${aws.functionName} isn't in ${aws.region}`);
+    bail(`The ingest function is gone. Run ${cmdFor("init")} to set it up again.`);
+  }
+  if (fn.Tags?.[CREATED_BY] !== "debugkit") {
+    s.error(`${aws.functionName} wasn't created by deBug`);
+    bail(`deBug won't overwrite a function it didn't create.`);
+  }
+  await lambda.send(new lambdaMod.UpdateFunctionCodeCommand({ FunctionName: aws.functionName, ZipFile: lambdaZip() }));
+  await waitUpdated(lambda, lambdaMod, aws.functionName);
+  s.stop(`Lambda ${aws.functionName} runs this version`);
+}
 
 /**
  * Run an AWS "describe" call. Returns undefined only when the resource doesn't exist; any other
