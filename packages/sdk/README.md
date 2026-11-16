@@ -226,8 +226,10 @@ Wrap the root in `<DebugTouchBoundary>` (from `@debugkit/sdk/react-native` or `/
 in the trail: `<DebugTouchBoundary><Stack /></DebugTouchBoundary>`. Each short tap is recorded as
 `Tapped "Buy now"`, named by the nearest `accessibilityLabel` or `testID` at or above what was
 touched, with the screen it was on. Scrolls, drags and long presses aren't taps, text input values
-are never read, and the boundary never takes the touch, so gestures behave as before. Options:
-`ignoreTestIDs`, `labelFrom: "testID"` to prefer testIDs.
+are never read, and phone numbers and emails in labels are masked. The boundary never takes the
+touch, so gestures behave as before; taps on react-native-gesture-handler buttons, which cancel the
+JS touch, count too. Options: `ignoreTestIDs`, `labelFrom: "testID"` to prefer testIDs.
+`deBug.screen` is the screen of the last navigation breadcrumb.
 
 `useDebugExpoRouter()` never throws into your navigation. `deBug.close()` (say, from a remote
 kill switch) sends what is queued and then records and sends nothing, not even errors, until the

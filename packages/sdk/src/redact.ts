@@ -74,6 +74,14 @@ export function redactValues(text: string): string {
   });
 }
 
+/** Personal data in free text: an email address, or a run of 7+ digits (phone numbers, ids). */
+const PERSONAL_TEXT = /[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+|\+?\d(?:[\s().-]?\d){6,}/g;
+
+/** Phone numbers and email addresses masked: for text a backend or an app wrote about a user. */
+export function maskPersonal(text: string): string {
+  return text.replace(PERSONAL_TEXT, "•••");
+}
+
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**

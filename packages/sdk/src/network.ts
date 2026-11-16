@@ -4,7 +4,7 @@
  */
 
 import { normaliseUrl } from "./auto";
-import { redactValues } from "./redact";
+import { maskPersonal, redactValues } from "./redact";
 
 export interface RequestName {
   /** "buy" for ".../ppd/api/buy/purchase-history" with that base; otherwise the host. */
@@ -25,8 +25,6 @@ export interface ProblemDetails {
 const MAX_TEXT = 200;
 const MAX_ERRORS = 500;
 
-/** Personal data in free text: a run of 7+ digits (phone numbers, ids) or an email address. */
-const PERSONAL_TEXT = /[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+|\+?\d(?:[\s().-]?\d){6,}/g;
 
 /**
  * The longest base the URL starts with, ending on a path-segment boundary. Scheme and host
@@ -61,7 +59,7 @@ function text(v: unknown): string | undefined {
 
 /** Backend messages can quote the customer ("0821234567 not found") or a token: mask those. */
 function masked(v: string | undefined): string | undefined {
-  return v === undefined ? undefined : redactValues(v).replace(PERSONAL_TEXT, "•••");
+  return v === undefined ? undefined : maskPersonal(redactValues(v));
 }
 
 /** Validation errors as one line: ["a", "b"] or { Amount: ["too high"] } → "Amount: too high". */

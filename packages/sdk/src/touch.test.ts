@@ -46,6 +46,13 @@ describe("describeTouchTarget", () => {
 });
 
 describe("taps", () => {
+  it("masks phone numbers and emails in labels and testIDs", () => {
+    expect(describeTouchTarget(fiber([{ accessibilityLabel: "Call 0821234567", testID: "row-a.b@example.co.za" }]) as never)).toEqual({
+      label: "Call •••",
+      testID: "•••", // the email mask takes the whole token
+    });
+  });
+
   it("records a tap by label, with the testID and the screen", async () => {
     const { c, sent } = setup();
     c.navigated("/buy");
@@ -74,7 +81,9 @@ describe("taps", () => {
     h.onTouchStart(touch(0, 0, 0, named));
     h.onTouchEnd(touch(0, 80, 200)); // a scroll
     h.onTouchStart(touch(0, 0, 0, named));
-    h.onTouchEnd(touch(0, 0, 1500)); // a long press
+    h.onTouchEnd(touch(0, 0, 600)); // a long press
+    h.onTouchStart({ ...touch(0, 0, 0, named), nativeEvent: { pageX: 0, pageY: 0, timestamp: 0, touches: [{}, {}] } });
+    h.onTouchEnd(touch(0, 0, 50)); // a second finger: a pinch
     h.onTouchStart(touch(0, 0, 0, fiber([{}])));
     h.onTouchEnd(touch(0, 0, 10)); // nothing to name it by
     h.onTouchEnd(touch(0, 0, 10));

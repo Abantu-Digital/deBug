@@ -5,6 +5,7 @@
  */
 
 import type { DebugClient } from "./client";
+import { maskPersonal } from "./redact";
 
 export interface TouchOptions {
   /** testIDs whose taps aren't recorded (substring match). */
@@ -19,15 +20,15 @@ interface FiberLike {
   return?: FiberLike | null;
 }
 
-interface TouchEventLike {
-  nativeEvent?: { pageX?: number; pageY?: number; timestamp?: number };
+export interface TouchEventLike {
+  nativeEvent?: { pageX?: number; pageY?: number; timestamp?: number; touches?: unknown[] };
   /** React Native's touched component, in development and production builds alike. */
   _targetInst?: FiberLike | null;
 }
 
-/** A tap moves less than this, in points, and lasts less than TAP_MS. */
+/** A tap moves less than this, in points, and lasts less than TAP_MS (React Native's long press). */
 const TAP_SLOP = 10;
-const TAP_MS = 1000;
+const TAP_MS = 500;
 /** How far up from the touched element to look for a name. */
 const MAX_DEPTH = 30;
 
@@ -36,7 +37,8 @@ export interface TouchTarget {
   testID?: string;
 }
 
-const text = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 100) : undefined);
+/** A name as recorded: trimmed, short, and with any phone number or email in it masked. */
+const text = (v: unknown) => (typeof v === "string" && v.trim() ? maskPersonal(v.trim()).slice(0, 100) : undefined);
 
 /** The nearest element at or above the touched one that has a name. Its text input values are never read. */
 export function describeTouchTarget(inst: FiberLike | null | undefined): TouchTarget | undefined {
@@ -58,11 +60,17 @@ export function touchHandlers(client: DebugClient, opts: TouchOptions = {}) {
   return {
     onTouchStart(e: TouchEventLike) {
       try {
-        start = { ...point(e), target: describeTouchTarget(e._targetInst) };
+        // A second finger makes it a gesture, not a tap.
+        start = (e.nativeEvent?.touches?.length ?? 1) > 1 ? undefined : { ...point(e), target: describeTouchTarget(e._targetInst) };
       } catch {
         start = undefined;
       }
     },
+    /**
+     * Also used for onTouchCancel: a native gesture handler (react-native-gesture-handler's
+     * buttons, bottom sheets) cancels the JS touch when it takes a tap. A scroll that cancels
+     * has moved too far to count.
+     */
     onTouchEnd(e: TouchEventLike) {
       try {
         const s = start;
