@@ -20,6 +20,23 @@ describe("API calls in breadcrumbs", () => {
     expect(call).toEqual({ service: "payments", method: "POST", path: "/payments/charge", status: 402, durationMs: 380, outcome: "answered", retry: 0, backendTitle: "Insufficient funds", backendCode: "PAY-402", traceId: "4f2c9a", failed: true });
   });
 
+  it("reads CCA-1542's final keys: numeric backend code, error kind, backend errors, null status", () => {
+    const failed = apiCallOf(
+      crumb({
+        category: "network",
+        message: "POST /buy/with-airtime → 422 (98 ms)",
+        level: "error",
+        data: { service: "buy", path: "/buy/with-airtime", method: "POST", durationMs: 98, outcome: "answered", retry: 0, errorKind: null, status: 422, backendTitle: "Not enough airtime", backendCode: 4102, traceId: null, backendErrors: "balance too low; try a smaller bundle" },
+      }),
+    );
+    expect(failed).toEqual({ service: "buy", method: "POST", path: "/buy/with-airtime", status: 422, durationMs: 98, outcome: "answered", retry: 0, backendTitle: "Not enough airtime", backendCode: "4102", backendErrors: "balance too low; try a smaller bundle", errorKind: undefined, traceId: undefined, failed: true });
+    const ok = apiCallOf(crumb({ category: "network", message: "GET /catalog/bundles → OK (40 ms)", data: { service: "catalog", path: "/catalog/bundles", method: "GET", durationMs: 40, outcome: "answered", retry: 0, errorKind: null, status: null } }));
+    expect(ok).toMatchObject({ service: "catalog", failed: false });
+    expect(ok?.status).toBeUndefined();
+    const unreachable = apiCallOf(crumb({ category: "network", message: "GET /profile/me → unreachable", level: "error", data: { service: "profile", path: "/profile/me", method: "GET", outcome: "unreachable", errorKind: "connectionError", status: null } }));
+    expect(unreachable).toMatchObject({ errorKind: "connectionError", failed: true });
+  });
+
   it("counts an unanswered call as failed even without an error level", () => {
     expect(apiCallOf(crumb({ category: "network", message: "x", data: { service: "balance", path: "/b", outcome: "unreachable" } }))?.failed).toBe(true);
     expect(apiCallOf(crumb({ category: "network", message: "x", data: { service: "balance", path: "/b", status: 200, outcome: "answered" } }))?.failed).toBe(false);
@@ -57,6 +74,15 @@ describe("timeline", () => {
     expect(t[1]).toMatchObject({ failed: false, data: { button: "pay", screen: "Buy" } });
     expect(t[2]).toMatchObject({ failed: true, repeated: 3, api: { service: "balance", status: 503 } });
     expect(t[2]!.data).toBeUndefined();
+  });
+
+  it("leaves out the SDK's own breadcrumb for a call the app also recorded", () => {
+    const t = timelineOf([
+      crumb({ ts: "2026-11-16T09:00:01.000Z", category: "network", message: "POST gw.example.com/prod/buy/with-airtime → 422 (97ms)", level: "error", data: { status: 422, durationMs: 97 } }),
+      crumb({ ts: "2026-11-16T09:00:01.010Z", category: "network", message: "POST /buy/with-airtime → 422 (98 ms)", level: "error", data: { service: "buy", path: "/buy/with-airtime", method: "POST", status: 422, outcome: "answered" } }),
+      crumb({ ts: "2026-11-16T09:00:05.000Z", category: "network", message: "GET gw.example.com/prod/catalog/bundles → 200 (40ms)", data: { status: 200, durationMs: 40 } }),
+    ]);
+    expect(t.map((x) => x.message)).toEqual(["POST /buy/with-airtime → 422 (98 ms)", "GET gw.example.com/prod/catalog/bundles → 200 (40ms)"]);
   });
 
   it("sorts by time even when timestamps have different precision", () => {

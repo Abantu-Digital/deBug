@@ -60,6 +60,10 @@ export interface ApiCall {
   retry?: number | boolean | string;
   backendTitle?: string;
   backendCode?: string;
+  /** The backend's own list of errors, joined ("; "). */
+  backendErrors?: string;
+  /** The app's kind of failure: connectionError, schemaError, ... */
+  errorKind?: string;
   traceId?: string;
   failed: boolean;
 }
@@ -75,7 +79,7 @@ const pick = (d: Data, ...keys: string[]) => keys.map((k) => d[k]).find((v) => v
 /** API keys read into the call; the rest of the data is shown as it is. */
 const API_KEYS = new Set([
   "service", "method", "path", "url", "status", "durationMs", "outcome", "retry",
-  "backend.title", "backendTitle", "backend.code", "backendCode", "traceId", "trace_id",
+  "backend.title", "backendTitle", "backend.code", "backendCode", "backendErrors", "traceId", "trace_id", "errorKind",
 ]);
 
 /** Outcomes that mean the call did what it should. Anything else the app reports (unreachable, sessionExpired) is a failure. */
@@ -107,6 +111,8 @@ export function apiCallOf(b: Breadcrumb, hosts: readonly HostName[] = []): ApiCa
     retry: typeof d.retry === "boolean" || typeof d.retry === "number" ? d.retry : str(d.retry),
     backendTitle: str(pick(d, "backend.title", "backendTitle")),
     backendCode: str(pick(d, "backend.code", "backendCode")),
+    backendErrors: str(d.backendErrors),
+    errorKind: str(d.errorKind),
     traceId: str(pick(d, "traceId", "trace_id")),
     failed: false,
   };
@@ -114,9 +120,33 @@ export function apiCallOf(b: Breadcrumb, hosts: readonly HostName[] = []): ApiCa
   return call;
 }
 
+/** How close in time the SDK's breadcrumb and the app's own for the same call are. */
+const TWIN_MS = 2000;
+
+/**
+ * The SDK's own network breadcrumbs that repeat an app breadcrumb for the same call (same method,
+ * the SDK's URL ending in the app's path, within TWIN_MS): the app's says more, so the SDK's is
+ * left out of the timeline.
+ */
+function sdkTwins(crumbs: readonly Breadcrumb[]): Set<Breadcrumb> {
+  const app = crumbs.filter((b) => b.category === "network" && str(b.data?.service) && str(b.data?.path));
+  const out = new Set<Breadcrumb>();
+  if (!app.length) return out;
+  for (const b of crumbs) {
+    const sdk = b.category === "network" && !b.data?.service ? SDK_NETWORK.exec(b.message) : null;
+    if (!sdk) continue;
+    const url = sdk[2]!.split(/[?#]/)[0]!;
+    const t = Date.parse(b.ts);
+    if (app.some((a) => str(a.data?.method)?.toUpperCase() === sdk[1] && url.endsWith(String(a.data!.path)) && Math.abs(Date.parse(a.ts) - t) <= TWIN_MS)) out.add(b);
+  }
+  return out;
+}
+
 /** The breadcrumbs in time order (stable for equal times), each read for what it says. */
 export function timelineOf(crumbs: readonly Breadcrumb[] = [], hosts: readonly HostName[] = []): TimelineItem[] {
+  const twins = sdkTwins(crumbs);
   return crumbs
+    .filter((b) => !twins.has(b))
     .map((b, i) => ({ b, i }))
     // By time, not by string: "09:00:00Z" and "09:00:00.500Z" don't sort as text.
     .sort((x, y) => Date.parse(x.b.ts) - Date.parse(y.b.ts) || x.i - y.i)

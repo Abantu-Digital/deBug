@@ -174,6 +174,7 @@ function ApiLine({ call }: { call: ApiCall }) {
       <span className={call.failed ? "font-semibold text-sev-critical" : ""}>{call.status ?? call.outcome ?? "failed"}</span>
       {call.status !== undefined && call.outcome && call.outcome !== "answered" && <span className="text-muted"> ({call.outcome})</span>}
       {call.durationMs !== undefined && <span className="text-muted"> · {call.durationMs} ms</span>}
+      {call.errorKind && <span className="text-muted"> · {call.errorKind}</span>}
       {call.backendCode && <span className="text-muted"> · {call.backendCode}</span>}
     </span>
   );
@@ -187,7 +188,9 @@ function RequestPanel({ call }: { call: ApiCall }) {
         ["Endpoint", joined([call.method, call.path])],
         ["Status", call.status !== undefined ? String(call.status) : "no answer"],
         ["Outcome", call.outcome],
+        ["Kind", call.errorKind],
         ["Backend", joined([call.backendCode, call.backendTitle], " · ")],
+        ["Backend errors", call.backendErrors],
         ["Trace", call.traceId ? (
           <span className="flex flex-wrap items-center gap-2">
             <span className="break-all font-mono text-xs">{call.traceId}</span>
