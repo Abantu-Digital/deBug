@@ -1,3 +1,4 @@
+import type { Versions, VersionsSeen } from "./versions";
 import type { HostName, Issue, IssueStatus, RollupDimension, RollupIncrement, RollupRow, StoredEvent } from "@debugkit/schema";
 
 export interface IssueUpsert {
@@ -111,6 +112,11 @@ export interface RestampResult {
 /** Write side, used by the ingest function. */
 export interface WriteStore {
   registerApp(app: string): Promise<void>;
+  /**
+   * Record the versions an ingest saw: keeps the newest SDK version (by semver, safely under
+   * concurrent ingests) and this ingest's version. Ingest calls it when something changed, not per envelope.
+   */
+  recordVersions(app: string, seen: VersionsSeen): Promise<void>;
   /** `retentionDays` sets each event's expiry; the adapter's own default applies when it's missing. */
   writeEvents(events: StoredEvent[], opts?: { retentionDays?: number }): Promise<void>;
   upsertIssues(updates: IssueUpsert[]): Promise<UpsertOutcome | void>;
@@ -133,6 +139,8 @@ export interface WriteStore {
 /** Read side, used by the dashboard. */
 export interface ReadStore {
   getSettings(app: string): Promise<AppSettings | null>;
+  /** The newest SDK version seen for the app and the ingest that saw it; empty before ingest recorded any. */
+  getVersions(app: string): Promise<Versions>;
   /** Distinct members of a scope seen on or after `sinceDay` (YYYY-MM-DD). */
   countUsers(app: string, scope: string, sinceDay: string): Promise<number>;
   listApps(): Promise<string[]>;
@@ -165,4 +173,5 @@ export type UserField = "id" | "anonymousId";
 export type Store = WriteStore & ReadStore;
 
 export { coalesceRollups, rollupId } from "./rollups";
+export { compareVersions, mergeVersions, parseVersion, versionKey, type Versions, type VersionsSeen } from "./versions";
 export { MemoryStore } from "./memory";
