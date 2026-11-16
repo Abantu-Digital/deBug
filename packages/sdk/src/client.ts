@@ -118,7 +118,7 @@ export interface NetworkOptions {
    * "orders", path "/orders/:id". Calls to other hosts are named by their host.
    */
   baseUrls?: string[];
-  /** Which HTTP statuses count as failures. Default: 500 and above. Network failures and timeouts always count. */
+  /** Which HTTP statuses count as failures. Default: 500 and above (400 and above with `initReactNative`). Network failures and timeouts always count. */
   isFailure?: (status: number, url: string) => boolean;
   /** Requests slower than this get a warning breadcrumb. Default 3000ms. */
   slowMs?: number;
@@ -131,6 +131,8 @@ export interface EventMeta {
 }
 
 const QUEUE_KEY = "@debugkit/queue";
+/** The most breadcrumbs an error event can carry (the schema's limit). */
+const MAX_BREADCRUMBS = 50;
 /** One id per install, so "users affected" counts people rather than app launches. */
 const ANON_KEY = "@debugkit/anonymousId";
 
@@ -185,7 +187,8 @@ export class DebugClient {
   init(options: InitOptions): this {
     if (this.timer) clearInterval(this.timer);
     this.uninstrument();
-    this.opts = { flushIntervalMs: 5000, maxBatch: 50, maxBreadcrumbs: 30, ...options };
+    // An error event carries at most 50 breadcrumbs: ingest rejects a batch with more.
+    this.opts = { flushIntervalMs: 5000, maxBatch: 50, ...options, maxBreadcrumbs: Math.min(options.maxBreadcrumbs ?? 30, MAX_BREADCRUMBS) };
     this.closed = false;
     this.globalTags = { ...options.tags };
     if (options.enabled === false) {

@@ -205,8 +205,10 @@ change it.
 - **A 4xx is a failure** (`network.isFailure`: status 400 and above). On mobile a 4xx is usually a
   business rule the customer hit, such as "not enough airtime", and those are the failures support
   is asked about. Each becomes a handled `HttpError` with the call's breadcrumb, not a crash.
-- **A longer trail** (`maxBreadcrumbs: 50`, up from 30, the most an error event carries): screens,
-  API calls and taps fit before a failure.
+  A burst of 401s after a session expires counts against the error limit (60 a minute); pass
+  `isFailure: (s) => s >= 400 && s !== 401` if your app handles those itself.
+- **A longer trail** (`maxBreadcrumbs: 50`, up from 30): screens, API calls and taps fit before a
+  failure. 50 is the most an error event carries, on any platform, so a larger value is capped.
 
 ## Device details on React Native and Expo
 
