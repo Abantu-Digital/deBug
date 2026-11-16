@@ -79,7 +79,7 @@ deBug.init({
     baseUrls: ["https://api.example.com/v1"], // name calls by service (below)
     flows: [["/v2/auth/", "auth.login"], [/\/payments\//, "checkout.payment"]], // tag requests by URL
     ignoreUrls: ["analytics.example.com"],
-    isFailure: (status) => status >= 500 || status === 429, // default: 500 and above
+    isFailure: (status) => status >= 500 || status === 429, // default: 500 and above (400 and above on React Native)
     slowMs: 3000, // slower requests get a warning breadcrumb
   },
   sampleRate: 1,
@@ -196,6 +196,17 @@ next `init()`.
 
 In Expo Go, the app version reported is Expo Go's own. Development and production builds
 report yours.
+
+## React Native and Expo defaults
+
+`initReactNative` tunes two defaults for an app talking to its own backend. Pass either option to
+change it.
+
+- **A 4xx is a failure** (`network.isFailure`: status 400 and above). On mobile a 4xx is usually a
+  business rule the customer hit, such as "not enough airtime", and those are the failures support
+  is asked about. Each becomes a handled `HttpError` with the call's breadcrumb, not a crash.
+- **A longer trail** (`maxBreadcrumbs: 50`, up from 30, the most an error event carries): screens,
+  API calls and taps fit before a failure.
 
 ## Device details on React Native and Expo
 

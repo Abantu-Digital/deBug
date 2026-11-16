@@ -154,6 +154,26 @@ describe("device facts, read by the SDK", () => {
   });
 });
 
+describe("mobile defaults", () => {
+  it("counts a 4xx as a failure and keeps a longer trail, unless the app says otherwise", async () => {
+    const { c, sent, fetch } = client();
+    initReactNative({ ...opts, fetch, network: { slowMs: 1000 } }, c);
+    const net = (c as unknown as { opts: { network: { isFailure: (s: number) => boolean; slowMs: number } } }).opts;
+    // The app's own network options are kept next to the default.
+    expect([net.network.isFailure(422), net.network.isFailure(399), net.network.slowMs]).toEqual([true, false, 1000]);
+    for (let i = 0; i < 70; i++) c.breadcrumb("ui", `tap ${i}`);
+    c.error(new Error("boom"));
+    await c.flush();
+    const [e] = sent[0]!.events as { breadcrumbs?: unknown[] }[];
+    expect(e?.breadcrumbs).toHaveLength(50);
+
+    const { c: own, fetch: ownFetch } = client();
+    initReactNative({ ...opts, fetch: ownFetch, maxBreadcrumbs: 10, network: { isFailure: (s) => s >= 500 } }, own);
+    const ownOpts = (own as unknown as { opts: { network: { isFailure: (s: number) => boolean }; maxBreadcrumbs: number } }).opts;
+    expect([ownOpts.maxBreadcrumbs, ownOpts.network.isFailure(422)]).toEqual([10, false]);
+  });
+});
+
 describe("apps extend the tags", () => {
   it("tags, setTags and enrich add to deBug's own; the event's own tags win", async () => {
     const { c, sent, fetch } = client();

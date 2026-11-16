@@ -51,6 +51,15 @@ const SESSION_TIMEOUT_MS = 30 * 60_000;
 let removeDeviceTags: (() => void) | undefined;
 
 /** Initialise deBug in a React Native app (bare or Expo). Fills in device context and flushes when the app is backgrounded. */
+/**
+ * A mobile app talks to its own backend, where a 4xx is usually a business rule the customer hit
+ * ("not enough airtime"): those are the failures support gets asked about.
+ */
+const mobileIsFailure = (status: number) => status >= 400;
+
+/** A mobile trail holds screens, API calls and taps. 50 is the most an error event carries. */
+const MOBILE_MAX_BREADCRUMBS = 50;
+
 export function initReactNative(options: ReactNativeInitOptions, client: DebugClient = deBug): DebugClient {
   const { deviceInfo, collect, captureUnhandledRejections = "production", ...rest } = options;
   removeDeviceTags?.();
@@ -60,7 +69,9 @@ export function initReactNative(options: ReactNativeInitOptions, client: DebugCl
   const di = deviceInfo === null ? undefined : (deviceInfo ?? loadDeviceInfo());
   const base = nativeContext({ deviceInfo: di, collect });
   client.init({
+    maxBreadcrumbs: MOBILE_MAX_BREADCRUMBS,
     ...rest,
+    network: { isFailure: mobileIsFailure, ...rest.network },
     app: { ...(base.app as object), ...rest.app },
     context: mergeContext(base, rest.context ?? {}),
   });
