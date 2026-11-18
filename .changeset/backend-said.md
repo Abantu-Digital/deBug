@@ -1,0 +1,6 @@
+---
+"@debugkit/dashboard": minor
+"@debugkit/schema": minor
+---
+
+An issue's explanation leads with what the backend said, when it said anything of its own: "The balance service answered 404 "Balance lookup unsuccessful" (code 30007)". It no longer guesses "the server refused what the app sent as invalid". The code, message and trace come from the app's breadcrumb for the call, or else the JSON response body (`code`, `title` or `message`, `traceId`, as in Problem Details). The developer evidence lists the backend's codes across recent occurrences ("30007 × 14"). The advice becomes "Search the balance logs for code 30007 or trace …". Without a backend reason, the wording is as before. The issue page shows the backend's answer, its code and its trace (with a Copy button) right under the title. "Pass to" names the service and the code to quote. Backend messages are quoted only after masking phone numbers and email addresses (the SDK's `maskPersonal` now lives in `@debugkit/schema` and is shared), with quotes and Markdown removed. A gateway's stock words ("Internal server error", "Missing Authentication Token") don't count as the service's reason. The "Request rejected" category no longer says the request was invalid.

@@ -1,5 +1,6 @@
 import { cleanFnName, hostNameFor, CATEGORY_INFO, CAUSE_INFO, IMPACT_INFO, OWNER_INFO, type Category, type Cause, type Classification, type HostName, type StackFrame, type StoredEvent } from "@debugkit/schema";
 import { evidenceOf, NO_EVIDENCE, type Evidence } from "@debugkit/ingest";
+import type { BackendSaid } from "./backend-said";
 import type { Finding } from "./detectors";
 
 /**
@@ -48,6 +49,11 @@ export interface ExplainInput {
   durations?: number[];
   /** Host names from Settings: the request's host is named in both blocks. */
   hosts?: readonly HostName[];
+  /**
+   * What the backend said, when it gave its own code or message (ABA-161). It leads the
+   * explanation instead of the category's guess: the service's own reason is the place to start.
+   */
+  backend?: BackendSaid;
   now?: number;
 }
 
@@ -265,17 +271,32 @@ export function explain(input: ExplainInput): Explanation {
   const action = userAction(e?.error.frames);
   const doing = action ? ` (after ${action.action})` : "";
   const causeSentences = causes.flatMap((c) => CAUSE_LINES[c]?.summary?.({ model }) ?? []);
+  // The backend's own answer, when it gave one: it says why better than any template can.
+  const said = !offline && (input.backend?.message || input.backend?.code) ? input.backend : undefined;
+  const saidService = said?.service ?? service;
+  const answer = said ? `${said.message ? `"${said.message}"` : ""}${said.code ? `${said.message ? " " : ""}(code ${said.code})` : ""}` : "";
   const summary = [
-    `${t.saw(s.name, s.plural ? "are" : "is")}${who}${where}${when}${doing}.`,
-    t.why(ev, causes),
+    said
+      ? `${saidService ? `The ${saidService} service` : "The server"} answered${said.status ? ` ${said.status}` : ""} ${answer}${who}${where}${when}${doing}.`
+      : `${t.saw(s.name, s.plural ? "are" : "is")}${who}${where}${when}${doing}.`,
+    said ? "That's the service's own reason: start there." : t.why(ev, causes),
     ...causeSentences,
     stillHappening(issue, rangeLabel, now),
-    offline ? OFFLINE_PASS_TO : `Pass to: ${PASS_TO[labels.owner] ?? PASS_TO.unknown}${service && (labels.owner === "backend" || labels.owner === "third_party") ? ` (${service})` : ""}.`,
+    offline
+      ? OFFLINE_PASS_TO
+      : said
+        ? `Pass to: whoever runs ${saidService ? `the ${saidService} service` : "that service"}, with ${said.code ? `code ${said.code}` : "its answer"}${said.traceId ? ` and trace ${said.traceId}` : ""}.`
+        : `Pass to: ${PASS_TO[labels.owner] ?? PASS_TO.unknown}${service && (labels.owner === "backend" || labels.owner === "third_party") ? ` (${service})` : ""}.`,
   ].join(" ");
 
   // Technical: category and owner, evidence, where, fix.
   const took = durationText(input.durations?.length ? input.durations : ev.durationMs !== undefined ? [ev.durationMs] : []);
-  const evidence = [t.diagnosis(ev, took)];
+  const evidence = said
+    ? [
+        `HTTP ${said.status ?? ev.status ?? "error"}, and the backend's own answer: ${answer}${said.traceId ? `, trace \`${said.traceId}\`` : ""}.`,
+        ...(said.codes.length > 1 || (said.codes[0]?.count ?? 0) > 1 ? [`Backend codes in recent occurrences: ${said.codes.map((c) => `${c.key} × ${c.count}`).join(", ")}.`] : []),
+      ]
+    : [t.diagnosis(ev, took)];
   if (e?.request && !offline) evidence.push(`Request: \`${e.request.method.toUpperCase()} ${e.request.url}\`${service ? ` (${service})` : ""}.`);
   if (causes.includes("resumed_from_background") && ev.msSinceForeground !== undefined)
     evidence.push(`The app came to the foreground ${seconds(ev.msSinceForeground)} before; no request has succeeded since.`);
@@ -287,7 +308,15 @@ export function explain(input: ExplainInput): Explanation {
   if (issue.incidentTitle) evidence.push(`Part of the incident "${issue.incidentTitle}".`);
 
   const whereParts = [issue.culprit ? `\`${issue.culprit}\`` : undefined, action ? `started by \`${action.fn}\` (${action.action})` : undefined].filter(Boolean);
-  const fixSteps = [t.fix(ev, causes), ...causes.flatMap((c) => CAUSE_LINES[c]?.fix ?? [])];
+  const lookUp = said && [said.code && `code ${said.code}`, said.traceId && `trace ${said.traceId}`].filter(Boolean).join(" or ");
+  const fixSteps = [
+    said
+      ? `Search the ${saidService ?? "backend"} logs${lookUp ? ` for ${lookUp}` : ""} at the times above: the service's answer (under The call that failed) says why it refused or failed.`
+      : t.fix(ev, causes),
+    // A sign-in refusal still needs the app's side of it (refresh the token).
+    ...(said && labels.category === "auth" ? [t.fix(ev, causes)] : []),
+    ...causes.flatMap((c) => CAUSE_LINES[c]?.fix ?? []),
+  ];
   return {
     summary,
     technical: {

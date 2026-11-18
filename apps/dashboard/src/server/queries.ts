@@ -27,6 +27,7 @@ import { findingsOf, type Finding } from "./detectors";
 import { burstSummary, inRange, offlineBursts, type OfflineBurst } from "./offline";
 import { EVENT_LOOKBACK, failedRequest, timelineOf, type ApiCall } from "./event";
 import { exchangeOf, type Exchange } from "./exchange";
+import { backendSaid, type BackendSaid } from "./backend-said";
 import { daysBetween, rangeBounds, resolveRange, weekOf, type DateRange } from "./range";
 
 /**
@@ -413,7 +414,10 @@ export async function buildSummary(
     };
   }
   for (const row of issueRows)
-    if (row.labels) row.explanation = explain({ issue: row, labels: row.labels, lastEvent: lastEvents.get(row.fingerprint), users: row.users, hosts, rangeLabel: range.label, now });
+    if (row.labels) {
+      const last = lastEvents.get(row.fingerprint);
+      row.explanation = explain({ issue: row, labels: row.labels, lastEvent: last, users: row.users, hosts, rangeLabel: range.label, backend: last ? backendSaid([last], hosts) : undefined, now });
+    }
 
   // Incident counts follow the issue table: for 24h, each issue's hourly count caps its daily rollup.
   const incidents = await buildIncidents(incidentRows, incidentIssueRows, issueRows, hourly, (key) => countUsersSafe(store, app, `incident:${key}`, usersSince));
@@ -815,6 +819,8 @@ export interface IssueDetail {
    * `{}` when a call failed but the app recorded nothing about it. Unset for other issues.
    */
   calls?: { latest?: FailedCall; lastAnswer?: FailedCall };
+  /** What the backend said, newest first, when it gave its own code or message (ABA-161). */
+  backend?: BackendSaid;
   /**
    * Where the issue sits under Health, for its breadcrumb: the service whose call failed, or the
    * app's own code. null for a failed call whose service nobody named.
@@ -913,6 +919,8 @@ export async function buildIssueDetail(
   const hints = hintsFor(issue, breakdowns, events, !!row.labels && isRequestCategory(row.labels.category), hosts);
   // The same occurrence the labels came from, so the evidence can't contradict them.
   const errorEvents = events.filter((e) => e.event.type === "error");
+  // What the backend said, when it gave its own reason (ABA-161): shown at the top and in the explanation.
+  const backend = row.labels && isRequestCategory(row.labels.category) ? backendSaid(errorEvents.length ? errorEvents : issue.lastEvent ? [issue.lastEvent] : [], hosts) : undefined;
   row.explanation = row.labels
     ? explain({
         issue: row,
@@ -923,6 +931,7 @@ export async function buildIssueDetail(
         platforms: [...new Set(errorEvents.map((e) => e.context.os.name))],
         durations: errorEvents.flatMap((e) => (e.event.type === "error" && e.event.request?.durationMs !== undefined ? [e.event.request.durationMs] : [])),
         rangeLabel: range.label,
+        backend,
         now,
       })
     : undefined;
@@ -949,6 +958,7 @@ export async function buildIssueDetail(
     links: {},
     sample: events[0] ?? issue.lastEvent ?? null,
     calls,
+    backend,
     recent: events.slice(0, 25).map((e) => ({
       id: e.event.id,
       type: e.event.type,
