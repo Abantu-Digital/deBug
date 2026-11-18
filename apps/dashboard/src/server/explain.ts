@@ -273,16 +273,20 @@ export function explain(input: ExplainInput): Explanation {
   const causeSentences = causes.flatMap((c) => CAUSE_LINES[c]?.summary?.({ model }) ?? []);
   // The backend's own answer, when it gave one: it says why better than any template can.
   const said = !offline && (input.backend?.message || input.backend?.code) ? input.backend : undefined;
-  const saidBy = said?.service ?? service;
+  const saidService = said?.service ?? service;
   const answer = said ? `${said.message ? `"${said.message}"` : ""}${said.code ? `${said.message ? " " : ""}(code ${said.code})` : ""}` : "";
   const summary = [
     said
-      ? `${saidBy ? `The ${saidBy} service` : "The server"} answered${said.status ? ` ${said.status}` : ""} ${answer}${who}${where}${when}${doing}.`
+      ? `${saidService ? `The ${saidService} service` : "The server"} answered${said.status ? ` ${said.status}` : ""} ${answer}${who}${where}${when}${doing}.`
       : `${t.saw(s.name, s.plural ? "are" : "is")}${who}${where}${when}${doing}.`,
     said ? "That's the service's own reason: start there." : t.why(ev, causes),
     ...causeSentences,
     stillHappening(issue, rangeLabel, now),
-    offline ? OFFLINE_PASS_TO : `Pass to: ${PASS_TO[labels.owner] ?? PASS_TO.unknown}${service && (labels.owner === "backend" || labels.owner === "third_party") ? ` (${service})` : ""}.`,
+    offline
+      ? OFFLINE_PASS_TO
+      : said
+        ? `Pass to: whoever runs ${saidService ? `the ${saidService} service` : "that service"}, with ${said.code ? `code ${said.code}` : "its answer"}${said.traceId ? ` and trace ${said.traceId}` : ""}.`
+        : `Pass to: ${PASS_TO[labels.owner] ?? PASS_TO.unknown}${service && (labels.owner === "backend" || labels.owner === "third_party") ? ` (${service})` : ""}.`,
   ].join(" ");
 
   // Technical: category and owner, evidence, where, fix.
@@ -307,8 +311,10 @@ export function explain(input: ExplainInput): Explanation {
   const lookUp = said && [said.code && `code ${said.code}`, said.traceId && `trace ${said.traceId}`].filter(Boolean).join(" or ");
   const fixSteps = [
     said
-      ? `Search the ${saidBy ?? "backend"} logs${lookUp ? ` for ${lookUp}` : ""} at the times above: the service's answer (under The call that failed) says why it refused or failed.`
+      ? `Search the ${saidService ?? "backend"} logs${lookUp ? ` for ${lookUp}` : ""} at the times above: the service's answer (under The call that failed) says why it refused or failed.`
       : t.fix(ev, causes),
+    // A sign-in refusal still needs the app's side of it (refresh the token).
+    ...(said && labels.category === "auth" ? [t.fix(ev, causes)] : []),
     ...causes.flatMap((c) => CAUSE_LINES[c]?.fix ?? []),
   ];
   return {

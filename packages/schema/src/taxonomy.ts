@@ -58,7 +58,7 @@ export const CATEGORY_INFO: Record<Category, LabelInfo> = {
   },
   client_request: {
     name: "Request rejected",
-    description: "The server refused the request as invalid (4xx): the app sent something the server didn't accept.",
+    description: "The server refused the request (4xx, not a sign-in or rate limit). Its own message, when it gives one, says why.",
   },
   auth: {
     name: "Sign-in problem",

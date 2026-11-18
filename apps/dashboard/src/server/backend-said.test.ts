@@ -42,6 +42,18 @@ describe("what the backend said (ABA-161)", () => {
     expect(said).toMatchObject({ message: "Balance lookup unsuccessful", code: "30007", traceId: "t-3", codes: [{ key: "30007", count: 3 }] });
   });
 
+  it("masks phone numbers and emails, and drops quotes and Markdown, before anything is quoted", () => {
+    const said = saidBy(failed("1", 404, { message: 'The subscriber 625202607 does not "exist" *now*', code: "x`y" }), hosts);
+    expect(said?.message).toBe("The subscriber ••• does not 'exist' now");
+    expect(said?.code).toBeUndefined();
+    expect(saidBy(failed("1", 404, { message: 625202607 }), hosts)).toBeUndefined();
+  });
+
+  it("doesn't take a gateway's stock words for the service's reason", () => {
+    expect(backendSaid([failed("1", 500, { message: "Internal server error" })], hosts)).toBeUndefined();
+    expect(backendSaid([failed("1", 403, { message: "Missing Authentication Token" })], hosts)).toBeUndefined();
+  });
+
   it("has nothing when the backend gave no reason of its own", () => {
     expect(backendSaid([failed("1", 400, { ok: false })], hosts)).toBeUndefined();
     expect(backendSaid([failed("1", 400)], hosts)).toBeUndefined();
@@ -57,6 +69,14 @@ describe("explain leads with what the backend said", () => {
     expect(x.technical.evidence[0]).toBe('HTTP 404, and the backend\'s own answer: "Balance lookup unsuccessful" (code 30007), trace `e23b0b7d-b0ab`.');
     expect(x.technical.evidence[1]).toBe("Backend codes in recent occurrences: 30007 × 2.");
     expect(x.technical.fix).toMatch(/^Search the balance logs for code 30007 or trace e23b0b7d-b0ab at the times above/);
+    expect(x.summary).toMatch(/Pass to: whoever runs the balance service, with code 30007 and trace e23b0b7d-b0ab\.$/);
+  });
+
+  it("a sign-in refusal keeps the app's side of the advice", () => {
+    const e = failed("1", 401, { title: "Session expired", code: "AUTH_01" });
+    const x = explain({ issue, labels: classify(e.event as never), lastEvent: e, hosts, rangeLabel: "the last 14 days", backend: backendSaid([e], hosts), now: NOW });
+    expect(x.technical.fix).toMatch(/^Search the balance logs for code AUTH_01/);
+    expect(x.technical.fix).toMatch(/token/i);
   });
 
   it("a 5xx with only a code in the body", () => {

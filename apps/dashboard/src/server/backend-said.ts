@@ -1,4 +1,4 @@
-import type { HostName, StoredEvent } from "@debugkit/schema";
+import { maskPersonal, type HostName, type StoredEvent } from "@debugkit/schema";
 import { failedRequest, timelineOf } from "./event";
 
 /**
@@ -10,8 +10,11 @@ import { failedRequest, timelineOf } from "./event";
 export interface BackendSaid {
   /** The HTTP status of that answer. */
   status?: number;
+  /** The backend's own error code: "30007". */
   code?: string;
+  /** The backend's own message, with phone numbers and email addresses masked: "Balance lookup unsuccessful". */
   message?: string;
+  /** The id to find this call in the backend's logs. */
   traceId?: string;
   /** The service, as Settings or the app names it. */
   service?: string;
@@ -19,8 +22,27 @@ export interface BackendSaid {
   codes: { key: string; count: number }[];
 }
 
-/** A short string from a JSON field: text or a number, else nothing. */
-const text = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v.trim().slice(0, 200) : typeof v === "number" ? String(v) : undefined);
+/** A code or id from a JSON field: text or a number, kept to plain characters, else nothing. */
+const token = (v: unknown): string | undefined => {
+  const s = typeof v === "number" ? String(v) : typeof v === "string" ? v.trim() : "";
+  return /^[\w.:-]{1,100}$/.test(s) ? s : undefined;
+};
+
+/**
+ * What a gateway or framework says for any failure: not the service's own reason, so it doesn't
+ * replace the explanation's diagnosis.
+ */
+const GENERIC = /^(internal server error|not found|bad request|forbidden|unauthori[sz]ed|missing authentication token|service unavailable|bad gateway|gateway time-?out|endpoint request timed out|too many requests|error|an error occurred)\.?$/i;
+
+/**
+ * A message from the backend, safe to quote in a ticket or Slack: text only, phone numbers and
+ * email addresses masked, no quotes or Markdown characters, at most 200 characters.
+ */
+const message = (v: unknown): string | undefined => {
+  if (typeof v !== "string") return undefined;
+  const s = maskPersonal(v).replace(/[`*_<>[\]]/g, "").replace(/"/g, "'").replace(/\s+/g, " ").trim().slice(0, 200);
+  return s && !GENERIC.test(s) ? s : undefined;
+};
 
 /** One occurrence's answer from the backend, or undefined when it gave none of its own. */
 export function saidBy(se: StoredEvent, hosts: readonly HostName[] = []): Omit<BackendSaid, "codes"> | undefined {
@@ -33,14 +55,14 @@ export function saidBy(se: StoredEvent, hosts: readonly HostName[] = []): Omit<B
   } catch {
     // Not JSON: nothing of the backend's own to read.
   }
-  const code = call?.backendCode ?? text(body.code) ?? text(body.errorCode);
-  const message = call?.backendTitle ?? text(body.title) ?? text(body.message) ?? text(body.error);
-  if (!code && !message) return undefined;
+  const code = token(call?.backendCode) ?? token(body.code) ?? token(body.errorCode);
+  const said = message(call?.backendTitle) ?? message(body.title) ?? message(body.message) ?? message(body.error);
+  if (!code && !said) return undefined;
   return {
-    status: se.event.response?.status ?? call?.status,
+    status: se.event.response?.status ?? call?.status ?? se.event.request?.status,
     code,
-    message,
-    traceId: call?.traceId ?? text(body.traceId) ?? text(body.trace_id),
+    message: said,
+    traceId: token(call?.traceId) ?? token(body.traceId) ?? token(body.trace_id),
     service: call?.service,
   };
 }

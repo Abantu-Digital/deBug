@@ -57,6 +57,24 @@ function IssuePage() {
         </div>
         <h1 className="mt-2 break-words text-xl font-semibold tracking-tight sm:text-2xl">{issue.title}</h1>
         {issue.culprit && <p className="mt-1 font-mono text-sm text-muted">{issue.culprit}</p>}
+        {/* The backend's own answer, when it gave one (ABA-161): the first place to look. */}
+        {d.backend && (
+          <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm">
+            <span>
+              <span className="text-muted">{d.backend.service ? `The ${d.backend.service} service` : "The server"} answered{d.backend.status ? ` ${d.backend.status}` : ""}: </span>
+              {d.backend.message && <strong>{d.backend.message}</strong>}
+              {d.backend.code && <span className="font-mono"> · code {d.backend.code}</span>}
+              {d.backend.codes.length > 1 && <span className="text-muted"> ({d.backend.codes.map((c) => `${c.key} × ${c.count}`).join(", ")})</span>}
+            </span>
+            {d.backend.traceId && (
+              <span className="flex items-center gap-1.5 text-xs">
+                <span className="text-muted">trace</span>
+                <span className="break-all font-mono">{d.backend.traceId}</span>
+                <CopyButton text={d.backend.traceId} label="Copy" ariaLabel="Copy trace id" />
+              </span>
+            )}
+          </p>
+        )}
         <IssueLabels issue={issue} />
         {issue.incidentTitle && (
           <p className="mt-2 text-sm text-muted">
