@@ -53,6 +53,8 @@ function AppCodePage() {
         <p className="mt-1 text-sm text-muted">Crashes and code errors in the app itself, in {range.label}, worst first. Failed calls are on their service's page.</p>
       </header>
 
+      {search.tests && <TestErrors issues={report.tests} keep={keep} now={now} />}
+
       {open.length ? (
         <ol className="space-y-3" aria-label="Open crashes and code errors, worst first">
           {open.map((i) => (
@@ -68,8 +70,6 @@ function AppCodePage() {
       )}
 
       <ClosedIssues issues={closed} keep={keep} now={now} />
-
-      {search.tests && <TestErrors issues={report.tests} keep={keep} now={now} />}
     </main>
   );
 }
@@ -102,9 +102,9 @@ function Problem({ issue: i, keep, now }: { issue: IssueRow; keep: PageSearch; n
 /** Errors the app made on purpose to test deBug: shown only when asked for, never counted. */
 function TestErrors({ issues, keep, now }: { issues: readonly IssueRow[]; keep: PageSearch; now: number }) {
   return (
-    <section aria-labelledby="tests-h" className="rounded-xl border border-line bg-panel p-4">
+    <section id="test-errors" aria-labelledby="tests-h" className="rounded-xl border border-line bg-panel p-4">
       <h2 id="tests-h" className="text-sm font-semibold">Test errors ({issues.length})</h2>
-      <p className="mt-0.5 text-xs text-muted">Made on purpose to check deBug works (tag test=true). They never count toward any box, total or rate.</p>
+      <p className="mt-0.5 text-sm text-muted">Why they're folded away: the app made them on purpose to check deBug works (tagged test=true), so they never count toward any box, total, rate or alert.</p>
       {issues.length ? (
         <ul className="mt-3 space-y-1.5 text-sm">
           {issues.map((i) => (

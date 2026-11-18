@@ -266,7 +266,7 @@ async function test(cwd: string) {
     return;
   }
   s.stop("Accepted by your ingest");
-  p.outro(`Open the dashboard (${code(cmdFor("dashboard"))}) and press "Show test errors" to see them under the ${code("onboarding.test")} flow. They're test errors, so they never count.`);
+  p.outro(`Open the dashboard (${code(cmdFor("dashboard"))}) and follow "Folded away: test errors" on the Health page to see them. They're test errors, so they never count.`);
 }
 
 async function guide(cwd: string) {

@@ -170,7 +170,7 @@ export interface Summary {
     eventsRange: number;
     activeIssues: number;
     criticalIssues: number;
-    /** Test-error issues seen in the range (ABA-133): listed only with "Show test errors", never counted. */
+    /** Test-error issues seen in the range (ABA-133): on Health's Folded away line, never counted. */
     testIssues: number;
     failingFlows: number;
   };
@@ -382,7 +382,7 @@ export async function buildSummary(
     .map((i) => toIssueRow(i, issue24h.get(i.fingerprint) ?? 0, hourly ? (issue24h.get(i.fingerprint) ?? 0) : (issueRange.get(i.fingerprint) ?? 0), thresholds, latestVersion, criticalFlows, hosts))
     .sort(bySeverityThenCount);
   // Users affected: one count per issue, so only for the issues people look at first. Test errors
-  // (ABA-133) are listed for the "Show test errors" toggle but never counted as active.
+  // (ABA-133) are listed (App code page, ?tests=1 on the API) but never counted as active.
   const active = issueRows.filter((i) => !i.test && i.status !== "ignored" && i.status !== "resolved");
   await Promise.all(active.slice(0, 10).map(async (i) => (i.users = await countUsersSafe(store, app, `issue:${i.fingerprint}`, usersSince))));
   const lastEvents = new Map(issues.map((i) => [i.fingerprint, i.lastEvent]));
@@ -779,7 +779,7 @@ export interface IssueDetail {
    * Where the issue sits under Health, for its breadcrumb: the service whose call failed, or the
    * app's own code. null for a failed call whose service nobody named.
    */
-  area: { kind: "service"; name: string } | { kind: "app" } | null;
+  area: { kind: "service"; name: string } | { kind: "app" } | { kind: "tests" } | null;
 }
 
 /** The service whose call an issue's newest occurrence failed, or the app's own code. */
@@ -863,7 +863,8 @@ export async function buildIssueDetail(
   const findings = findingsOf(errorEvents.flatMap((e) => (e.event.type === "error" ? [e.event] : [])), hosts);
   const link = issueUrl(opts.trackers?.dashboardUrl, app, fingerprint);
   const detail = {
-    area: areaOf(issue.lastEvent, row.labels, hosts),
+    // A test error is listed with the other test errors, not under App code or a service.
+    area: row.test ? { kind: "tests" } : areaOf(issue.lastEvent, row.labels, hosts),
     app,
     range,
     retention,

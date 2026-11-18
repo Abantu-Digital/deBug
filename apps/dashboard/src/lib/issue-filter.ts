@@ -42,7 +42,7 @@ export function labelFilterOf(get: (key: LabelFilterKey) => unknown): Pick<Issue
   return out as Pick<IssueFilter, LabelFilterKey>;
 }
 
-/** "Show test errors" from a URL: tests=1 or tests=true, whether parsed as text, number or boolean. */
+/** "List test errors too" from a URL: tests=1 or tests=true, whether parsed as text, number or boolean. */
 export const testsFlag = (v: unknown): boolean => v === true || v === 1 || v === "1" || v === "true";
 
 export const isStatusFilter = (v: unknown): v is StatusFilter => typeof v === "string" && (STATUS_FILTERS as readonly string[]).includes(v);

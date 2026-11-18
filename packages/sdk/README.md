@@ -412,7 +412,7 @@ of the dashboard, so keep it consistent.
 
 Errors you make on purpose, for example from a dev tools "Error testing" screen, should be
 marked as tests. They get their own issues, never count toward totals, rates or the session's
-crash-free status, never alert, and the dashboard hides them until you press "Show test errors".
+crash-free status, never alert, and the dashboard folds them away: Health links to them under "Folded away".
 
 ```ts
 deBug.error(err, { test: true });

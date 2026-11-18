@@ -133,14 +133,14 @@ function LevelChip({ level, count, on }: { level: HealthLevel; count: number; on
   );
 }
 
-/** What's kept off the wall on purpose, each linking to where it's listed. Nothing when there's nothing. */
+/** What's kept off the wall on purpose, each linking to where it's listed and why. Nothing when there's nothing. */
 function Folded({ folded, keep }: { folded: HealthReport["folded"]; keep: PageSearch }) {
   if (!folded.tests) return null;
   return (
     <p className="text-sm text-muted">
       <span className="font-semibold">Folded away: </span>
-      <Link to="/app-code" search={{ ...keep, tests: true }} className="text-accent hover:underline" title="Errors made on purpose to test deBug (tag test=true). They never count toward any box.">
-        {folded.tests} test error{folded.tests === 1 ? "" : "s"} →
+      <Link to="/app-code" search={{ ...keep, tests: true }} hash="test-errors" className="text-accent hover:underline">
+        Test errors: {folded.tests} →
       </Link>
     </p>
   );

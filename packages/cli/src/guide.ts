@@ -187,7 +187,7 @@ export async function walkthrough(opts: { cwd: string; app: AppInfo; cfg: Debugk
           "",
           `${bold(String(d.issues.length))} test issues · ${bold(String(d.health?.sessionsRange ?? 0))} session`,
           "",
-          `Refresh the dashboard and press ${bold("Show test errors")}: they're test errors, so they never count and stay hidden until you ask.`,
+          `Refresh the dashboard and open ${bold("Folded away: test errors")} on Health: they're test errors, so they never count and are listed apart.`,
           `You'll see a ${pc.red("HttpError")} from a failed request (captured the way the SDK does it automatically)`,
           `and a ${pc.red("SyntaxError")} reported from a try/catch, in the ${code("onboarding.test")} flow.`,
           dim("They're tagged environment debugkit-test, version " + (app.version ?? "0.0.0") + ". Raw events expire after 30 days."),
