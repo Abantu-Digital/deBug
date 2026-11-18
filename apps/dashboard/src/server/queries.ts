@@ -82,7 +82,7 @@ export interface IssueRow {
   explanation?: Explanation;
   /** Made on purpose to test deBug (tagged test=true): hidden unless asked, never counted (ABA-133). */
   test: boolean;
-  /** The one issue that collects offline bursts (ABA-132): shown under Connectivity, not in the list or counts. */
+  /** The one issue that collects offline bursts (ABA-132): on Health's Folded away line, in no box or count. */
   offline: boolean;
 }
 
@@ -178,8 +178,10 @@ export interface Summary {
     testIssues: number;
     failingFlows: number;
   };
-  /** Phones going offline in the range (ABA-132), grouped into bursts; null when there were none. */
-  /** `capped`: bursts and phones were worked out from only the newest occurrences. */
+  /**
+   * Phones going offline in the range (ABA-132), grouped into bursts; null when there were none.
+   * `capped`: bursts and phones were worked out from only the newest occurrences.
+   */
   connectivity: { fingerprint: string; bursts: number; phones: number; failures: number; lastSeen?: string; capped: boolean } | null;
   narrative: string[];
   /** One point per hour (24h), day (up to 90 days) or week (longer), labelled by its start. */
@@ -240,7 +242,7 @@ export const SUMMARY_FIELDS = {
   "flows[]": "Parts of the app as tagged by the developer (e.g. auth.login). Sorted by severity, then errors24h, then errorsRange.",
   "flows[].failureRate": "failures/(failures+successes) in the range from events logged with an outcome. null when the app logs no outcomes for that flow.",
   "issues[]": "Grouped errors seen in the range. Sorted by severity, then count24h, then countRange. Narrow with ?status=open|resolved|ignored|all (default all), ?flow=, ?category=, ?owner= and ?impact= (ids from breakdowns); an unknown value is a 400. Test errors are left out unless ?tests=1. _filter echoes what was applied.",
-  "issues[].offline": "true for the one issue that collects offline bursts (calls that never left the phone). Shown under connectivity, left out of the list unless ?category=network.offline, and never counted as active.",
+  "issues[].offline": "true for the one issue that collects offline bursts (calls that never left the phone). On Health's Folded away line, left out of this list unless ?category=network.offline, and never counted as active.",
   "issues[].test": "true for an issue made on purpose to test deBug (tag test=true): listed only with ?tests=1, never counted, always severity low.",
   "issues[].severity": "Derived from count24h using thresholds critical/high/medium.",
   "issues[].title": "Error name and message, with hosts named in Settings shown by their names.",
@@ -690,9 +692,9 @@ function toIssueRow(
   hosts: readonly HostName[] = [],
 ): IssueRow {
   const test = isTestIssue(i);
-  // A test error is never urgent, however often someone taps the button (ABA-133).
   const offline = isOfflineIssue(i);
-  // Neither test errors nor the phone being offline rank by count: low, under the real problems.
+  // Neither a test error (never urgent, however often someone taps the button, ABA-133) nor the
+  // phone being offline (ABA-132) ranks by count: low, under the real problems.
   const base = test || offline ? "low" : severityFromCount(count24h, t);
   const critical = new Set(criticalFlows);
   return {
@@ -895,6 +897,7 @@ export async function buildIssueDetail(
   // Trail patterns don't apply to a phone going offline: its bursts say what happened instead.
   const findings = offline ? [] : findingsOf(errorEvents.flatMap((e) => (e.event.type === "error" ? [e.event] : [])), hosts);
   const link = issueUrl(opts.trackers?.dashboardUrl, app, fingerprint);
+  const bounds = rangeBounds(range, now);
   const detail = {
     // A test error is listed with the other test errors; the offline issue sits under no service
     // (the phone had no signal); anything else under its service or App code.
@@ -922,7 +925,7 @@ export async function buildIssueDetail(
     hints,
     findings,
     // The same range the counts cover, so the bursts and the overview agree.
-    ...(offline ? { bursts: offlineBursts(inRange(events, rangeBounds(range, now).start, rangeBounds(range, now).end), hosts), burstsCapped: events.length >= EVENT_LOOKBACK } : {}),
+    ...(offline ? { bursts: offlineBursts(inRange(events, bounds.start, bounds.end), hosts), burstsCapped: events.length >= EVENT_LOOKBACK } : {}),
     ticketMarkdown: row.explanation ? explanationMarkdown(row.title, row.explanation, link, findings) : undefined,
   } satisfies IssueDetail;
   detail.links = trackerLinks(detail, opts.trackers ?? {});

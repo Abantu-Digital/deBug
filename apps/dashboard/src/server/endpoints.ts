@@ -206,7 +206,7 @@ export async function buildEndpoints(
   const hosts = settings?.hosts ?? [];
 
   // The most recently failing first: they're the ones with failures in the period.
-  // Test errors (ABA-133) are never an endpoint's failures.
+  // Test errors (ABA-133) and calls that never left the phone (ABA-132) are never an endpoint's failures.
   const network = issues.filter((i) => isNetworkIssue(i) && !isTestIssue(i) && !isOfflineIssue(i) && i.lastSeen.slice(0, 10) >= range.from).sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
   const read = network.slice(0, ENDPOINT_ISSUE_LIMIT);
   const perIssue = await Promise.all(read.map((i) => store.listIssueEvents(app, i.fingerprint, { limit: EVENT_LOOKBACK })));

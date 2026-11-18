@@ -71,7 +71,7 @@ export function offlineBursts(events: readonly StoredEvent[], hosts: readonly Ho
   return bursts.sort((a, b) => b.start.localeCompare(a.start));
 }
 
-/** How many bursts on how many phones, for the Connectivity line. */
+/** How many bursts on how many phones, for Health's Folded away line. */
 export function burstSummary(bursts: readonly OfflineBurst[]): { bursts: number; phones: number; lastSeen?: string } {
   return { bursts: bursts.length, phones: new Set(bursts.map((b) => b.phone)).size, lastSeen: bursts[0]?.end };
 }

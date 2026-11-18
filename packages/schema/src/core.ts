@@ -70,7 +70,7 @@ export const NEVER_SENT_MS = 100;
 
 /**
  * The one issue that collects every request that never left the phone (ABA-132). Not a problem
- * with any endpoint or owner, so it stays out of their counts and shows under Connectivity.
+ * with any endpoint or owner, so it stays out of their counts and is folded away on Health.
  */
 export const OFFLINE_FINGERPRINT = "offline";
 

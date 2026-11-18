@@ -243,7 +243,7 @@ describe("labels", () => {
     expect(s.breakdowns.owner).toEqual([]);
     expect(s.health.endpoints).toEqual([]);
     expect(s.breakdowns.impact).toEqual([{ key: "degraded", errors: 6 }]);
-    // Under Connectivity, not in the list or the counts.
+    // Folded away on Health: not in the list or the counts.
     expect(s.totals.activeIssues).toBe(0);
     expect(filterIssues(s.issues, {})).toEqual([]);
     expect(filterIssues(s.issues, { category: "network.offline" })).toHaveLength(1);
