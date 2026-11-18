@@ -59,7 +59,7 @@ describe("explain: the Cell C staging getBalances failure", () => {
     expect(md.split("\n").slice(0, 3)).toEqual(["## NetworkError: POST …/getBalances failed", "", "deBug: https://debug.example/issues/fp?app=cell-c"]);
     expect(md).toContain("### What happened");
     expect(md).toContain("### For developers");
-    expect(md).toContain("**Suggested fix:**");
+    expect(md).toContain("**General advice:**");
   });
 });
 

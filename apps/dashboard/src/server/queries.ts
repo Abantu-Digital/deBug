@@ -19,7 +19,8 @@ import {
   type SeverityThresholds,
   type StoredEvent,
 } from "@debugkit/schema";
-import { explain, explanationLines, explanationMarkdown, type Explanation } from "./explain";
+import { explain, explanationLines, explanationMarkdown, findingLine, type Explanation } from "./explain";
+import { findingsOf, type Finding } from "./detectors";
 import { daysBetween, resolveRange, weekOf, type DateRange } from "./range";
 
 /**
@@ -754,6 +755,8 @@ export interface IssueDetail {
   /** Newest first. `id` opens the event page; error events only have one worth opening. */
   recent: { id: string; type: string; ts: string; os: string; appVersion?: string; device?: string; message: string; userId?: string }[];
   hints: { title: string; detail: string }[];
+  /** Specific advice from patterns in the recent occurrences' trails (ABA-146), best first. */
+  findings: Finding[];
   /** The explanation as Markdown, for "Copy for a ticket". */
   ticketMarkdown?: string;
 }
@@ -827,6 +830,7 @@ export async function buildIssueDetail(
         now,
       })
     : undefined;
+  const findings = findingsOf(errorEvents.flatMap((e) => (e.event.type === "error" ? [e.event] : [])), hosts);
   const link = issueUrl(opts.trackers?.dashboardUrl, app, fingerprint);
   const detail = {
     app,
@@ -850,7 +854,8 @@ export async function buildIssueDetail(
       userId: e.user?.id,
     })),
     hints,
-    ticketMarkdown: row.explanation ? explanationMarkdown(row.title, row.explanation, link) : undefined,
+    findings,
+    ticketMarkdown: row.explanation ? explanationMarkdown(row.title, row.explanation, link, findings) : undefined,
   } satisfies IssueDetail;
   detail.links = trackerLinks(detail, opts.trackers ?? {});
   return detail;
@@ -881,6 +886,7 @@ export function issueStory(d: Omit<IssueDetail, "links">, dashboardUrl?: string)
     i.culprit ? `At \`${i.culprit}\`${i.flow ? ` in flow \`${i.flow}\`` : ""}.` : i.flow ? `In flow \`${i.flow}\`.` : "",
     // The link first, so the body's length limit can't cut it off.
     ...(dashboardUrl ? ["", `deBug: ${issueUrl(dashboardUrl, d.app, i.fingerprint)}`] : []),
+    // Findings go after the counts (below), so the body's length limit cuts them, not the counts.
     ...(x ? ["", ...explanationLines(x)] : []),
     "",
     `- ${i.countRange.toLocaleString()} occurrences in ${d.range.label}, ${i.count24h} in the last 24h (severity: ${i.severity})`,
@@ -889,6 +895,7 @@ export function issueStory(d: Omit<IssueDetail, "links">, dashboardUrl?: string)
     `- Versions: ${top(d.breakdowns.appVersion)}`,
     `- OS: ${top(d.breakdowns.os)}; devices: ${top(d.breakdowns.deviceModel)}`,
     ...(frames.length ? ["", "Stack (in-app frames):", ...frames.map((f) => `- \`${f.fn ?? "?"}\` ${f.file ?? ""}:${f.line ?? ""}`)] : []),
+    ...(d.findings.length ? ["", "What the trail shows:", ...d.findings.slice(0, 3).map(findingLine)] : []),
     ...(d.hints.length ? ["", x ? "Also worth checking:" : "What to look at:", ...d.hints.slice(0, 3).map((h) => `- ${h.title}: ${h.detail}`)] : []),
   ]
     .filter((l, n, all) => !(l === "" && all[n - 1] === ""))

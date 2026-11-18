@@ -1,5 +1,6 @@
 import { cleanFnName, hostNameFor, CATEGORY_INFO, CAUSE_INFO, IMPACT_INFO, OWNER_INFO, type Category, type Cause, type Classification, type HostName, type StackFrame, type StoredEvent } from "@debugkit/schema";
 import { evidenceOf, NO_EVIDENCE, type Evidence } from "@debugkit/ingest";
+import type { Finding } from "./detectors";
 
 /**
  * Two explanations for every issue, built from its labels, the evidence behind them and the
@@ -72,7 +73,7 @@ export function userAction(frames: StackFrame[] | undefined): { fn: string; acti
   return undefined;
 }
 
-const seconds = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
+export const seconds = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
 const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const PLATFORM: Record<string, string> = { ios: "iPhone", android: "Android", web: "the web", macos: "Mac", windows: "Windows" };
@@ -161,7 +162,7 @@ const TEMPLATES: Record<Category, Template> = {
     saw: (n) => `${cap(n)} took too long and gave up`,
     why: () => "The request was sent but no answer came back in time: a slow network or a slow server.",
     diagnosis: (_ev, took) => `Timed out${took ? ` after ${took}` : ""} with no response.`,
-    fix: () => "Check this endpoint's p95 under Response times. If the server is slow, fix it there; otherwise raise the timeout, retry idempotent requests, and show a retry state.",
+    fix: () => "Check this endpoint's p95 under Response times. If it's slow on every network, give that service's owner the timings and the times above; in the app, raise the timeout, retry idempotent requests, and show a retry state.",
   },
   "network.failed": {
     saw: (n) => `${cap(n)} couldn't connect`,
@@ -293,8 +294,12 @@ export function explain(input: ExplainInput): Explanation {
   };
 }
 
-/** The explanation as Markdown lines, without a title: for tickets and prefilled links. */
-export function explanationLines(x: Explanation): string[] {
+/**
+ * The explanation as Markdown lines, without a title: for tickets and prefilled links. Specific
+ * findings from the trail (ABA-146) come before the template's advice, which is labelled "General
+ * advice" so it isn't mistaken for specific.
+ */
+export function explanationLines(x: Explanation, findings: readonly Finding[] = []): string[] {
   return [
     "### What happened",
     x.summary,
@@ -304,12 +309,16 @@ export function explanationLines(x: Explanation): string[] {
     "",
     ...x.technical.evidence.map((l) => `- ${l}`),
     ...(x.technical.where ? ["", `**Where:** ${x.technical.where}`] : []),
+    ...(findings.length ? ["", "### What the trail shows", ...findings.map(findingLine)] : []),
     "",
-    `**Suggested fix:** ${x.technical.fix}`,
+    `**General advice:** ${x.technical.fix}`,
   ];
 }
 
+/** "- Why. Fix. (2 of 2 occurrences)" */
+export const findingLine = (f: Finding) => `- ${f.why} ${f.fix}${f.of > 1 ? ` (${f.seen} of ${f.of} occurrences)` : ""}`;
+
 /** The explanation as Markdown, for pasting into a Jira or Linear ticket by hand. */
-export function explanationMarkdown(title: string, x: Explanation, link?: string): string {
-  return [`## ${title}`, ...(link ? ["", `deBug: ${link}`] : []), "", ...explanationLines(x)].join("\n");
+export function explanationMarkdown(title: string, x: Explanation, link?: string, findings: readonly Finding[] = []): string {
+  return [`## ${title}`, ...(link ? ["", `deBug: ${link}`] : []), "", ...explanationLines(x, findings)].join("\n");
 }
