@@ -27,6 +27,7 @@ import { findingsOf, type Finding } from "./detectors";
 import { burstSummary, inRange, offlineBursts, type OfflineBurst } from "./offline";
 import { EVENT_LOOKBACK, failedRequest, timelineOf, type ApiCall } from "./event";
 import { exchangeOf, type Exchange } from "./exchange";
+import { backendSaid } from "./backend-said";
 import { daysBetween, rangeBounds, resolveRange, weekOf, type DateRange } from "./range";
 
 /**
@@ -413,7 +414,10 @@ export async function buildSummary(
     };
   }
   for (const row of issueRows)
-    if (row.labels) row.explanation = explain({ issue: row, labels: row.labels, lastEvent: lastEvents.get(row.fingerprint), users: row.users, hosts, rangeLabel: range.label, now });
+    if (row.labels) {
+      const last = lastEvents.get(row.fingerprint);
+      row.explanation = explain({ issue: row, labels: row.labels, lastEvent: last, users: row.users, hosts, rangeLabel: range.label, backend: last ? backendSaid([last], hosts) : undefined, now });
+    }
 
   // Incident counts follow the issue table: for 24h, each issue's hourly count caps its daily rollup.
   const incidents = await buildIncidents(incidentRows, incidentIssueRows, issueRows, hourly, (key) => countUsersSafe(store, app, `incident:${key}`, usersSince));
@@ -923,6 +927,7 @@ export async function buildIssueDetail(
         platforms: [...new Set(errorEvents.map((e) => e.context.os.name))],
         durations: errorEvents.flatMap((e) => (e.event.type === "error" && e.event.request?.durationMs !== undefined ? [e.event.request.durationMs] : [])),
         rangeLabel: range.label,
+        backend: backendSaid(errorEvents.length ? errorEvents : issue.lastEvent ? [issue.lastEvent] : [], hosts),
         now,
       })
     : undefined;
