@@ -6,11 +6,12 @@ import { buildEventDetail } from "./event";
 import { buildSessionDetail } from "./session";
 import { lookupCustomer } from "./customers";
 import { buildEndpoints } from "./endpoints";
+import { buildAppCode, buildHealth } from "./health";
 import { buildVersionStatus } from "./versions";
 import { isMissingIndex } from "./errors";
 import { buildIssueDetail, buildSummary } from "./queries";
 import { readSettings, restampStep, seenHosts, settingsWriter, testAlert, validRetention, writeIssueStatus, writeRetention, writeSettings } from "./settings";
-import { getStore } from "./store";
+import { clearStoreCache, getStore } from "./store";
 import { acceptInvite, changeRole, createInvite, readTeam, removeMember, revokeInvite } from "./team";
 import { hashInviteToken } from "@debugkit/ingest";
 import { TEAM_ROLES, type TeamRole } from "@debugkit/adapters";
@@ -29,10 +30,11 @@ export const getVersionStatus = createServerFn({ method: "GET" }).handler(async 
   }
 });
 
-export const getLoginInfo = createServerFn({ method: "GET" }).handler(async () => ({
-  store: config().store,
-  demo: demoLoginEnabled() ? DEMO_USER : null,
-}));
+export const getLoginInfo = createServerFn({ method: "GET" }).handler(async () => {
+  // Start reading the health wall while the person signs in (see warm.ts).
+  void getStore().catch(() => undefined);
+  return { store: config().store, demo: demoLoginEnabled() ? DEMO_USER : null };
+});
 
 export const login = createServerFn({ method: "POST" })
   .validator((d: { email: string; password: string }) => {
@@ -74,11 +76,31 @@ type RangeInput = { range?: string; from?: string; to?: string };
 const str = (v: unknown) => (typeof v === "string" && v.length <= 32 ? v : undefined);
 const rangeOf = (d: RangeInput | undefined): RangeInput => ({ range: str(d?.range), from: str(d?.from), to: str(d?.to) });
 
-export const getOverview = createServerFn({ method: "GET" })
+export const refreshData = createServerFn({ method: "POST" }).handler(async () => {
+  await requireUser();
+  clearStoreCache();
+  return { ok: true };
+});
+
+/** The health wall: every service and the app's own code, coloured by level, worst first. */
+export const getHealth = createServerFn({ method: "GET" })
   .validator((d: { app?: string } & RangeInput) => ({ app: str(d?.app), ...rangeOf(d) }))
   .handler(async ({ data }) => {
     await requireUser();
-    return buildSummary(await getStore(), data.app, config().severity, Date.now(), { range: data, retentionDays: config().retentionDays });
+    const store = await getStore();
+    const now = Date.now();
+    const opts = { range: data, retentionDays: config().retentionDays };
+    const [endpoints, summary] = await Promise.all([buildEndpoints(store, data.app, now, opts), buildSummary(store, data.app, config().severity, now, opts)]);
+    return endpoints && summary ? buildHealth(endpoints, summary, now) : null;
+  });
+
+/** The App code page: the app's own crashes and code errors, worst first. */
+export const getAppCode = createServerFn({ method: "GET" })
+  .validator((d: { app?: string } & RangeInput) => ({ app: str(d?.app), ...rangeOf(d) }))
+  .handler(async ({ data }) => {
+    await requireUser();
+    const summary = await buildSummary(await getStore(), data.app, config().severity, Date.now(), { range: data, retentionDays: config().retentionDays });
+    return summary ? buildAppCode(summary) : null;
   });
 
 export const getEndpoints = createServerFn({ method: "GET" })

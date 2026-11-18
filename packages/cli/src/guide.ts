@@ -156,12 +156,10 @@ export async function walkthrough(opts: { cwd: string; app: AppInfo; cfg: Debugk
   /* 2. What will appear */
   p.note(
     [
-      `${bold("A written summary")}: how many errors today, the worst part of the app, the top issue, the struggling release`,
-      `${bold("Issues by severity")}: errors grouped by cause; open one for the stack trace and the steps that led to it`,
-      `${bold("Release health")}: crash-free and error-free sessions per app version`,
-      `${bold("Failing endpoints")}: requests that time out, fail or return 5xx`,
-      `${bold("Where the app is failing")}: errors and failure rates per flow, like auth.login`,
-      `${bold("Breakdowns")}: by OS, app version and device`,
+      `${bold("Health")}: every service the app calls, and its own code, as a box in red, orange, yellow, grey or green, worst first`,
+      `${bold("A service")}: its failing calls, what the server said and how often, each one click from the cause`,
+      `${bold("An issue")}: what happened in plain words, how to fix it, the stack trace and the devices it was on`,
+      `${bold("Endpoints")}: every call with its failure rate and timings`,
     ].join("\n"),
     "2 · What you'll see there",
   );

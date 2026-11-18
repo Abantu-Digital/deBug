@@ -1,7 +1,7 @@
 import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { HourlyChart, TrendChart } from "~/components/charts";
-import { RangePicker, rangeSearch, RetentionNote, type RangeSearch } from "~/components/range-picker";
+import { RangePicker, rangeSearch, RetentionNote, type PageSearch, type RangeSearch } from "~/components/range-picker";
 import { Card, DataTable, IssueLabels, LevelBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
 import { CopyButton } from "~/components/copy-button";
 import { getIssueDetail, updateIssueStatus } from "~/server/fns";
@@ -25,11 +25,22 @@ function IssuePage() {
   const navigate = Route.useNavigate();
   const search = Route.useSearch();
   const { range } = d;
+  const keep: PageSearch = { app: d.app, range: search.range, from: search.from, to: search.to };
 
   return (
     <main className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link to="/" search={{ app: d.app, range: search.range, from: search.from, to: search.to }} className="text-sm text-muted hover:text-ink">← Overview</Link>
+        <nav aria-label="Breadcrumb" className="text-sm text-muted">
+          <Link to="/" search={keep} className="hover:text-ink hover:underline">Health</Link>
+          {d.area && <span aria-hidden> › </span>}
+          {d.area?.kind === "app" ? (
+            <Link to="/app-code" search={keep} className="hover:text-ink hover:underline">App code</Link>
+          ) : d.area ? (
+            <Link to="/services/$service" params={{ service: d.area.name }} search={keep} className="hover:text-ink hover:underline">
+              {d.area.name}
+            </Link>
+          ) : null}
+        </nav>
         <RangePicker key={`${range.preset}${range.from}${range.to}`} value={range} today={new Date().toISOString().slice(0, 10)} onChange={(r) => navigate({ search: (s) => ({ ...s, ...r }) })} />
       </div>
       <RetentionNote rangeFrom={range.from} retention={d.retention} />
@@ -45,10 +56,7 @@ function IssuePage() {
         <IssueLabels issue={issue} />
         {issue.incidentTitle && (
           <p className="mt-2 text-sm text-muted">
-            Part of an incident:{" "}
-            <Link to="/" search={{ app: d.app }} className="font-medium text-ink hover:text-accent">
-              {issue.incidentTitle}
-            </Link>
+            Part of an incident: <span className="font-medium text-ink">{issue.incidentTitle}</span>
           </p>
         )}
       </div>

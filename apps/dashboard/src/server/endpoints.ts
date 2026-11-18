@@ -1,9 +1,10 @@
 import type { ReadStore } from "@debugkit/adapters";
 import { isRequestCategory } from "@debugkit/ingest";
-import { hostNameFor, type HostName, type Issue, type StoredEvent } from "@debugkit/schema";
+import { hostNameFor, nameUrlsIn, type HostName, type Issue, type IssueStatus, type StoredEvent } from "@debugkit/schema";
 import { apiCallOf, EVENT_LOOKBACK, failedRequest, timelineOf, type ApiCall } from "./event";
 import { endpointTimings, retentionFor, type EndpointTiming, type Retention } from "./queries";
 import { resolveRange, type DateRange } from "./range";
+import { failing, servicesOf } from "../lib/health";
 
 /**
  * Endpoint health: how each API endpoint did over a period. Calls, failure rate and timings come
@@ -34,11 +35,34 @@ export interface EndpointHealth {
   statuses: Count[];
   /** The backend's own error codes on the failures, most first. */
   backendCodes: Count[];
+  /** The backend's own error messages on the failures ("Balance lookup unsuccessful"), most first. */
+  backendMessages: Count[];
+  /** The issues the failures belong to, most failures first: where to click for the cause and fix. */
+  problems: EndpointProblem[];
   lastFailure?: string;
+}
+
+/** One issue's failures on one endpoint. */
+export interface EndpointProblem {
+  fingerprint: string;
+  title: string;
+  /** Its failures on this endpoint in the period. */
+  count: number;
+  /** The status most of them had: "404", or "no answer". */
+  status: string;
+  lastSeen: string;
+  /** Platforms and app versions they were on, most first. */
+  platforms: string[];
+  versions: string[];
+  /** The issue's status: resolved and ignored ones are listed apart. */
+  issueStatus: IssueStatus;
+  resolvedIn?: string;
 }
 
 /** Endpoints added up per backend service. */
 export interface ServiceHealth {
+  /** What groups it ("balance" for "balance" and "Balances"), and its address: /services/<key>. */
+  key: string;
   /** undefined: endpoints whose service nobody named (in Settings or the app's breadcrumbs). */
   service?: string;
   endpoints: number;
@@ -48,6 +72,7 @@ export interface ServiceHealth {
   /** The slowest endpoint's p95. */
   worstP95: number | null;
   failures: number;
+  lastFailure?: string;
 }
 
 export interface Count {
@@ -202,6 +227,7 @@ export async function buildEndpoints(
   const named = events.flatMap((e) => (e.event.type === "error" ? (e.event.breadcrumbs ?? []) : [])).map((b) => apiCallOf(b, hosts)).filter((c): c is ApiCall => !!c?.service && !!c.path);
   const serviceFor = (endpoint: string) => named.find((c) => sameCall(endpoint, c.method, c.path!));
 
+  const byFingerprint = new Map(issues.map((i) => [i.fingerprint, { ...i, title: nameUrlsIn(i.title, hosts) }]));
   const rowFor = (endpoint: string): EndpointHealth => {
     const fs = byEndpoint.get(endpoint) ?? [];
     const t = timings.get(endpoint);
@@ -224,6 +250,8 @@ export async function buildEndpoints(
       failures: fs.length,
       statuses: counts(fs.map(statusOf)),
       backendCodes: counts(fs.map((f) => f.call?.backendCode)),
+      backendMessages: counts(fs.map((f) => f.call?.backendTitle)),
+      problems: problemsOf(fs, byFingerprint),
       lastFailure: fs.map((f) => f.e.event.ts).sort().pop(),
     };
   };
@@ -268,27 +296,23 @@ export async function buildEndpoints(
   };
 }
 
-/** How badly an endpoint fails: the larger of the SDK's failed calls and the stored failures. */
-const failing = (r: { failedCalls: number | null; failures: number }) => Math.max(r.failedCalls ?? 0, r.failures);
-
-/** Endpoints added up per service, most failures first. */
-export function servicesOf(endpoints: readonly EndpointHealth[]): ServiceHealth[] {
-  const by = new Map<string | undefined, EndpointHealth[]>();
-  for (const e of endpoints) by.set(e.service, [...(by.get(e.service) ?? []), e]);
+/** An endpoint's failures grouped by issue, most first. */
+function problemsOf(fs: readonly Failure[], issues: ReadonlyMap<string, Pick<Issue, "title" | "status" | "resolvedIn">>): EndpointProblem[] {
+  const by = new Map<string, Failure[]>();
+  for (const f of fs) if (f.e.fingerprint) by.set(f.e.fingerprint, [...(by.get(f.e.fingerprint) ?? []), f]);
   return [...by.entries()]
-    .map(([service, list]) => {
-      const calls = list.reduce((n, e) => n + (e.calls ?? 0), 0);
-      const failedCalls = list.reduce((n, e) => n + (e.failedCalls ?? 0), 0);
-      const p95s = list.map((e) => e.p95).filter((v): v is number => v !== null);
-      return {
-        service,
-        endpoints: list.length,
-        calls,
-        failedCalls,
-        failureRate: calls ? failedCalls / calls : null,
-        worstP95: p95s.length ? Math.max(...p95s) : null,
-        failures: list.reduce((n, e) => n + e.failures, 0),
-      };
-    })
-    .sort((a, b) => failing(b) - failing(a) || b.calls - a.calls);
+    .map(([fingerprint, list]) => ({
+      fingerprint,
+      title: issues.get(fingerprint)?.title ?? fingerprint,
+      issueStatus: issues.get(fingerprint)?.status ?? "open",
+      resolvedIn: issues.get(fingerprint)?.resolvedIn,
+      count: list.length,
+      status: counts(list.map(statusOf))[0]?.key ?? "no answer",
+      lastSeen: list.map((f) => f.e.event.ts).sort().pop()!,
+      platforms: counts(list.map((f) => f.e.context.os.name)).map((c) => c.key),
+      versions: counts(list.map((f) => f.e.context.app.version)).map((c) => c.key),
+    }))
+    .sort((a, b) => b.count - a.count || b.lastSeen.localeCompare(a.lastSeen));
 }
+
+

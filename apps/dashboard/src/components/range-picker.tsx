@@ -2,6 +2,9 @@ import { useState } from "react";
 
 export type RangeSearch = { range?: string; from?: string; to?: string };
 
+/** What a link carries from page to page so the app and period stay the same. */
+export type PageSearch = { app?: string } & RangeSearch;
+
 const PRESETS: [string, string][] = [
   ["24h", "Last 24 hours"],
   ["7d", "Last 7 days"],

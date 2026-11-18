@@ -161,13 +161,23 @@ deBug hosts nothing.
   (`DEBUG_SESSION_SECRET`) that last 12h. Every page and `/api/*` route needs a
   session; agents can use `Authorization: Bearer $DEBUG_API_TOKEN` instead.
   Phase 2: Google / Cognito SSO.
-- **Pages:**
-  1. **Overview:** a plain-language narrative, KPI tiles (including crash-free
-     sessions), errors by flow (coloured by severity, click to filter), a 14-day
-     trend, release health (crash-free and error-free rates per version), failing
-     endpoints, issues ranked by severity, and OS, app version, and device
-     breakdowns.
-  2. **Issue:** severity, the culprit frame, 48h hourly occurrences, where it
+- **Pages:** each click goes one level down; the menu shows the page you're on,
+  and pages below Health have a breadcrumb trail back.
+  1. **Health (home):** every backend service, plus the app's own code, as a box
+     filled with its level's colour (red critical, orange high, yellow medium, grey
+     low, green healthy), worst first. A critical box still failing in the last hour
+     pulses. Each box says what's wrong in one line (status, the backend's code and
+     message, the call) and how much. A paragraph answers "why is it breaking?" and
+     can be copied for a client. A service's level comes from the share of its
+     calls that failed and from how many failed (`SERVICE_LEVELS`).
+  2. **Service** (`/services/:service`): its endpoints worst first, each with what
+     the server said, how often, and the open issues behind it, each one click from
+     the issue page. Resolved and ignored issues are folded away at the bottom.
+  3. **App code** (`/app-code`): the app's own crashes and code errors, worst
+     first, the same way. There's no separate issue list: issues are reached by
+     drilling down (`/issues` goes to Health). Charts, breakdowns and release health
+     stay in `GET /api/summary` until a Releases page.
+  4. **Issue:** severity, the culprit frame, 48h hourly occurrences, where it
      happens (OS, version, device, network), the stack trace with in-app frames
      highlighted, breadcrumbs leading to the error, recent occurrences, and
      rule-based "what to look at" hints.

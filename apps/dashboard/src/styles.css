@@ -114,3 +114,34 @@ body {
 .tabular {
   font-variant-numeric: tabular-nums;
 }
+
+/* A box whose problem is still happening pulses its edge, unless the reader asked for less motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .level-alarm {
+    animation: level-alarm 1.6s ease-in-out infinite;
+  }
+}
+@keyframes level-alarm {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--alarm, var(--level-critical-edge)) 45%, transparent);
+  }
+}
+
+/* The loading bar along the top while a page loads. Without motion it's a still bar. */
+@media (prefers-reduced-motion: no-preference) {
+  .loading-bar {
+    animation: loading-bar 1s ease-in-out infinite;
+  }
+}
+@keyframes loading-bar {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
