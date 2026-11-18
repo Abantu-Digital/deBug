@@ -120,7 +120,8 @@ async function waitForArrival(cwd: string, url: string, appId: string, timeoutMs
   const until = Date.now() + timeoutMs;
   let last: Awaited<ReturnType<typeof summary>> | undefined;
   while (Date.now() < until) {
-    last = await summary(cwd, url, appId);
+    // The test events are test errors (tag test=true): hidden unless asked for.
+    last = await summary(cwd, url, appId, { tests: true });
     if (last.ok && last.data?.app === appId && last.data?.issues?.length) return last;
     await new Promise((r) => setTimeout(r, 2000));
   }
@@ -182,9 +183,10 @@ export async function walkthrough(opts: { cwd: string; app: AppInfo; cfg: Debugk
         [
           ...(d.narrative ?? []).map((l: string) => `“${l}”`),
           "",
-          `${bold(String(d.issues.length))} issues · ${bold(String(d.health?.sessionsRange ?? 0))} session · failing endpoint ${code(d.health?.endpoints?.[0]?.endpoint ?? "—")}`,
+          `${bold(String(d.issues.length))} test issues · ${bold(String(d.health?.sessionsRange ?? 0))} session`,
           "",
-          `Refresh the dashboard. You'll see a ${pc.red("HttpError")} from a failed request (captured the way the SDK does it automatically),`,
+          `Refresh the dashboard and press ${bold("Show test errors")}: they're test errors, so they never count and stay hidden until you ask.`,
+          `You'll see a ${pc.red("HttpError")} from a failed request (captured the way the SDK does it automatically),`,
           `a ${pc.red("SyntaxError")} reported from a try/catch, and the ${code("onboarding.test")} flow with a 50% failure rate from track().`,
           dim("They're tagged environment debugkit-test, version " + (app.version ?? "0.0.0") + ". Raw events expire after 30 days."),
         ].join("\n"),

@@ -55,6 +55,19 @@ export const SCHEMA_VERSION = 1;
 /** What the SDK puts in place of a secret it redacted, in headers, bodies and queries. */
 export const REDACTED = "[redacted]";
 
+/**
+ * Errors and events an app makes on purpose (a dev tools "Error testing" screen, `npx debugkit
+ * test`) carry this tag as "true". They get their own issues, stay out of every count and rate,
+ * and are hidden unless asked for (ABA-133).
+ */
+export const TEST_TAG = "test";
+
+/** Whether an error or event was made on purpose to test deBug. */
+export const isTestEvent = (e: { tags?: Record<string, string> } | undefined): boolean => e?.tags?.[TEST_TAG] === "true";
+
+/** Whether an issue is made of test errors: its newest occurrence carries the tag. */
+export const isTestIssue = (i: { lastEvent?: { event: { tags?: Record<string, string> } } } | undefined): boolean => isTestEvent(i?.lastEvent?.event);
+
 /** The most of a failed call's captured body kept, in characters (16 KB). */
 export const MAX_CAPTURED_BODY = 16_384;
 /** The most breadcrumbs an error event carries. */

@@ -1,5 +1,5 @@
 import type { Breadcrumb, ContextInput, EnvelopeInput, EventInput, Severity } from "@debugkit/schema/core";
-import { latencyBucket, LATENCY_BUCKETS_MS, markLibraryFrames, MAX_BREADCRUMBS, MAX_CAPTURED_BODY, parseStack } from "@debugkit/schema/core";
+import { latencyBucket, LATENCY_BUCKETS_MS, markLibraryFrames, MAX_BREADCRUMBS, MAX_CAPTURED_BODY, parseStack, TEST_TAG } from "@debugkit/schema/core";
 import { browserContext, mergeContext, type ContextPatch } from "./context";
 import {
   instrumentClicks,
@@ -336,9 +336,15 @@ export class DebugClient {
     return crumb;
   }
 
-  /** Log an error. `flow` is the part of the app it belongs to, e.g. "auth.login". */
-  error(err: unknown, meta: EventMeta & { severity?: Severity; handled?: boolean; fatal?: boolean } = {}) {
-    this.captureError(normaliseError(err), meta);
+  /**
+   * Log an error. `flow` is the part of the app it belongs to, e.g. "auth.login". `test: true`
+   * marks an error made on purpose (an Error testing screen): it gets its own issue, never counts
+   * against the session, and the dashboard hides it unless asked. For a test crash that isn't
+   * caught, set `deBug.setTags({ test: "true" })` just before it.
+   */
+  error(err: unknown, meta: EventMeta & { severity?: Severity; handled?: boolean; fatal?: boolean; test?: boolean } = {}) {
+    const { test, ...rest } = meta;
+    this.captureError(normaliseError(err), test ? { ...rest, tags: { ...rest.tags, [TEST_TAG]: "true" } } : rest);
   }
 
   /** Log a custom event. Use outcome to let deBug compute failure rates per flow. */
@@ -470,8 +476,11 @@ export class DebugClient {
     const handled = meta.handled ?? true;
     const frames = e.frames ?? parseStack(e.stack);
     if (!meta.fatal && !this.allowError(`${e.name}|${e.message.slice(0, 120)}|${frames[0]?.file ?? ""}:${frames[0]?.line ?? ""}`)) return;
+    // A test error (its own tag, or the app's global tag around a test crash) never marks the
+    // session errored or crashed, so crash-free rates stay real.
+    const test = (meta.tags?.[TEST_TAG] ?? this.globalTags[TEST_TAG]) === "true";
     // Session markers go first so they ride in the same upload as the error.
-    if (this.auto.sessions && (!handled || meta.fatal)) {
+    if (this.auto.sessions && !test && (!handled || meta.fatal)) {
       if (!this.sessionState.errored) {
         this.sessionState.errored = true;
         this.push({ type: "session", id: uid(), ts: now(), status: "errored" });

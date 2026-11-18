@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Envelope, markLibraryFrames, parseStack, releaseKey, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debugkit/schema";
+import { Envelope, isTestEvent, markLibraryFrames, parseStack, releaseKey, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debugkit/schema";
 import { compareVersions, type IssueUpsert, type UserMark, type WriteStore } from "@debugkit/adapters";
 import { cachedSettings, effectiveRetention } from "./admin";
 import { sendAlerts } from "./alerts";
@@ -152,7 +152,9 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
       labels = classify({ ...event, ts: raw.ts }, { criticalFlows, hosts });
       const cur = issues.get(fp);
       se = storedEvent(day, event, fp, labels);
-      batchErrors.push({ ts: raw.ts, labels, se, fp });
+      const test = isTestEvent(event);
+      // Test errors join no incident: they aren't a problem anyone has.
+      if (!test) batchErrors.push({ ts: raw.ts, labels, se, fp });
       issues.set(fp, {
         app,
         fingerprint: fp,
@@ -167,8 +169,14 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
       });
       scopes.add(`issue:${fp}`);
       inc("issue", fp);
-      if (event.request) inc("endpoint", `${event.request.method.toUpperCase()} ${event.request.url}`);
       rollups.push({ app, day: event.ts.slice(0, 13), dimension: "issueHour", key: fp, kind, by: 1 });
+      // A test error (ABA-133) counts only on its own issue: not in totals, flows, devices,
+      // endpoints or labels, so the overview and failure rates don't move.
+      if (test) {
+        stored.push(se);
+        continue;
+      }
+      if (event.request) inc("endpoint", `${event.request.method.toUpperCase()} ${event.request.url}`);
     }
 
     inc("total", "all");
@@ -219,7 +227,10 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
     noteVersions(opts.store, app, env.sdk.version, receivedAt),
   ]);
 
-  if (outcome && (outcome.created.length || outcome.regressed.length)) await sendAlerts(app, outcome, issues, settings);
+  // Test errors (ABA-133) never alert.
+  const real = (fp: string) => !isTestEvent(issues.get(fp)?.lastEvent.event);
+  const alerting = outcome && { ...outcome, created: outcome.created.filter(real), regressed: outcome.regressed.filter(real) };
+  if (alerting && (alerting.created.length || alerting.regressed.length)) await sendAlerts(app, alerting, issues, settings);
 
   return { status: 202, body: { ok: true, accepted: env.events.length } };
 }

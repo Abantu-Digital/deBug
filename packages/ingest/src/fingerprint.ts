@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { cleanFnName, type ErrorEvent, type StackFrame } from "@debugkit/schema";
+import { cleanFnName, isTestEvent, TEST_TAG, type ErrorEvent, type StackFrame } from "@debugkit/schema";
 
 /** Strip volatile parts so "User 123 not found" and "User 456 not found" group together. */
 export function normaliseMessage(msg: string): string {
@@ -58,10 +58,10 @@ export function fingerprint(e: ErrorEvent): string {
     : f
       ? `${cleanFnName(f.fn) ?? "?"}@${normaliseFile(f.file)}`
       : normaliseMessage(e.error.message);
-  return createHash("sha256")
-    .update([e.error.name, where, e.flow ?? ""].join("|"))
-    .digest("hex")
-    .slice(0, 24);
+  // A test error is never the same issue as a real one at the same place (ABA-133). Real errors
+  // keep the fingerprint they always had.
+  const parts = [e.error.name, where, e.flow ?? "", ...(isTestEvent(e) ? [TEST_TAG] : [])];
+  return createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 24);
 }
 
 export function titleOf(e: ErrorEvent): string {

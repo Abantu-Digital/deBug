@@ -16,6 +16,8 @@ export interface IssueFilter {
   category?: Category;
   owner?: Owner;
   impact?: Impact;
+  /** Also list errors made on purpose to test deBug (ABA-133). Unset: hidden. */
+  tests?: boolean;
 }
 
 export type LabelFilterKey = "impact" | "owner" | "category";
@@ -53,13 +55,15 @@ export function issueFilterFromQuery(q: URLSearchParams): IssueFilter | string {
     const v = q.get(k);
     if (v !== null && !Object.hasOwn(LABEL_FILTERS[k].info, v)) return `Unknown ${k} "${v}": use one of ${Object.keys(LABEL_FILTERS[k].info).join(", ")}`;
   }
-  return { status, flow: q.get("flow") ?? undefined, ...labelFilterOf((k) => q.get(k)) };
+  const tests = q.get("tests") === "1" || q.get("tests") === "true";
+  return { status, flow: q.get("flow") ?? undefined, ...(tests ? { tests } : {}), ...labelFilterOf((k) => q.get(k)) };
 }
 
 interface FilterableIssue {
   status: string;
   flow?: string;
   labels?: Pick<Classification, LabelFilterKey>;
+  test?: boolean;
 }
 
 export function matchesStatus(i: { status: string }, status: StatusFilter = "open"): boolean {
@@ -72,6 +76,7 @@ export function matchesStatus(i: { status: string }, status: StatusFilter = "ope
 export function filterIssues<T extends FilterableIssue>(issues: readonly T[], f: IssueFilter): T[] {
   return issues.filter(
     (i) =>
+      (f.tests || !i.test) &&
       matchesStatus(i, f.status) &&
       (!f.flow || (i.flow ?? "untagged") === f.flow) &&
       LABEL_FILTER_KEYS.every((k) => !f[k] || i.labels?.[k] === f[k]),

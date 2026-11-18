@@ -208,9 +208,10 @@ export function timeAgo(iso: string, now = Date.now()) {
 }
 
 /** Small labels under an issue: regressed, new in the latest release, resolved, ignored. */
-export function IssueLabels({ issue }: { issue: { status: string; resolvedIn?: string; firstVersion?: string; newInLatest: boolean } }) {
+export function IssueLabels({ issue }: { issue: { status: string; resolvedIn?: string; firstVersion?: string; newInLatest: boolean; test?: boolean } }) {
   return (
     <>
+      {issue.test && <span className={`${CHIP} border border-line text-muted`} title="Made on purpose to test deBug (tag test=true). Never counted.">Test error</span>}
       {issue.status === "regressed" && <span className={`${CHIP} bg-sev-critical text-white`}>Regressed{issue.resolvedIn ? ` after ${issue.resolvedIn}` : ""}</span>}
       {issue.newInLatest && <span className={`${CHIP} bg-accent-soft text-accent`}>New in {issue.firstVersion}</span>}
       {issue.status === "resolved" && <span className={`${CHIP} border border-line text-muted`}>Resolved{issue.resolvedIn ? ` in ${issue.resolvedIn}` : ""}</span>}
