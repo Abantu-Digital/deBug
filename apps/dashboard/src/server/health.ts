@@ -16,8 +16,8 @@ export interface HealthReport {
   counts: Record<HealthLevel, number>;
   /** One paragraph a product owner can give a client. */
   answer: string;
-  /** What's kept off the wall on purpose, and how much: test errors (ABA-133). */
-  folded: { tests: number };
+  /** What's kept off the wall on purpose: test errors (ABA-133) and phones going offline (ABA-132). */
+  folded: { tests: number; offline: Summary["connectivity"] };
 }
 
 /**
@@ -91,6 +91,6 @@ export function buildHealth(endpoints: EndpointsReport, summary: Summary, now = 
     tiles,
     counts,
     answer: answerOf(tiles, summary.range.label),
-    folded: { tests: summary.totals.testIssues },
+    folded: { tests: summary.totals.testIssues, offline: summary.connectivity },
   };
 }

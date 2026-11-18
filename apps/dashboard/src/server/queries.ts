@@ -235,7 +235,7 @@ export const SUMMARY_FIELDS = {
   "totals.changePct": "Percent change of errors vs the previous period of the same length. null when that period had fewer than 10 errors.",
   "totals.activeIssues": "Distinct grouped errors (issues) seen in the range, without test errors.",
   "totals.testIssues": "Issues made on purpose to test deBug (tag test=true). Left out of every count; list them with ?tests=1.",
-  connectivity: "Phones going offline (requests that never left the phone, several at once or in airplane mode), as bursts per phone. Not counted against any endpoint or owner. null when there were none.",
+  connectivity: "Phones going offline (requests that never left the phone), as bursts per phone, shown on Health as Folded away. Not counted against any endpoint or owner. null when there were none.",
   "totals.criticalIssues": "Issues whose 24h occurrence count meets the critical threshold.",
   "flows[]": "Parts of the app as tagged by the developer (e.g. auth.login). Sorted by severity, then errors24h, then errorsRange.",
   "flows[].failureRate": "failures/(failures+successes) in the range from events logged with an outcome. null when the app logs no outcomes for that flow.",
@@ -896,8 +896,9 @@ export async function buildIssueDetail(
   const findings = offline ? [] : findingsOf(errorEvents.flatMap((e) => (e.event.type === "error" ? [e.event] : [])), hosts);
   const link = issueUrl(opts.trackers?.dashboardUrl, app, fingerprint);
   const detail = {
-    // A test error is listed with the other test errors, not under App code or a service.
-    area: row.test ? { kind: "tests" } : areaOf(issue.lastEvent, row.labels, hosts),
+    // A test error is listed with the other test errors; the offline issue sits under no service
+    // (the phone had no signal); anything else under its service or App code.
+    area: row.test ? { kind: "tests" } : row.offline ? null : areaOf(issue.lastEvent, row.labels, hosts),
     app,
     range,
     retention,
