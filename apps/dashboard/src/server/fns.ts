@@ -84,6 +84,14 @@ export const getOverview = createServerFn({ method: "GET" })
   });
 
 /** The health wall: every service and the app's own code, coloured by level, worst first. */
+/** The Refresh button: forget what this server has kept, so the next page reads afresh. */
+export const refreshData = createServerFn({ method: "POST" }).handler(async () => {
+  await requireUser();
+  clearStoreCache();
+  return { ok: true };
+});
+
+/** The health wall: every service and the app's own code, coloured by level, worst first. */
 export const getHealth = createServerFn({ method: "GET" })
   .validator((d: { app?: string } & RangeInput) => ({ app: str(d?.app), ...rangeOf(d) }))
   .handler(async ({ data }) => {
@@ -155,7 +163,6 @@ export const updateIssueStatus = createServerFn({ method: "POST" })
     return { app: String(d.app ?? ""), fingerprint: String(d.fingerprint ?? ""), status: status as "open" | "resolved" | "ignored", resolvedIn: typeof d.resolvedIn === "string" ? d.resolvedIn.trim().slice(0, 100) || undefined : undefined };
   })
   .handler(async ({ data }) => {
-    clearStoreCache();
     await requireUser();
     try {
       return { ok: true as const, ...(await writeIssueStatus(data.app, data.fingerprint, data.status, data.resolvedIn)) };
@@ -177,7 +184,6 @@ export const getSettings = createServerFn({ method: "GET" })
 export const saveRetention = createServerFn({ method: "POST" })
   .validator((d: { app: string; retentionDays: number }) => ({ app: String(d?.app ?? ""), retentionDays: validRetention(d?.retentionDays) }))
   .handler(async ({ data }) => {
-    clearStoreCache();
     await requireManager();
     try {
       return { ok: true as const, settings: await writeRetention(data.app, data.retentionDays) };
@@ -211,7 +217,6 @@ export const saveAppSettings = createServerFn({ method: "POST" })
     };
   })
   .handler(async ({ data }) => {
-    clearStoreCache();
     await requireManager();
     try {
       return { ok: true as const, settings: await writeSettings(data.app, { criticalFlows: data.criticalFlows, alerts: data.alerts, hosts: data.hosts }) };
@@ -223,7 +228,6 @@ export const saveAppSettings = createServerFn({ method: "POST" })
 export const sendTestAlert = createServerFn({ method: "POST" })
   .validator((d: { app: string }) => ({ app: String(d?.app ?? "") }))
   .handler(async ({ data }) => {
-    clearStoreCache();
     await requireManager();
     try {
       await testAlert(data.app);
@@ -236,7 +240,6 @@ export const sendTestAlert = createServerFn({ method: "POST" })
 export const restampExisting = createServerFn({ method: "POST" })
   .validator((d: { app: string; cursor?: string }) => ({ app: String(d?.app ?? ""), cursor: str(d?.cursor) ?? (typeof d?.cursor === "string" ? d.cursor.slice(0, 200) : undefined) }))
   .handler(async ({ data }) => {
-    clearStoreCache();
     await requireManager();
     try {
       return { ok: true as const, ...(await restampStep(data.app, data.cursor)) };
@@ -269,7 +272,6 @@ export const getTeam = createServerFn({ method: "GET" }).handler(async () => {
 export const inviteToTeam = createServerFn({ method: "POST" })
   .validator((d: { role: string; email?: string }) => ({ role: role(d?.role), email: emailOf(d?.email) || undefined }))
   .handler(async ({ data }) => {
-    clearStoreCache();
     const user = await requireManager();
     try {
       return { ok: true as const, ...(await createInvite(user, data.role, data.email)) };
@@ -281,7 +283,6 @@ export const inviteToTeam = createServerFn({ method: "POST" })
 export const cancelInvite = createServerFn({ method: "POST" })
   .validator((d: { id: string }) => ({ id: String(d?.id ?? "").slice(0, 64) }))
   .handler(async ({ data }) => {
-    clearStoreCache();
     const user = await requireManager();
     return ok(() => revokeInvite(user, data.id));
   });
@@ -289,7 +290,6 @@ export const cancelInvite = createServerFn({ method: "POST" })
 export const setMemberRole = createServerFn({ method: "POST" })
   .validator((d: { email: string; role: string }) => ({ email: emailOf(d?.email), role: role(d?.role) }))
   .handler(async ({ data }) => {
-    clearStoreCache();
     const user = await requireManager();
     if (data.email === user.email) return { ok: false as const, error: "You can't change your own role." };
     return ok(() => changeRole(user, data.email, data.role));
@@ -298,7 +298,6 @@ export const setMemberRole = createServerFn({ method: "POST" })
 export const removeFromTeam = createServerFn({ method: "POST" })
   .validator((d: { email: string }) => ({ email: emailOf(d?.email) }))
   .handler(async ({ data }) => {
-    clearStoreCache();
     const user = await requireManager();
     if (data.email === user.email) return { ok: false as const, error: "You can't remove yourself." };
     return ok(() => removeMember(user, data.email));
@@ -324,7 +323,6 @@ export const joinTeam = createServerFn({ method: "POST" })
     return { token: String(d?.token ?? "").slice(0, 64), email: emailOf(d?.email), name: typeof d?.name === "string" ? d.name.trim().slice(0, 80) || undefined : undefined, password: d.password };
   })
   .handler(async ({ data }) => {
-    clearStoreCache();
     if (!TOKEN.test(data.token)) return { ok: false as const, error: "This invite link isn't valid." };
     try {
       const user = await acceptInvite(data.token, data.email, data.name, data.password);

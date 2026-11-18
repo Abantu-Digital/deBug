@@ -2,7 +2,7 @@ import type { AlertSettings, AppSettings, RestampResult } from "@debugkit/adapte
 import { normaliseHostMatch, validHostNames, type HostName } from "@debugkit/schema";
 import { MAX_RETENTION_DAYS, MIN_RETENTION_DAYS } from "@debugkit/adapters";
 import { config } from "./config";
-import { getLocalWriteStore, getStore } from "./store";
+import { clearStoreCache, getLocalWriteStore, getStore } from "./store";
 
 /**
  * Settings changes. The dashboard's database credentials are read-only, so on Firestore and
@@ -28,6 +28,8 @@ async function admin<T>(method: "GET" | "PUT" | "POST", route: string, body?: un
   });
   const json = (await res.json().catch(() => ({}))) as T & { error?: string };
   if (!res.ok) throw new Error(json.error ?? `The ingest function answered ${res.status}`);
+  // A change (status, settings) has landed: drop what this server kept from before it.
+  if (method === "PUT") clearStoreCache();
   return json;
 }
 

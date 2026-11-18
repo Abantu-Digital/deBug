@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
-import { createFileRoute, Link, Outlet, redirect, useRouter } from "@tanstack/react-router";
+import { createFileRoute, Link, Outlet, redirect, useRouter, useRouterState } from "@tanstack/react-router";
 import { Logo } from "~/components/ui";
 import type { PageSearch } from "~/components/range-picker";
 import { VersionBanner } from "~/components/version-banner";
-import { getSessionUser, logout } from "~/server/fns";
+import { getSessionUser, logout, refreshData } from "~/server/fns";
 
 export const Route = createFileRoute("/_authed")({
   beforeLoad: async () => {
@@ -33,8 +33,13 @@ function NavLink({ to, exact, children }: { to: "/" | "/issues" | "/endpoints" |
 function Layout() {
   const { user } = Route.useRouteContext();
   const router = useRouter();
+  // A click always answers at once: a bar runs along the top while the next page loads.
+  const loading = useRouterState({ select: (s) => s.status === "pending" });
   return (
     <div className="min-h-screen">
+      <div role="progressbar" aria-label="Loading" aria-hidden={!loading} className={`fixed inset-x-0 top-0 z-50 h-0.5 overflow-hidden ${loading ? "" : "invisible"}`}>
+        <div className="loading-bar h-full w-1/3 bg-accent" />
+      </div>
       <header className="sticky top-0 z-10 border-b border-line bg-bg/90 backdrop-blur">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 sm:px-6">
           <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2">
@@ -50,6 +55,17 @@ function Layout() {
           </div>
           <div className="flex items-center gap-3 text-sm">
             <span className="hidden text-muted sm:inline">{user.email} · {user.role}</span>
+            <button
+              type="button"
+              title="Pages show data up to 2 minutes old while newer data loads. Refresh reads everything now."
+              className="rounded-md border border-line px-2.5 py-1 hover:bg-panel-2"
+              onClick={async () => {
+                await refreshData();
+                await router.invalidate();
+              }}
+            >
+              Refresh
+            </button>
             <button
               className="rounded-md border border-line px-2.5 py-1 hover:bg-panel-2"
               onClick={async () => {
