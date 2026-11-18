@@ -1,6 +1,5 @@
 import { isRequestCategory } from "@debugkit/ingest";
-import { SEVERITY_ORDER } from "@debugkit/schema";
-import { answerOf, byHealth, LIVE_MS, plural, serviceTile, type HealthLevel, type HealthTileData } from "../lib/health";
+import { answerOf, byHealth, isOpen, LIVE_MS, plural, serviceTile, type HealthLevel, type HealthTileData } from "../lib/health";
 import type { EndpointsReport } from "./endpoints";
 import type { IssueRow, Summary } from "./queries";
 
@@ -21,9 +20,6 @@ export interface HealthReport {
 
 /** An issue in the app's own code: a crash or code error, not a failed call (those belong to a service). */
 export const isAppCodeIssue = (i: IssueRow): boolean => !(i.labels && isRequestCategory(i.labels.category));
-
-/** Still open: not resolved or ignored. */
-export const isOpen = (i: Pick<IssueRow, "status">): boolean => i.status === "open" || i.status === "regressed";
 
 /** The App code page: its open issues worst first, and the resolved or ignored ones apart. */
 export interface AppCodeReport {
@@ -48,15 +44,16 @@ export function buildAppCode(summary: Summary, now = Date.now()): AppCodeReport 
     retention: summary.retention,
     tile: appTile(summary.issues, now),
     // The summary already ranks by level, then count.
-    open: mine.filter(isOpen),
-    closed: mine.filter((i) => !isOpen(i)),
+    open: mine.filter((i) => isOpen(i.status)),
+    closed: mine.filter((i) => !isOpen(i.status)),
   };
 }
 
 /** The app's own code: crashes and errors that aren't a failed call. Its level is its worst open issue's. */
 export function appTile(issues: readonly IssueRow[], now: number): HealthTileData {
-  const open = issues.filter((i) => isOpen(i) && isAppCodeIssue(i));
-  const worst = [...open].sort((a, b) => SEVERITY_ORDER[b.severity] - SEVERITY_ORDER[a.severity] || b.countRange - a.countRange)[0];
+  const open = issues.filter((i) => isOpen(i.status) && isAppCodeIssue(i));
+  // The summary already ranks worst first; the App code page lists them in the same order.
+  const worst = open[0];
   const lastSeen = open.map((i) => i.lastSeen).sort().pop();
   const occurrences = open.reduce((n, i) => n + i.countRange, 0);
   return {

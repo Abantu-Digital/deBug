@@ -76,15 +76,6 @@ type RangeInput = { range?: string; from?: string; to?: string };
 const str = (v: unknown) => (typeof v === "string" && v.length <= 32 ? v : undefined);
 const rangeOf = (d: RangeInput | undefined): RangeInput => ({ range: str(d?.range), from: str(d?.from), to: str(d?.to) });
 
-export const getOverview = createServerFn({ method: "GET" })
-  .validator((d: { app?: string } & RangeInput) => ({ app: str(d?.app), ...rangeOf(d) }))
-  .handler(async ({ data }) => {
-    await requireUser();
-    return buildSummary(await getStore(), data.app, config().severity, Date.now(), { range: data, retentionDays: config().retentionDays });
-  });
-
-/** The health wall: every service and the app's own code, coloured by level, worst first. */
-/** The Refresh button: forget what this server has kept, so the next page reads afresh. */
 export const refreshData = createServerFn({ method: "POST" }).handler(async () => {
   await requireUser();
   clearStoreCache();

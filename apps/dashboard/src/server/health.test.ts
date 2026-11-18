@@ -13,8 +13,9 @@ describe("the app code box", () => {
   it("takes its worst open crash or code error, leaving failed calls to the service boxes", () => {
     const t = appTile(
       [
-        issue({ fingerprint: "a", severity: "medium", countRange: 3 }),
+        // In the summary's order: worst first.
         issue({ fingerprint: "b", severity: "high", countRange: 1, title: "Error: screen crashed" }),
+        issue({ fingerprint: "a", severity: "medium", countRange: 3 }),
         issue({ fingerprint: "c", severity: "critical", labels: { category: "server" } as IssueRow["labels"] }),
         issue({ fingerprint: "d", severity: "critical", status: "resolved" }),
       ],

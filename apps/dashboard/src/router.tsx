@@ -3,8 +3,25 @@ import { routeTree } from "./routeTree.gen";
 import { isIndexError } from "./server/errors";
 
 
+/** A new version was deployed while the page was open: its old code files are gone. */
+const STALE_CODE = /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i;
+
 function ErrorPage({ error }: { error: unknown }) {
   const message = error instanceof Error ? error.message : String(error);
+  // Reload once to pick up the new version; if that doesn't help, show the error.
+  if (typeof window !== "undefined" && STALE_CODE.test(message)) {
+    let reloaded = false;
+    try {
+      reloaded = sessionStorage.getItem("debug-reloaded") === location.href;
+      sessionStorage.setItem("debug-reloaded", location.href);
+    } catch {
+      // No storage: reload anyway; the browser stops a loop by keeping the same error page.
+    }
+    if (!reloaded) {
+      window.location.reload();
+      return <div className="p-8 text-muted">A new version of the dashboard is out. Loading it…</div>;
+    }
+  }
   if (isIndexError(message)) {
     const building = /currently building/i.test(message);
     return (

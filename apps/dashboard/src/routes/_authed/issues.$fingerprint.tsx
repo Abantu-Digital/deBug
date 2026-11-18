@@ -2,18 +2,12 @@ import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-rout
 import { useState } from "react";
 import { HourlyChart, TrendChart } from "~/components/charts";
 import { RangePicker, rangeSearch, RetentionNote, type PageSearch, type RangeSearch } from "~/components/range-picker";
-import { APP_CODE } from "~/lib/health";
 import { Card, DataTable, IssueLabels, LevelBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
 import { CopyButton } from "~/components/copy-button";
 import { getIssueDetail, updateIssueStatus } from "~/server/fns";
 
 export const Route = createFileRoute("/_authed/issues/$fingerprint")({
-  // `via`: the page this was opened from (a service's key, or APP_CODE), for the breadcrumb back to it.
-  validateSearch: (s: Record<string, unknown>): { app: string; via?: string } & RangeSearch => ({
-    app: typeof s.app === "string" ? s.app : "",
-    via: typeof s.via === "string" ? s.via.slice(0, 200) : undefined,
-    ...rangeSearch(s),
-  }),
+  validateSearch: (s: Record<string, unknown>): { app: string } & RangeSearch => ({ app: typeof s.app === "string" ? s.app : "", ...rangeSearch(s) }),
   loaderDeps: ({ search }) => ({ app: search.app, range: search.range, from: search.from, to: search.to }),
   loader: async ({ params, deps }) => {
     const d = await getIssueDetail({ data: { ...deps, fingerprint: params.fingerprint } });
@@ -38,12 +32,12 @@ function IssuePage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <nav aria-label="Breadcrumb" className="text-sm text-muted">
           <Link to="/" search={keep} className="hover:text-ink hover:underline">Health</Link>
-          {search.via && <span aria-hidden> › </span>}
-          {search.via === APP_CODE ? (
+          {d.area && <span aria-hidden> › </span>}
+          {d.area?.kind === "app" ? (
             <Link to="/app-code" search={keep} className="hover:text-ink hover:underline">App code</Link>
-          ) : search.via ? (
-            <Link to="/services/$service" params={{ service: search.via }} search={keep} className="hover:text-ink hover:underline">
-              {search.via}
+          ) : d.area ? (
+            <Link to="/services/$service" params={{ service: d.area.name }} search={keep} className="hover:text-ink hover:underline">
+              {d.area.name}
             </Link>
           ) : null}
         </nav>

@@ -15,15 +15,15 @@ export const Route = createFileRoute("/_authed")({
 });
 
 /** The pages under Health (drilled down from a box), so the menu keeps Health lit on them. */
-const UNDER_HEALTH = /^\/(app-code|services\/|issues\/|events\/|sessions\/)/;
+const UNDER_HEALTH = /^\/(app-code|services\/|issues\/)/;
 
 /**
  * A main-menu link. The page you're on is filled in and underlined, so it's clear where you are;
  * Health stays lit on the pages drilled down from it. Keeps the app and period.
  */
-function NavLink({ to, exact, children }: { to: "/" | "/endpoints" | "/customers" | "/settings" | "/team"; exact?: boolean; children: ReactNode }) {
+function NavLink({ to, children }: { to: "/" | "/endpoints" | "/customers" | "/settings" | "/team"; children: ReactNode }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
-  const on = to === "/" ? path === "/" || UNDER_HEALTH.test(path) : path === to || (!exact && path.startsWith(`${to}/`));
+  const on = to === "/" ? path === "/" || UNDER_HEALTH.test(path) : path === to || path.startsWith(`${to}/`);
   return (
     <Link
       to={to}
@@ -52,7 +52,7 @@ function Layout() {
           <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2">
             <Link to="/" search={{}} className="shrink-0"><Logo /></Link>
             <nav className="flex flex-wrap items-center gap-1 text-sm" aria-label="Main">
-              <NavLink to="/" exact>Health</NavLink>
+              <NavLink to="/">Health</NavLink>
               <NavLink to="/endpoints">Endpoints</NavLink>
               <NavLink to="/customers">Customers</NavLink>
               <NavLink to="/settings">Settings</NavLink>

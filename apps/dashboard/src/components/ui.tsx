@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 import { Link, type LinkProps } from "@tanstack/react-router";
-import { CATEGORY_INFO, IMPACT_INFO, OWNER_INFO, SEVERITY_INFO, type Classification, type Impact, type Severity } from "@debugkit/schema";
+import { SEVERITY_INFO, type Severity } from "@debugkit/schema";
 import type { HealthLevel } from "~/lib/health";
 
 export function Logo() {
@@ -36,22 +36,6 @@ export function LevelBadge({ level }: { level: Severity }) {
     <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${TONE[level].surface}`} title={SEVERITY_INFO[level].description}>
       {SEVERITY_INFO[level].name}
     </span>
-  );
-}
-
-/**
- * One level's box on the health screen: how many issues are open at that level and how many
- * customers they affect. The whole box links to the list filtered to that level. Coloured only
- * when something is open.
- */
-export function LevelBox({ level, count, customers, link }: { level: Severity; count: number; customers: number; link: LinkProps }) {
-  const open = count > 0;
-  return (
-    <Link {...link} className={`flex h-full flex-col gap-1.5 rounded-xl border p-4 hover:brightness-110 ${open ? TONE[level].surface : "border-line bg-panel text-muted"}`}>
-      <span className="text-xs font-bold uppercase tracking-wide">{SEVERITY_INFO[level].name}</span>
-      <span className="tabular text-4xl font-semibold leading-none">{count}</span>
-      <span className="text-xs">{open ? `${customers.toLocaleString()} customer${customers === 1 ? "" : "s"} affected` : "None open"}</span>
-    </Link>
   );
 }
 
@@ -118,17 +102,6 @@ export function HealthBox({ level, name, headline, measure, live, lastFailure, l
       </span>
       <span aria-hidden className="absolute right-3 top-1/2 -translate-y-1/2 text-xl opacity-60 transition group-hover:translate-x-0.5 group-hover:opacity-100">→</span>
     </Link>
-  );
-}
-
-/** A service or journey, coloured by its worst open level; green when nothing is open. */
-export function HealthTile({ name, level, state }: { name: string; level: Severity | null; state: ReactNode }) {
-  const tone: Tone = level ?? "healthy";
-  return (
-    <div className={`flex h-full flex-col gap-1 rounded-xl border bg-panel px-3 py-2.5 ${TONE[tone].edge}`}>
-      <strong className="text-sm">{name}</strong>
-      <span className={`text-xs ${TONE[tone].text}`}>{state}</span>
-    </div>
   );
 }
 
@@ -225,23 +198,6 @@ export function ShareBars({ rows, total, onSelect, selected }: { rows: { key: st
 /** A small chip under an issue's title. */
 const CHIP = "mt-1 mr-1 inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide";
 
-const IMPACT_STYLE: Record<Impact, string> = {
-  blocked: "bg-sev-critical text-white",
-  degraded: "bg-sev-medium text-black",
-  silent: "border border-line text-muted",
-};
-
-/** An issue's impact and category as badges, and its likely owner, from docs/taxonomy.md. */
-export function LabelBadges({ labels }: { labels?: Pick<Classification, "category" | "owner" | "impact"> }) {
-  if (!labels) return null;
-  return (
-    <>
-      <span className={`${CHIP} ${IMPACT_STYLE[labels.impact]}`} title={IMPACT_INFO[labels.impact].description}>{IMPACT_INFO[labels.impact].name}</span>
-      <span className={`${CHIP} bg-panel-2 text-ink/80`} title={CATEGORY_INFO[labels.category].description}>{CATEGORY_INFO[labels.category].name}</span>
-      <span className="mt-1 mr-1 inline-flex text-[11px] text-muted" title={OWNER_INFO[labels.owner].description}>{OWNER_INFO[labels.owner].name}</span>
-    </>
-  );
-}
 
 export function timeAgo(iso: string, now = Date.now()) {
   const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));

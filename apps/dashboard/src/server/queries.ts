@@ -4,6 +4,7 @@ import {
   CATEGORY_INFO,
   CAUSE_INFO,
   compareVersions,
+  hostNameFor,
   nameUrlsIn,
   percentileMs,
   SEVERITY_ORDER,
@@ -21,6 +22,7 @@ import {
 } from "@debugkit/schema";
 import { explain, explanationLines, explanationMarkdown, findingLine, type Explanation } from "./explain";
 import { findingsOf, type Finding } from "./detectors";
+import { failedRequest, timelineOf } from "./event";
 import { daysBetween, resolveRange, weekOf, type DateRange } from "./range";
 
 /**
@@ -759,6 +761,20 @@ export interface IssueDetail {
   findings: Finding[];
   /** The explanation as Markdown, for "Copy for a ticket". */
   ticketMarkdown?: string;
+  /**
+   * Where the issue sits under Health, for its breadcrumb: the service whose call failed, or the
+   * app's own code. null for a failed call whose service nobody named.
+   */
+  area: { kind: "service"; name: string } | { kind: "app" } | null;
+}
+
+/** The service whose call an issue's newest occurrence failed, or the app's own code. */
+export function areaOf(se: StoredEvent | undefined, labels: Classification | undefined, hosts: readonly HostName[]): IssueDetail["area"] {
+  if (!labels || !isRequestCategory(labels.category)) return { kind: "app" };
+  const e = se?.event.type === "error" ? se.event : undefined;
+  if (!e) return null;
+  const name = failedRequest(e.request, timelineOf(e.breadcrumbs, hosts), hosts)?.service ?? (e.request ? hostNameFor(e.request.url, hosts)?.host.name : undefined);
+  return name ? { kind: "service", name } : null;
 }
 
 export async function buildIssueDetail(
@@ -833,6 +849,7 @@ export async function buildIssueDetail(
   const findings = findingsOf(errorEvents.flatMap((e) => (e.event.type === "error" ? [e.event] : [])), hosts);
   const link = issueUrl(opts.trackers?.dashboardUrl, app, fingerprint);
   const detail = {
+    area: areaOf(issue.lastEvent, row.labels, hosts),
     app,
     range,
     retention,

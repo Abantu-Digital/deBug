@@ -31,8 +31,8 @@ export const SERVICE_LEVELS = {
 /** Failing within this long ago counts as still happening. */
 export const LIVE_MS = 60 * 60 * 1000;
 
-/** How an issue page knows it was opened from the App code page (its `via`). */
-export const APP_CODE = "app-code";
+/** Still open: not resolved or ignored. */
+export const isOpen = (status: string | undefined): boolean => status !== "resolved" && status !== "ignored";
 
 /** The address part for endpoints nobody named a service for. */
 export const UNNAMED = "-";
@@ -103,7 +103,9 @@ export function servicesOf(endpoints: readonly EndpointHealth[]): ServiceHealth[
 /** A service's endpoints, by its key (as in the address). */
 export function endpointsOf(key: string, endpoints: readonly EndpointHealth[]): EndpointHealth[] {
   const keyOf = serviceKeys(endpoints.map((e) => e.service));
-  return endpoints.filter((e) => (keyOf(e.service) || UNNAMED) === key);
+  // The key may come from an issue's own service name ("Balances" for "balance"): group it the same way.
+  const want = key === UNNAMED ? UNNAMED : keyOf(key) || UNNAMED;
+  return endpoints.filter((e) => (keyOf(e.service) || UNNAMED) === want);
 }
 
 /**

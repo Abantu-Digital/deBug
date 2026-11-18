@@ -3,7 +3,7 @@ import { ClosedIssues, type ClosedIssue } from "~/components/closed-issues";
 import { EmptyState } from "~/components/empty-state";
 import { RangePicker, rangeSearch, RetentionNote, type PageSearch } from "~/components/range-picker";
 import { LevelRow, levelName, timeAgo, toneClass } from "~/components/ui";
-import { endpointsOf, failing, HEALTH_ORDER, pct, plural, serviceLevel, servicesOf, serviceTile } from "~/lib/health";
+import { endpointsOf, failing, HEALTH_ORDER, isOpen, pct, plural, serviceLevel, servicesOf, serviceTile } from "~/lib/health";
 import type { EndpointHealth } from "~/server/endpoints";
 import { getEndpoints } from "~/server/fns";
 
@@ -41,7 +41,7 @@ function ServicePage() {
   const healthy = rows.filter((r) => r.level === "healthy");
   // Resolved and ignored issues behind any endpoint, once each, folded away at the bottom.
   const closed = new Map<string, ClosedIssue>();
-  for (const e of endpoints) for (const p of e.problems) if (p.issueStatus === "resolved" || p.issueStatus === "ignored") closed.set(p.fingerprint, { ...p, status: p.issueStatus });
+  for (const e of endpoints) for (const p of e.problems) if (!isOpen(p.issueStatus)) closed.set(p.fingerprint, { ...p, status: p.issueStatus });
 
   return (
     <main className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6">
@@ -85,7 +85,7 @@ function ServicePage() {
             <p className="rounded-lg border border-level-healthy-edge bg-level-healthy-bg px-3 py-2 text-sm text-level-healthy-fg">Every call to {tile.name} worked in {range.label}.</p>
           )}
 
-          <ClosedIssues issues={[...closed.values()]} keep={keep} now={now} via={service} />
+          <ClosedIssues issues={[...closed.values()]} keep={keep} now={now} />
 
           {healthy.length > 0 && (
             <section aria-label="Healthy endpoints">
@@ -110,7 +110,7 @@ function ServicePage() {
 function EndpointProblems({ row, keep, now, service }: { row: EndpointHealth; keep: PageSearch; now: number; service: string }) {
   const said = [...row.statuses.slice(0, 3).map((s) => `${s.key} ×${s.count}`)];
   const code = row.backendCodes[0];
-  const open = row.problems.filter((p) => p.issueStatus !== "resolved" && p.issueStatus !== "ignored");
+  const open = row.problems.filter((p) => isOpen(p.issueStatus));
   const message = row.backendMessages[0];
   return (
     <div className="space-y-2">
@@ -142,7 +142,7 @@ function EndpointProblems({ row, keep, now, service }: { row: EndpointHealth; ke
               <Link
                 to="/issues/$fingerprint"
                 params={{ fingerprint: p.fingerprint }}
-                search={{ ...keep, app: keep.app ?? "", via: service }}
+                search={{ ...keep, app: keep.app ?? "" }}
                 className="group flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm hover:border-accent focus-visible:outline-2 focus-visible:outline-accent"
               >
                 <span className="min-w-0 break-words">
@@ -156,6 +156,9 @@ function EndpointProblems({ row, keep, now, service }: { row: EndpointHealth; ke
             </li>
           ))}
         </ul>
+      )}
+      {row.problems.length > 0 && !open.length && (
+        <p className="text-sm text-muted">Its issues are all resolved or ignored (listed at the bottom): these failures came before that, or are still being looked at.</p>
       )}
       <Link to="/endpoints" search={{ ...keep, endpoint: row.endpoint }} className="inline-block text-xs text-accent hover:underline">
         Every failure on this endpoint, with traces →

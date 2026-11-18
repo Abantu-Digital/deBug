@@ -3,7 +3,7 @@ import { EmptyState } from "~/components/empty-state";
 import { RangePicker, rangeSearch, RetentionNote, type PageSearch } from "~/components/range-picker";
 import { ClosedIssues } from "~/components/closed-issues";
 import { IssueLabels, LevelRow, levelName, timeAgo, toneClass } from "~/components/ui";
-import { APP_CODE, plural } from "~/lib/health";
+import { plural } from "~/lib/health";
 import { getAppCode } from "~/server/fns";
 import type { IssueRow } from "~/server/queries";
 
@@ -63,7 +63,7 @@ function AppCodePage() {
         <p className="rounded-lg border border-level-healthy-edge bg-level-healthy-bg px-3 py-2 text-sm text-level-healthy-fg">No open crashes or code errors in {range.label}.</p>
       )}
 
-      <ClosedIssues issues={closed} keep={keep} now={now} via={APP_CODE} />
+      <ClosedIssues issues={closed} keep={keep} now={now} />
     </main>
   );
 }
@@ -75,7 +75,7 @@ function Problem({ issue: i, keep, now }: { issue: IssueRow; keep: PageSearch; n
     <Link
       to="/issues/$fingerprint"
       params={{ fingerprint: i.fingerprint }}
-      search={{ ...keep, app: keep.app ?? "", via: APP_CODE }}
+      search={{ ...keep, app: keep.app ?? "" }}
       className="group -m-1 flex flex-wrap items-center justify-between gap-2 rounded-lg p-1 hover:bg-panel-2 focus-visible:outline-2 focus-visible:outline-accent"
     >
       <span className="min-w-0 break-words">
