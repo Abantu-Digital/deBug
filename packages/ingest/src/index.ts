@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Envelope, markLibraryFrames, parseStack, releaseKey, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debugkit/schema";
+import { Envelope, isTestEvent, isTestIssue, markLibraryFrames, parseStack, releaseKey, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debugkit/schema";
 import { compareVersions, type IssueUpsert, type UserMark, type WriteStore } from "@debugkit/adapters";
 import { cachedSettings, effectiveRetention } from "./admin";
 import { sendAlerts } from "./alerts";
@@ -110,6 +110,10 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
   const settings = env.events.some((e) => e.type === "error") ? await cachedSettings(opts.store, app) : null;
   const criticalFlows = settings?.criticalFlows ?? [];
   const hosts = settings?.hosts ?? [];
+  // An "errored" or "crashed" marker caused only by test errors (ABA-133) doesn't count: some SDKs
+  // send the marker even so (older versions, or a tag only beforeSend adds).
+  const errorsHere = env.events.filter((e) => e.type === "error");
+  const onlyTestErrors = errorsHere.length > 0 && errorsHere.every((e) => isTestEvent(e));
   /** This batch's errors, to group into incidents once they're all labelled. */
   const batchErrors: (BatchError & { se: StoredEvent; fp: string })[] = [];
 
@@ -124,6 +128,7 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
     const day = dayOf(event.ts);
     // Session health only feeds the crash-free rollup; storing each one would cost a write per session.
     if (event.type === "session") {
+      if (onlyTestErrors && (event.status === "errored" || event.status === "crashed")) continue;
       rollups.push({ app, day, dimension: "session", key: `${context.app.version || "unknown"}|${event.status}`, kind: "event", by: 1 });
       // Anyone with a session is an active user, errors or not: the denominator for crash-free users.
       scopes.add("app");
@@ -139,6 +144,11 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
       event.buckets.forEach((n, i) => n && rollups.push({ app, day, dimension: "latency", key: `${event.key}|${i}`, kind: "event", by: n }));
       continue;
     }
+    // A test event that isn't an error (track() outcomes from a test run) counts nowhere.
+    if (event.type !== "error" && isTestEvent(event)) {
+      stored.push(storedEvent(day, event));
+      continue;
+    }
     const kind = event.type === "error" ? "error" : "event";
     const inc = (dimension: RollupIncrement["dimension"], key: string | undefined) =>
       rollups.push({ app, day, dimension, key: key || "unknown", kind, by: 1 });
@@ -152,7 +162,9 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
       labels = classify({ ...event, ts: raw.ts }, { criticalFlows, hosts });
       const cur = issues.get(fp);
       se = storedEvent(day, event, fp, labels);
-      batchErrors.push({ ts: raw.ts, labels, se, fp });
+      const test = isTestEvent(event);
+      // Test errors join no incident: they aren't a problem anyone has.
+      if (!test) batchErrors.push({ ts: raw.ts, labels, se, fp });
       issues.set(fp, {
         app,
         fingerprint: fp,
@@ -167,8 +179,14 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
       });
       scopes.add(`issue:${fp}`);
       inc("issue", fp);
-      if (event.request) inc("endpoint", `${event.request.method.toUpperCase()} ${event.request.url}`);
       rollups.push({ app, day: event.ts.slice(0, 13), dimension: "issueHour", key: fp, kind, by: 1 });
+      // A test error (ABA-133) counts only on its own issue: not in totals, flows, devices,
+      // endpoints or labels, so the overview and failure rates don't move.
+      if (test) {
+        stored.push(se);
+        continue;
+      }
+      if (event.request) inc("endpoint", `${event.request.method.toUpperCase()} ${event.request.url}`);
     }
 
     inc("total", "all");
@@ -219,7 +237,10 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
     noteVersions(opts.store, app, env.sdk.version, receivedAt),
   ]);
 
-  if (outcome && (outcome.created.length || outcome.regressed.length)) await sendAlerts(app, outcome, issues, settings);
+  // Test errors (ABA-133) never alert.
+  const real = (fp: string) => !isTestIssue(issues.get(fp));
+  const alerting = outcome && { ...outcome, created: outcome.created.filter(real), regressed: outcome.regressed.filter(real) };
+  if (alerting && (alerting.created.length || alerting.regressed.length)) await sendAlerts(app, alerting, issues, settings);
 
   return { status: 202, body: { ok: true, accepted: env.events.length } };
 }

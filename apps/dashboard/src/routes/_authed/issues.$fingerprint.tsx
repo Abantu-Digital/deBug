@@ -33,7 +33,9 @@ function IssuePage() {
         <nav aria-label="Breadcrumb" className="text-sm text-muted">
           <Link to="/" search={keep} className="hover:text-ink hover:underline">Health</Link>
           {d.area && <span aria-hidden> › </span>}
-          {d.area?.kind === "app" ? (
+          {d.area?.kind === "tests" ? (
+            <Link to="/app-code" search={{ ...keep, tests: true }} hash="test-errors" className="hover:text-ink hover:underline">Test errors</Link>
+          ) : d.area?.kind === "app" ? (
             <Link to="/app-code" search={keep} className="hover:text-ink hover:underline">App code</Link>
           ) : d.area ? (
             <Link to="/services/$service" params={{ service: d.area.name }} search={keep} className="hover:text-ink hover:underline">

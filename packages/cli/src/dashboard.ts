@@ -139,11 +139,11 @@ export async function startDashboard(cwd: string): Promise<RunningDashboard> {
   return { url, child, stop };
 }
 
-/** Ask the dashboard what it sees, through the same JSON API agents use. */
-export async function summary(cwd: string, url: string, app: string): Promise<{ ok: boolean; status: number; data?: any; error?: string }> {
+/** Ask the dashboard what it sees, through the same JSON API agents use. `tests` also lists test errors (hidden by default). */
+export async function summary(cwd: string, url: string, app: string, opts: { tests?: boolean } = {}): Promise<{ ok: boolean; status: number; data?: any; error?: string }> {
   const token = readEnv(paths(cwd).dashboardEnv).DEBUG_API_TOKEN;
   try {
-    const r = await fetch(`${url}/api/summary?app=${encodeURIComponent(app)}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
+    const r = await fetch(`${url}/api/summary?app=${encodeURIComponent(app)}${opts.tests ? "&tests=1" : ""}`, { headers: token ? { authorization: `Bearer ${token}` } : {} });
     const text = await r.text();
     let data: any;
     try {

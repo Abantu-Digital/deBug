@@ -5,7 +5,7 @@ export type { InitOptions, EventMeta, QueueStorage, AutoCaptureOptions, NetworkO
 export { normaliseUrl } from "./auto";
 export type { BaseUrl } from "./network";
 export { browserContext, mergeContext, type ContextPatch } from "./context";
-export { parseStack } from "@debugkit/schema/core";
+export { parseStack, TEST_TAG } from "@debugkit/schema/core";
 export type { Breadcrumb, EventInput, Severity, StackFrame } from "@debugkit/schema/core";
 
 /**

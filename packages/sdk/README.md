@@ -410,6 +410,21 @@ await deBug.flush();
 `flow` names the part of your app, in dotted lowercase like `auth.login`. It's the main axis
 of the dashboard, so keep it consistent.
 
+Errors you make on purpose, for example from a dev tools "Error testing" screen, should be
+marked as tests. They get their own issues, never count toward totals, rates or the session's
+crash-free status, never alert, and the dashboard folds them away: Health links to them under "Folded away".
+
+```ts
+deBug.error(err, { test: true });
+// A test crash or rejection nothing catches: throw or reject with a test error. It's a test
+// whichever handler reports it, even later.
+throw deBug.testError("Test crash");
+Promise.reject(deBug.testError("Test rejection"));
+```
+
+`deBug.setTags({ test: "true" })` also works, but marks every error until you remove it with
+`deBug.setTags({ test: undefined })`.
+
 To scrub personal data before anything leaves the device, use `beforeSend`:
 
 ```ts

@@ -27,6 +27,13 @@ describe("issue filters", () => {
     expect(ids(filterIssues(issues, { impact: "blocked", flow: "auth.login" }))).toEqual(["crash"]);
   });
 
+  it("hides test errors unless asked, whatever the other filters (ABA-133)", () => {
+    const withTest = [...issues, { ...issue("test-crash", "open", { category: "crash", owner: "app", impact: "blocked" }), test: true }];
+    expect(ids(filterIssues(withTest, { impact: "blocked" }))).toEqual(["crash", "server"]);
+    expect(ids(filterIssues(withTest, { impact: "blocked", tests: true }))).toEqual(["crash", "server", "test-crash"]);
+    expect(issueFilterFromQuery(new URLSearchParams("tests=1"))).toEqual({ status: "all", tests: true });
+  });
+
   it("never matches an unlabelled issue to a label filter", () => {
     expect(ids(filterIssues(issues, { status: "all", category: "server" }))).toEqual(["server", "old"]);
     expect(filterIssues(issues, { owner: "unknown" })).toEqual([]);

@@ -7,7 +7,8 @@ import { getStore } from "~/server/store";
 
 /**
  * GET /api/summary?app=<id>  — the overview as JSON, for agents and scripts.
- * Optional issue filters: status (open, resolved, ignored, all), flow, category, owner, impact.
+ * Optional issue filters: status (open, resolved, ignored, all), flow, category, owner, impact,
+ * and tests=1 to list test errors too (hidden by default).
  */
 export const Route = createFileRoute("/api/summary")({
   server: {

@@ -4,6 +4,7 @@ import { EmptyState } from "~/components/empty-state";
 import { RangePicker, rangeSearch, RetentionNote, type PageSearch, type RangeSearch } from "~/components/range-picker";
 import { HealthBox, levelName, toneClass } from "~/components/ui";
 import { getHealth } from "~/server/fns";
+import type { HealthReport } from "~/server/health";
 import { HEALTH_ORDER, type HealthLevel, type HealthTileData } from "~/lib/health";
 
 const LEVELS = (Object.keys(HEALTH_ORDER) as HealthLevel[]).sort((a, b) => HEALTH_ORDER[b] - HEALTH_ORDER[a]);
@@ -102,6 +103,8 @@ function HealthWall() {
 
       {!shown.length && <p className="text-sm text-muted">Nothing at this level in {range.label}.</p>}
 
+      <Folded folded={report.folded} keep={keep} />
+
       <p className="text-sm">
         <Link to="/endpoints" search={keep} className="text-accent hover:underline">Every endpoint, with timings →</Link>
       </p>
@@ -127,5 +130,18 @@ function LevelChip({ level, count, on }: { level: HealthLevel; count: number; on
     >
       {count} {levelName(level)}
     </Link>
+  );
+}
+
+/** What's kept off the wall on purpose, each linking to where it's listed and why. Nothing when there's nothing. */
+function Folded({ folded, keep }: { folded: HealthReport["folded"]; keep: PageSearch }) {
+  if (!folded.tests) return null;
+  return (
+    <p className="text-sm text-muted">
+      <span className="font-semibold">Folded away: </span>
+      <Link to="/app-code" search={{ ...keep, tests: true }} hash="test-errors" className="text-accent hover:underline">
+        Test errors: {folded.tests} →
+      </Link>
+    </p>
   );
 }

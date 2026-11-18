@@ -1,5 +1,8 @@
 import type { Breadcrumb, ContextInput, EnvelopeInput, EventInput, Severity } from "@debugkit/schema/core";
-import { latencyBucket, LATENCY_BUCKETS_MS, markLibraryFrames, MAX_BREADCRUMBS, MAX_CAPTURED_BODY, parseStack } from "@debugkit/schema/core";
+import { latencyBucket, LATENCY_BUCKETS_MS, markLibraryFrames, MAX_BREADCRUMBS, MAX_CAPTURED_BODY, isTestEvent, parseStack, TEST_TAG } from "@debugkit/schema/core";
+
+/** Marks an Error from `testError()`. Symbol.for, so it survives two copies of the SDK in one app. */
+const TEST_MARK = Symbol.for("debugkit.test");
 import { browserContext, mergeContext, type ContextPatch } from "./context";
 import {
   instrumentClicks,
@@ -336,9 +339,27 @@ export class DebugClient {
     return crumb;
   }
 
-  /** Log an error. `flow` is the part of the app it belongs to, e.g. "auth.login". */
-  error(err: unknown, meta: EventMeta & { severity?: Severity; handled?: boolean; fatal?: boolean } = {}) {
-    this.captureError(normaliseError(err), meta);
+  /**
+   * Log an error. `flow` is the part of the app it belongs to, e.g. "auth.login". `test: true`
+   * marks an error made on purpose (an Error testing screen): it gets its own issue, never counts
+   * against the session, and the dashboard hides it unless asked. An error made by
+   * `deBug.testError()` is a test however it arrives: reported, thrown or rejected.
+   */
+  error(err: unknown, meta: EventMeta & { severity?: Severity; handled?: boolean; fatal?: boolean; test?: boolean } = {}) {
+    const { test, ...rest } = meta;
+    const isTest = test || (typeof err === "object" && err !== null && (err as Record<symbol, unknown>)[TEST_MARK] === true);
+    this.captureError(normaliseError(err), isTest ? { ...rest, tags: { ...rest.tags, [TEST_TAG]: "true" } } : rest);
+  }
+
+  /**
+   * An error deBug treats as a test wherever it ends up: passed to `error()`, thrown and caught by
+   * the global handler, or used to reject a promise nobody handles. For an Error testing screen:
+   * `throw deBug.testError("Test crash")` or `Promise.reject(deBug.testError("Test rejection"))`.
+   */
+  testError(message = "deBug test error"): Error {
+    const e = new Error(message);
+    (e as unknown as Record<symbol, unknown>)[TEST_MARK] = true;
+    return e;
   }
 
   /** Log a custom event. Use outcome to let deBug compute failure rates per flow. */
@@ -470,19 +491,7 @@ export class DebugClient {
     const handled = meta.handled ?? true;
     const frames = e.frames ?? parseStack(e.stack);
     if (!meta.fatal && !this.allowError(`${e.name}|${e.message.slice(0, 120)}|${frames[0]?.file ?? ""}:${frames[0]?.line ?? ""}`)) return;
-    // Session markers go first so they ride in the same upload as the error.
-    if (this.auto.sessions && (!handled || meta.fatal)) {
-      if (!this.sessionState.errored) {
-        this.sessionState.errored = true;
-        this.push({ type: "session", id: uid(), ts: now(), status: "errored" });
-      }
-      if (meta.fatal && !this.sessionState.crashed) {
-        this.sessionState.crashed = true;
-        this.push({ type: "session", id: uid(), ts: now(), status: "crashed" });
-      }
-    }
-    // Fatal errors skip sampling: a crash is always worth its one event.
-    (meta.fatal ? this.push : this.enqueue).call(this, {
+    const event: EventInput = {
       type: "error",
       id: uid(),
       ts: now(),
@@ -495,7 +504,25 @@ export class DebugClient {
       breadcrumbs,
       request,
       response,
-    });
+    };
+    // A test error never marks the session errored or crashed, so crash-free rates stay real.
+    // Read from the tags it will be sent with (its own, global, tag sources and enrich), the same
+    // rule ingest and the dashboard use.
+    const tagged = this.withTags(event);
+    const test = isTestEvent(tagged);
+    // Session markers go first so they ride in the same upload as the error.
+    if (this.auto.sessions && !test && (!handled || meta.fatal)) {
+      if (!this.sessionState.errored) {
+        this.sessionState.errored = true;
+        this.push({ type: "session", id: uid(), ts: now(), status: "errored" });
+      }
+      if (meta.fatal && !this.sessionState.crashed) {
+        this.sessionState.crashed = true;
+        this.push({ type: "session", id: uid(), ts: now(), status: "crashed" });
+      }
+    }
+    // Fatal errors skip sampling: a crash is always worth its one event.
+    (meta.fatal ? this.push : this.enqueue).call(this, tagged, true);
   }
 
   /** Per-minute limits: one runaway error can't flood the queue, the network or your database. */
@@ -518,16 +545,17 @@ export class DebugClient {
     return r >= 1 || Math.random() < r;
   }
 
-  private enqueue(e: EventInput) {
+  /** `tagged`: withTags() already ran on it (captureError reads the tags first), so it isn't run twice. */
+  private enqueue(e: EventInput, tagged = false) {
     if (!this.ready || !this.sampled()) return;
-    this.push(e);
+    this.push(e, tagged);
   }
 
   /** Queue without sampling (sessions must be complete for crash-free rates to be right). */
-  private push(e: EventInput) {
+  private push(e: EventInput, tagged = false) {
     // After close(), only the final flush may still add (its request timings).
     if (!this.ready || (this.closed && !this.closing)) return;
-    let out: EventInput | null | undefined = e.type === "error" || e.type === "event" ? this.withTags(e) : e;
+    let out: EventInput | null | undefined = !tagged && (e.type === "error" || e.type === "event") ? this.withTags(e) : e;
     if (this.opts.beforeSend) {
       try {
         out = this.opts.beforeSend(out);

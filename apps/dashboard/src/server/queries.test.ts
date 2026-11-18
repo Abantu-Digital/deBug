@@ -26,6 +26,22 @@ describe("buildSummary", () => {
     expect(d.issue.count24h).toBe(s.issues[0]!.count24h);
   });
 
+  it("lists test errors only behind the toggle, and never counts them (ABA-133)", async () => {
+    const store = new MemoryStore();
+    const now = Date.parse("2026-11-18T12:00:00Z");
+    const ts = "2026-11-18T11:00:00.000Z";
+    const error = (id: string, tags?: Record<string, string>) => ({ type: "error" as const, id, ts, tags, error: { name: "TypeError", message: "x", stack: "TypeError: x\n    at f (/app/src/a.ts:1:1)" } });
+    const env = { sdk: { name: "t", version: "1" }, context: { app: { id: "a" }, os: { name: "ios" }, runtime: { name: "rn" } }, session: { id: "s", startedAt: ts }, events: [error("evt_real"), ...Array.from({ length: 6 }, (_, n) => error(`evt_test${n}`, { test: "true" }))] };
+    expect((await ingest(JSON.stringify(env), "k", { store, keys: { k: "a" }, now: () => new Date(now) })).status).toBe(202);
+    const s = (await buildSummary(store, "a", DEFAULT_SEVERITY_THRESHOLDS, now, { range: { range: "24h" } }))!;
+    expect(s.totals).toMatchObject({ activeIssues: 1, testIssues: 1, errorsRange: 1 });
+    expect(s.issues.map((i) => i.test).sort()).toEqual([false, true]);
+    expect(filterIssues(s.issues, {})).toHaveLength(1);
+    expect(s.narrative.join(" ")).not.toMatch(/test/i);
+    // Never urgent, however often the button is tapped.
+    expect(s.issues.find((i) => i.test)?.severity).toBe("low");
+  });
+
   it("counts only the trailing 24h toward severity", async () => {
     const store = new MemoryStore();
     const now = Date.parse("2026-11-09T12:00:00Z");

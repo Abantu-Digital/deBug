@@ -6,6 +6,7 @@ import {
   compareVersions,
   hostNameFor,
   nameUrlsIn,
+  isTestIssue,
   percentileMs,
   SEVERITY_ORDER,
   severityFromCount,
@@ -77,6 +78,8 @@ export interface IssueRow {
   incidentTitle?: string;
   /** Plain summary for support and technical detail for developers (see explain.ts). */
   explanation?: Explanation;
+  /** Made on purpose to test deBug (tagged test=true): hidden unless asked, never counted (ABA-133). */
+  test: boolean;
 }
 
 /**
@@ -167,6 +170,8 @@ export interface Summary {
     eventsRange: number;
     activeIssues: number;
     criticalIssues: number;
+    /** Test-error issues seen in the range (ABA-133): on Health's Folded away line, never counted. */
+    testIssues: number;
     failingFlows: number;
   };
   narrative: string[];
@@ -221,11 +226,13 @@ export const SUMMARY_FIELDS = {
   "totals.errors24h": "Error events in the trailing 24 hours (exact, from hourly rollups).",
   "totals.errorsRange": "Error events in the selected range.",
   "totals.changePct": "Percent change of errors vs the previous period of the same length. null when that period had fewer than 10 errors.",
-  "totals.activeIssues": "Distinct grouped errors (issues) seen in the range.",
+  "totals.activeIssues": "Distinct grouped errors (issues) seen in the range, without test errors.",
+  "totals.testIssues": "Issues made on purpose to test deBug (tag test=true). Left out of every count; list them with ?tests=1.",
   "totals.criticalIssues": "Issues whose 24h occurrence count meets the critical threshold.",
   "flows[]": "Parts of the app as tagged by the developer (e.g. auth.login). Sorted by severity, then errors24h, then errorsRange.",
   "flows[].failureRate": "failures/(failures+successes) in the range from events logged with an outcome. null when the app logs no outcomes for that flow.",
-  "issues[]": "Grouped errors seen in the range. Sorted by severity, then count24h, then countRange. Narrow with ?status=open|resolved|ignored|all (default all), ?flow=, ?category=, ?owner= and ?impact= (ids from breakdowns); an unknown value is a 400. _filter echoes what was applied.",
+  "issues[]": "Grouped errors seen in the range. Sorted by severity, then count24h, then countRange. Narrow with ?status=open|resolved|ignored|all (default all), ?flow=, ?category=, ?owner= and ?impact= (ids from breakdowns); an unknown value is a 400. Test errors are left out unless ?tests=1. _filter echoes what was applied.",
+  "issues[].test": "true for an issue made on purpose to test deBug (tag test=true): listed only with ?tests=1, never counted, always severity low.",
   "issues[].severity": "Derived from count24h using thresholds critical/high/medium.",
   "issues[].title": "Error name and message, with hosts named in Settings shown by their names.",
   "issues[].culprit": "Top in-app stack frame: function (file:line).",
@@ -333,17 +340,19 @@ export async function buildSummary(
   let errors24h = 0;
   let errorsPrev24h = 0;
   const issue24h = new Map<string, number>();
-  for (const r of hourRows) {
-    if (last24.has(r.day)) {
-      errors24h += r.errors;
-      issue24h.set(r.key, (issue24h.get(r.key) ?? 0) + r.errors);
-    } else errorsPrev24h += r.errors;
+  // Test errors (ABA-133) keep their own issue's count, but never add to totals or the trend.
+  const testIssues = new Set(issues.filter(isTestIssue).map((i) => i.fingerprint));
+  const realHours = hourRows.filter((r) => !testIssues.has(r.key));
+  for (const r of hourRows) if (last24.has(r.day)) issue24h.set(r.key, (issue24h.get(r.key) ?? 0) + r.errors);
+  for (const r of realHours) {
+    if (last24.has(r.day)) errors24h += r.errors;
+    else errorsPrev24h += r.errors;
   }
 
   // Trend: hourly for 24h, daily up to 90 days, weekly beyond.
   let trend: Summary["trend"];
   if (hourly) {
-    trend = h24.map((h) => ({ day: h, errors: hourRows.filter((r) => r.day === h).reduce((a, r) => a + r.errors, 0), events: 0 }));
+    trend = h24.map((h) => ({ day: h, errors: realHours.filter((r) => r.day === h).reduce((a, r) => a + r.errors, 0), events: 0 }));
   } else {
     const byDay = new Map(total.map((r) => [r.day, r]));
     const daily = daysBetween(from, to).map((day) => ({ day, errors: byDay.get(day)?.errors ?? 0, events: byDay.get(day)?.events ?? 0 }));
@@ -372,8 +381,9 @@ export async function buildSummary(
     .filter((i) => i.lastSeen >= rangeStart && i.firstSeen <= `${to}T23:59:59.999Z`)
     .map((i) => toIssueRow(i, issue24h.get(i.fingerprint) ?? 0, hourly ? (issue24h.get(i.fingerprint) ?? 0) : (issueRange.get(i.fingerprint) ?? 0), thresholds, latestVersion, criticalFlows, hosts))
     .sort(bySeverityThenCount);
-  // Users affected: one count per issue, so only for the issues people look at first.
-  const active = issueRows.filter((i) => i.status !== "ignored" && i.status !== "resolved");
+  // Users affected: one count per issue, so only for the issues people look at first. Test errors
+  // (ABA-133) are listed (App code page, ?tests=1 on the API) but never counted as active.
+  const active = issueRows.filter((i) => !i.test && i.status !== "ignored" && i.status !== "resolved");
   await Promise.all(active.slice(0, 10).map(async (i) => (i.users = await countUsersSafe(store, app, `issue:${i.fingerprint}`, usersSince))));
   const lastEvents = new Map(issues.map((i) => [i.fingerprint, i.lastEvent]));
   for (const row of issueRows)
@@ -441,6 +451,7 @@ export async function buildSummary(
       eventsRange: sumRows(total, "events"),
       activeIssues: active.length,
       criticalIssues: active.filter((i) => i.severity === "critical").length,
+      testIssues: issueRows.filter((i) => i.test).length,
       failingFlows: flows.filter((f) => (hourly ? f.errors24h : f.errorsRange) > 0).length,
     },
     narrative: [],
@@ -654,7 +665,9 @@ function toIssueRow(
   criticalFlows: readonly string[] = [],
   hosts: readonly HostName[] = [],
 ): IssueRow {
-  const base = severityFromCount(count24h, t);
+  const test = isTestIssue(i);
+  // A test error is never urgent, however often someone taps the button (ABA-133).
+  const base = test ? "low" : severityFromCount(count24h, t);
   const critical = new Set(criticalFlows);
   return {
     labels: issueLabels(i, latestVersion, criticalFlows, hosts),
@@ -670,12 +683,13 @@ function toIssueRow(
     culprit: i.culprit,
     flow: i.flow,
     // Issues in a critical flow rank one level higher (only once they've happened in the last 24h).
-    severity: i.flow && critical.has(i.flow) && count24h > 0 ? BUMP[base] : base,
+    severity: !test && i.flow && critical.has(i.flow) && count24h > 0 ? BUMP[base] : base,
     count24h,
     countRange,
     countTotal: i.count,
     firstSeen: i.firstSeen,
     lastSeen: i.lastSeen,
+    test,
   };
 }
 
@@ -710,7 +724,7 @@ function narrate(s: Summary): string[] {
     const n = r.preset === "24h" ? f.errors24h : f.errorsRange;
     out.push(`${f.flow}${f.critical ? " (a critical flow)" : ""} is the most affected flow (${f.severity}): ${plural(n, "error")} in ${r.label} from ${plural(f.issues, "issue")}.${failRate}`);
   }
-  const i = s.issues.find((x) => x.status !== "ignored" && x.status !== "resolved");
+  const i = s.issues.find((x) => !x.test && x.status !== "ignored" && x.status !== "resolved");
   if (i && i.countRange > 0) {
     const isNew = Date.parse(s.generatedAt) - Date.parse(i.firstSeen) < 3 * DAY;
     out.push(`Top issue: "${i.title}"${i.culprit ? ` in ${i.culprit}` : ""}, ${plural(i.countRange, "time")} in ${r.label}${isNew ? `, first seen ${relDays(s.generatedAt, i.firstSeen)}` : ""}.`);
@@ -765,7 +779,7 @@ export interface IssueDetail {
    * Where the issue sits under Health, for its breadcrumb: the service whose call failed, or the
    * app's own code. null for a failed call whose service nobody named.
    */
-  area: { kind: "service"; name: string } | { kind: "app" } | null;
+  area: { kind: "service"; name: string } | { kind: "app" } | { kind: "tests" } | null;
 }
 
 /** The service whose call an issue's newest occurrence failed, or the app's own code. */
@@ -849,7 +863,8 @@ export async function buildIssueDetail(
   const findings = findingsOf(errorEvents.flatMap((e) => (e.event.type === "error" ? [e.event] : [])), hosts);
   const link = issueUrl(opts.trackers?.dashboardUrl, app, fingerprint);
   const detail = {
-    area: areaOf(issue.lastEvent, row.labels, hosts),
+    // A test error is listed with the other test errors, not under App code or a service.
+    area: row.test ? { kind: "tests" } : areaOf(issue.lastEvent, row.labels, hosts),
     app,
     range,
     retention,

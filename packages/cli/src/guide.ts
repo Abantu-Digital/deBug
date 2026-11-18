@@ -1,4 +1,4 @@
-import { DebugClient } from "@debugkit/sdk";
+import { DebugClient, TEST_TAG } from "@debugkit/sdk";
 import type { AppInfo, Platform } from "./detect";
 import { PLATFORM_LABEL } from "./detect";
 import { loginHint, summary } from "./dashboard";
@@ -87,6 +87,8 @@ export async function sendTestEvents(cfg: DebugkitConfig, app: AppInfo): Promise
       return res;
     },
   });
+  // Everything this run sends is a test (ABA-133): its own issues, never counted, hidden by default.
+  client.setTags({ [TEST_TAG]: "true" });
   // What the user did before things went wrong, as the SDK would record it.
   client.navigated("/cart");
   client.navigated("/checkout");
@@ -95,14 +97,14 @@ export async function sendTestEvents(cfg: DebugkitConfig, app: AppInfo): Promise
   client.breadcrumb("network", "POST /v1/payments/intent → 503 (1840ms)", { status: 503, durationMs: 1840 }, "error");
   client.captureError(
     { name: "HttpError", message: "POST /v1/payments/intent responded 503 (test event from npx debugkit)", stack: new Error().stack },
-    { flow: "onboarding.test", handled: true, tags: { source: "network", test: "true" } },
+    { flow: "onboarding.test", handled: true, tags: { source: "network" } },
     { method: "POST", url: "/v1/payments/intent", status: 503, durationMs: 1840 },
   );
   // A manual report from a try/catch.
   try {
     JSON.parse("<html>502 Bad Gateway</html>");
   } catch (err) {
-    client.error(err, { flow: "onboarding.test", step: "parse_receipt", tags: { test: "true" } });
+    client.error(err, { flow: "onboarding.test", step: "parse_receipt" });
   }
   // track(): one success, one failure.
   await client.track("onboarding.test", "submit", async () => true);
@@ -120,7 +122,8 @@ async function waitForArrival(cwd: string, url: string, appId: string, timeoutMs
   const until = Date.now() + timeoutMs;
   let last: Awaited<ReturnType<typeof summary>> | undefined;
   while (Date.now() < until) {
-    last = await summary(cwd, url, appId);
+    // The test events are test errors (tag test=true): hidden unless asked for.
+    last = await summary(cwd, url, appId, { tests: true });
     if (last.ok && last.data?.app === appId && last.data?.issues?.length) return last;
     await new Promise((r) => setTimeout(r, 2000));
   }
@@ -182,10 +185,11 @@ export async function walkthrough(opts: { cwd: string; app: AppInfo; cfg: Debugk
         [
           ...(d.narrative ?? []).map((l: string) => `“${l}”`),
           "",
-          `${bold(String(d.issues.length))} issues · ${bold(String(d.health?.sessionsRange ?? 0))} session · failing endpoint ${code(d.health?.endpoints?.[0]?.endpoint ?? "—")}`,
+          `${bold(String(d.issues.length))} test issues · ${bold(String(d.health?.sessionsRange ?? 0))} session`,
           "",
-          `Refresh the dashboard. You'll see a ${pc.red("HttpError")} from a failed request (captured the way the SDK does it automatically),`,
-          `a ${pc.red("SyntaxError")} reported from a try/catch, and the ${code("onboarding.test")} flow with a 50% failure rate from track().`,
+          `Refresh the dashboard and open ${bold("Folded away: test errors")} on Health: they're test errors, so they never count and are listed apart.`,
+          `You'll see a ${pc.red("HttpError")} from a failed request (captured the way the SDK does it automatically)`,
+          `and a ${pc.red("SyntaxError")} reported from a try/catch, in the ${code("onboarding.test")} flow.`,
           dim("They're tagged environment debugkit-test, version " + (app.version ?? "0.0.0") + ". Raw events expire after 30 days."),
         ].join("\n"),
         "3 · Your first events",

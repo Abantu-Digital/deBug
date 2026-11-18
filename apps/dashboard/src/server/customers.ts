@@ -1,5 +1,5 @@
 import type { ReadStore, UserField } from "@debugkit/adapters";
-import type { Context, StoredEvent } from "@debugkit/schema";
+import { isTestEvent, type Context, type StoredEvent } from "@debugkit/schema";
 import { sessionOutcome, type SessionDetail } from "./session";
 
 /** One of a customer's sessions, as the lookup lists it. */
@@ -92,8 +92,9 @@ export function sessionsOf(events: readonly StoredEvent[]): CustomerSession[] {
         start: sorted[0]!.event.ts,
         end: last.event.ts,
         outcome: sessionOutcome(sorted),
-        errors: sorted.filter((e) => e.event.type === "error").length,
-        handled: sorted.filter((e) => e.event.type === "error" && e.event.handled).length,
+        // Test errors (ABA-133) aren't the customer's errors.
+        errors: sorted.filter((e) => e.event.type === "error" && !isTestEvent(e.event)).length,
+        handled: sorted.filter((e) => e.event.type === "error" && e.event.handled && !isTestEvent(e.event)).length,
         failedFlows: sorted.filter((e) => e.event.type === "event" && e.event.outcome === "failure").length,
         context: last.context,
         user: { id: last.user?.id, anonymousId: last.user?.anonymousId },
