@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { CATEGORY_INFO, IMPACT_INFO, OWNER_INFO, SEVERITY_INFO, type Classification, type Impact, type Severity } from "@debugkit/schema";
 
@@ -55,15 +55,63 @@ export function LevelBox({ level, count, customers, link }: { level: Severity; c
  * A row in a list ranked by level: a coloured block with the level in words (and, say, the
  * customers affected), then the row's content. The block sits on top at phone width.
  */
-export function LevelRow({ level, aside, children }: { level: Severity; aside?: ReactNode; children: ReactNode }) {
+export function LevelRow({ level, aside, children }: { level: Tone; aside?: ReactNode; children: ReactNode }) {
   return (
     <div className={`flex flex-col overflow-hidden rounded-xl border bg-panel sm:flex-row ${TONE[level].edge}`}>
       <div className={`flex shrink-0 flex-row items-center justify-between gap-2 px-3 py-2 sm:w-28 sm:flex-col sm:justify-center sm:py-3 sm:text-center ${TONE[level].surface}`}>
-        <strong className="text-sm">{SEVERITY_INFO[level].name}</strong>
+        <strong className="text-sm">{levelName(level)}</strong>
         {aside && <span className="text-xs">{aside}</span>}
       </div>
       <div className="min-w-0 flex-1 p-3 sm:p-4">{children}</div>
     </div>
+  );
+}
+
+/** A level's name, healthy included. */
+export const levelName = (level: Tone): string => (level === "healthy" ? "Healthy" : SEVERITY_INFO[level].name);
+
+/**
+ * A box on the health wall: the whole box in its level's colour, so the wall reads at a glance.
+ * The whole box is a link one level down, and looks it (arrow, lift on hover, focus ring). One
+ * still happening pulses and says so.
+ */
+export function HealthBox({ level, name, headline, measure, live, lastFailure, link, big }: {
+  level: Tone;
+  name: string;
+  headline?: string;
+  measure: string;
+  live: boolean;
+  lastFailure?: string;
+  link: LinkProps;
+  big?: boolean;
+}) {
+  return (
+    <Link
+      {...link}
+      style={{ "--alarm": `var(--level-${level}-edge)` } as CSSProperties}
+      aria-label={`${name}: ${levelName(level)}. ${headline ? `${headline}. ` : ""}${measure}.${live ? " Still happening." : ""}`}
+      className={`group relative flex h-full flex-col gap-1.5 rounded-xl border-2 p-4 pr-10 transition hover:-translate-y-0.5 hover:shadow-lg hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${TONE[level].surface} ${live && (level === "critical" || level === "high") ? "level-alarm" : ""}`}
+    >
+      <span className="flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-wide">
+        {levelName(level)}
+        {live && (
+          <span className="inline-flex items-center gap-1 normal-case">
+            <span className="relative flex h-2 w-2" aria-hidden>
+              <span className="absolute inline-flex h-full w-full rounded-full bg-current opacity-75 motion-safe:animate-ping" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-current" />
+            </span>
+            Still happening
+          </span>
+        )}
+      </span>
+      <strong className={`break-words leading-tight ${big ? "text-2xl" : "text-lg"}`}>{name}</strong>
+      {headline && <span className={`break-words font-mono ${big ? "text-sm" : "line-clamp-2 text-xs"}`}>{headline}</span>}
+      <span className="tabular mt-auto pt-1 text-xs opacity-90">
+        {measure}
+        {lastFailure && level !== "healthy" ? ` · last ${timeAgo(lastFailure)}` : ""}
+      </span>
+      <span aria-hidden className="absolute right-3 top-1/2 -translate-y-1/2 text-xl opacity-60 transition group-hover:translate-x-0.5 group-hover:opacity-100">→</span>
+    </Link>
   );
 }
 

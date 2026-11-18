@@ -67,6 +67,11 @@ describe("endpoint health", () => {
       lastFailure: at(300),
     });
     expect(r.endpoints[0]!.p95).toBeGreaterThan(r.endpoints[0]!.p50!);
+    // The issues behind the failures, most first: one click from the cause.
+    const problems = r.endpoints[0]!.problems;
+    expect(problems.reduce((n, p) => n + p.count, 0)).toBe(3);
+    expect(problems.map((p) => p.count)).toEqual([...problems.map((p) => p.count)].sort((a, b) => b - a));
+    expect(problems[0]).toMatchObject({ status: "402", platforms: [expect.any(String)] });
     expect(r.endpoints[1]).toMatchObject({ calls: 200, failureRate: 0, failures: 0, statuses: [] });
     expect(r.selected).toBeUndefined();
   });

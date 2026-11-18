@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { createFileRoute, Link, Outlet, redirect, useRouter } from "@tanstack/react-router";
 import { Logo } from "~/components/ui";
 import { VersionBanner } from "~/components/version-banner";
@@ -12,6 +13,21 @@ export const Route = createFileRoute("/_authed")({
   component: Layout,
 });
 
+/** A main-menu link. The page you're on is filled in and underlined, so it's clear where you are. */
+function NavLink({ to, exact, children }: { to: "/" | "/issues" | "/endpoints" | "/customers" | "/settings" | "/team"; exact?: boolean; children: ReactNode }) {
+  return (
+    <Link
+      to={to}
+      search={{}}
+      className="rounded-md border-b-2 border-transparent px-2.5 py-1.5 text-muted hover:bg-panel-2 hover:text-ink"
+      activeProps={{ className: "!border-accent bg-panel-2 font-semibold !text-ink", "aria-current": "page" }}
+      activeOptions={{ exact: !!exact, includeSearch: false }}
+    >
+      {children}
+    </Link>
+  );
+}
+
 function Layout() {
   const { user } = Route.useRouteContext();
   const router = useRouter();
@@ -21,12 +37,13 @@ function Layout() {
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3 sm:px-6">
           <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2">
             <Link to="/" search={{}} className="shrink-0"><Logo /></Link>
-            <nav className="flex items-center gap-3 text-sm" aria-label="Main">
-              <Link to="/" search={{}} className="text-muted hover:text-ink" activeProps={{ className: "font-medium text-ink" }} activeOptions={{ exact: true }}>Overview</Link>
-              <Link to="/endpoints" search={{}} className="text-muted hover:text-ink" activeProps={{ className: "font-medium text-ink" }}>Endpoints</Link>
-              <Link to="/customers" search={{}} className="text-muted hover:text-ink" activeProps={{ className: "font-medium text-ink" }}>Customers</Link>
-              <Link to="/settings" search={{}} className="text-muted hover:text-ink" activeProps={{ className: "font-medium text-ink" }}>Settings</Link>
-              <Link to="/team" className="text-muted hover:text-ink" activeProps={{ className: "font-medium text-ink" }}>Team</Link>
+            <nav className="flex flex-wrap items-center gap-1 text-sm" aria-label="Main">
+              <NavLink to="/" exact>Health</NavLink>
+              <NavLink to="/issues">Issues</NavLink>
+              <NavLink to="/endpoints">Endpoints</NavLink>
+              <NavLink to="/customers">Customers</NavLink>
+              <NavLink to="/settings">Settings</NavLink>
+              <NavLink to="/team">Team</NavLink>
             </nav>
           </div>
           <div className="flex items-center gap-3 text-sm">

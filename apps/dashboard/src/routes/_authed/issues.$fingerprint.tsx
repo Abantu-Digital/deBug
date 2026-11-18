@@ -29,7 +29,11 @@ function IssuePage() {
   return (
     <main className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link to="/" search={{ app: d.app, range: search.range, from: search.from, to: search.to }} className="text-sm text-muted hover:text-ink">← Overview</Link>
+        <nav aria-label="Breadcrumb" className="text-sm text-muted">
+          <Link to="/" search={{ app: d.app, range: search.range, from: search.from, to: search.to }} className="hover:text-ink hover:underline">Health</Link>
+          <span aria-hidden> › </span>
+          <Link to="/issues" search={{ app: d.app, range: search.range, from: search.from, to: search.to }} className="hover:text-ink hover:underline">Issues</Link>
+        </nav>
         <RangePicker key={`${range.preset}${range.from}${range.to}`} value={range} today={new Date().toISOString().slice(0, 10)} onChange={(r) => navigate({ search: (s) => ({ ...s, ...r }) })} />
       </div>
       <RetentionNote rangeFrom={range.from} retention={d.retention} />
@@ -46,7 +50,7 @@ function IssuePage() {
         {issue.incidentTitle && (
           <p className="mt-2 text-sm text-muted">
             Part of an incident:{" "}
-            <Link to="/" search={{ app: d.app }} className="font-medium text-ink hover:text-accent">
+            <Link to="/issues" search={{ app: d.app }} className="font-medium text-ink hover:text-accent">
               {issue.incidentTitle}
             </Link>
           </p>

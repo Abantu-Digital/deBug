@@ -1,7 +1,8 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { RangePicker, rangeSearch, RetentionNote, type RangeSearch } from "~/components/range-picker";
 import { clock, joined } from "~/components/timeline";
-import { Card, timeAgo } from "~/components/ui";
+import { Card, HealthBox, timeAgo } from "~/components/ui";
+import { byHealth, serviceTile } from "~/lib/health";
 import type { Count, EndpointFailure, EndpointHealth, ServiceHealth } from "~/server/endpoints";
 import { getEndpoints } from "~/server/fns";
 
@@ -23,7 +24,8 @@ export const Route = createFileRoute("/_authed/endpoints")({
 
 function EndpointsPage() {
   const report = Route.useLoaderData();
-  const { sort = "failing" } = Route.useSearch();
+  const search = Route.useSearch();
+  const { sort = "failing" } = search;
   const navigate = useNavigate({ from: Route.fullPath });
   if (!report) {
     return (
@@ -63,7 +65,7 @@ function EndpointsPage() {
         <p className="text-sm text-muted">No API calls recorded in {range.label}. Calls are counted when the SDK's network capture is on, and failures when they're stored as errors.</p>
       ) : (
         <>
-        {services.length > 1 && <Services rows={services} />}
+        {services.length > 1 && <Services rows={services} endpoints={report.endpoints} keep={{ app: report.app, range: search.range, from: search.from, to: search.to }} now={Date.parse(report.generatedAt)} />}
         <Card
           title={`${endpoints.length} endpoint${endpoints.length === 1 ? "" : "s"}`}
           subtitle="Calls, failure rate and timings count every call the SDK saw. Statuses and backend codes count the stored failures, which the SDK samples."
@@ -154,21 +156,15 @@ function EndpointDetail({ app, row, failures }: { app: string; row: EndpointHeal
   );
 }
 
-/** Endpoints added up per backend service: which one is failing or slow, at a glance. */
-function Services({ rows }: { rows: ServiceHealth[] }) {
+/** Each backend service as a box in its level's colour, worst first; a box opens that service. */
+function Services({ rows, endpoints, keep, now }: { rows: ServiceHealth[]; endpoints: EndpointHealth[]; keep: { app: string; range?: string; from?: string; to?: string }; now: number }) {
+  const tiles = rows.map((r) => serviceTile(r, endpoints, now)).sort(byHealth);
   return (
-    <Card title="By service" subtitle="Each backend service's endpoints added up. The slowest p95 is its slowest endpoint's.">
+    <Card title="By service" subtitle="Coloured by how each is doing, worst first. Click one for what's failing, how often, and why.">
       <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {rows.map((r) => (
-          <li key={r.service ?? ""} className="rounded-lg border border-line px-3 py-2 text-sm">
-            <div className="flex items-baseline justify-between gap-2">
-              <span className={r.service ? "font-medium" : "text-muted"}>{r.service ?? "Unnamed hosts"}</span>
-              <span className={`tabular ${r.failureRate !== null && r.failureRate >= 0.05 ? "font-semibold text-sev-critical" : "text-muted"}`}>{rate(r.failureRate)} failed</span>
-            </div>
-            <div className="tabular mt-0.5 text-xs text-muted">
-              {count(r.calls)} calls · {r.endpoints} endpoint{r.endpoints === 1 ? "" : "s"} · slowest p95 <span className={r.worstP95 !== null && r.worstP95 >= 3000 ? "font-semibold text-sev-high" : ""}>{ms(r.worstP95)}</span>
-              {r.failures > 0 && ` · ${r.failures} stored failure${r.failures === 1 ? "" : "s"}`}
-            </div>
+        {tiles.map((t) => (
+          <li key={t.key}>
+            <HealthBox level={t.level} name={t.name} headline={t.headline} measure={t.measure} live={t.live} lastFailure={t.lastFailure} link={{ to: "/services/$service", params: { service: t.key || "unnamed" }, search: keep }} />
           </li>
         ))}
       </ul>
