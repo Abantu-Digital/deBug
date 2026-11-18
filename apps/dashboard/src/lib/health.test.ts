@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EndpointHealth } from "../server/endpoints";
-import { answerOf, byHealth, headlineOf, serviceKey, serviceLevel, servicesOf, serviceTile, type HealthTileData } from "./health";
+import { answerOf, byHealth, endpointsOf, headlineOf, serviceKeys, serviceLevel, servicesOf, serviceTile, UNNAMED, type HealthTileData } from "./health";
 
 const NOW = Date.parse("2026-11-18T12:00:00Z");
 
@@ -32,7 +32,13 @@ describe("serviceLevel", () => {
     expect(serviceLevel({ calls: 2, failedCalls: 1, failures: 1 })).toBe("medium");
   });
 
+  it("counts many failures as bad even when they're a small share", () => {
+    expect(serviceLevel({ calls: 100_000, failedCalls: 4_000, failures: 300 })).toBe("critical");
+    expect(serviceLevel({ calls: 10_000, failedCalls: 150, failures: 40 })).toBe("high");
+  });
+
   it("goes by stored failures when the SDK sent no request summaries", () => {
+    expect(serviceLevel({ calls: 0, failedCalls: 0, failures: 60 })).toBe("critical");
     expect(serviceLevel({ calls: 0, failedCalls: 0, failures: 25 })).toBe("high");
     expect(serviceLevel({ calls: 0, failedCalls: 0, failures: 2 })).toBe("low");
     expect(serviceLevel({ calls: 0, failedCalls: 0, failures: 0 })).toBe("healthy");
@@ -40,12 +46,20 @@ describe("serviceLevel", () => {
 });
 
 describe("services", () => {
-  it("groups names that differ only by case or a trailing s", () => {
-    expect(serviceKey("Surveys")).toBe(serviceKey("surveys"));
-    expect(serviceKey("Balances")).toBe(serviceKey("balance"));
-    const s = servicesOf([ep({ service: "balance", calls: 126, failedCalls: 34 }), ep({ service: "Balances", path: "/y", calls: 38, failedCalls: 14 })]);
-    expect(s).toHaveLength(1);
-    expect(s[0]).toMatchObject({ service: "balance", calls: 164, failedCalls: 48, endpoints: 2 });
+  it("groups names that differ by case, or a plural with its singular, and nothing else", () => {
+    const key = serviceKeys(["Surveys", "surveys", "balance", "Balances", "status", "news"]);
+    expect(key("Surveys")).toBe(key("surveys"));
+    expect(key("Balances")).toBe("balance");
+    expect(key("status")).toBe("status");
+    expect(key("news")).toBe("news");
+    const rows = [ep({ service: "balance", calls: 126, failedCalls: 34 }), ep({ service: "Balances", path: "/y", calls: 38, failedCalls: 14 }), ep({ path: "/z" })];
+    const s = servicesOf(rows);
+    expect(s.map((x) => [x.key, x.service, x.calls, x.failedCalls, x.endpoints])).toEqual([
+      ["balance", "balance", 164, 48, 2],
+      [UNNAMED, undefined, 100, 0, 1],
+    ]);
+    expect(endpointsOf("balance", rows)).toHaveLength(2);
+    expect(endpointsOf(UNNAMED, rows)).toHaveLength(1);
   });
 
   it("says what's wrong from the worst endpoint: status, the backend's code and message, and the call", () => {
@@ -76,8 +90,8 @@ describe("the wall", () => {
   it("answers a client in plain words", () => {
     const tiles = [tile({ name: "balance", level: "critical", measure: "29% of 164 calls failed", headline: "404 · 30007 Balance lookup unsuccessful", live: true }), tile({ name: "billing", level: "critical" }), tile({ name: "share", level: "high" })];
     expect(answerOf(tiles, "the last 14 days")).toBe(
-      "2 parts are failing badly in the last 14 days: balance and billing. Worst: balance, 29% of 164 calls failed (404 · 30007 Balance lookup unsuccessful). 1 is still happening (failed in the last hour).",
+      "2 parts are failing badly in the last 14 days: balance and billing. Worst: balance, 29% of 164 calls failed (404 · 30007 Balance lookup unsuccessful). 1 is still happening (failed in the last hour). 0 of 3 parts are healthy.",
     );
-    expect(answerOf([tile({ name: "ok" })], "the last 7 days")).toBe("Nothing is failing badly in the last 7 days.");
+    expect(answerOf([tile({ name: "ok" })], "the last 7 days")).toBe("Nothing is failing badly in the last 7 days. 1 of 1 part is healthy.");
   });
 });

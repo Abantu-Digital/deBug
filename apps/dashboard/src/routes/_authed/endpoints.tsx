@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { RangePicker, rangeSearch, RetentionNote, type RangeSearch } from "~/components/range-picker";
+import { RangePicker, rangeSearch, RetentionNote, type PageSearch, type RangeSearch } from "~/components/range-picker";
 import { clock, joined } from "~/components/timeline";
 import { Card, HealthBox, timeAgo } from "~/components/ui";
 import { byHealth, serviceTile } from "~/lib/health";
@@ -65,7 +65,7 @@ function EndpointsPage() {
         <p className="text-sm text-muted">No API calls recorded in {range.label}. Calls are counted when the SDK's network capture is on, and failures when they're stored as errors.</p>
       ) : (
         <>
-        {services.length > 1 && <Services rows={services} endpoints={report.endpoints} keep={{ app: report.app, range: search.range, from: search.from, to: search.to }} now={Date.parse(report.generatedAt)} />}
+        {services.length > 0 && <Services rows={services} endpoints={report.endpoints} keep={{ app: report.app, range: search.range, from: search.from, to: search.to }} now={Date.parse(report.generatedAt)} />}
         <Card
           title={`${endpoints.length} endpoint${endpoints.length === 1 ? "" : "s"}`}
           subtitle="Calls, failure rate and timings count every call the SDK saw. Statuses and backend codes count the stored failures, which the SDK samples."
@@ -157,14 +157,14 @@ function EndpointDetail({ app, row, failures }: { app: string; row: EndpointHeal
 }
 
 /** Each backend service as a box in its level's colour, worst first; a box opens that service. */
-function Services({ rows, endpoints, keep, now }: { rows: ServiceHealth[]; endpoints: EndpointHealth[]; keep: { app: string; range?: string; from?: string; to?: string }; now: number }) {
+function Services({ rows, endpoints, keep, now }: { rows: ServiceHealth[]; endpoints: EndpointHealth[]; keep: PageSearch; now: number }) {
   const tiles = rows.map((r) => serviceTile(r, endpoints, now)).sort(byHealth);
   return (
     <Card title="By service" subtitle="Coloured by how each is doing, worst first. Click one for what's failing, how often, and why.">
       <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {tiles.map((t) => (
           <li key={t.key}>
-            <HealthBox level={t.level} name={t.name} headline={t.headline} measure={t.measure} live={t.live} lastFailure={t.lastFailure} link={{ to: "/services/$service", params: { service: t.key || "unnamed" }, search: keep }} />
+            <HealthBox level={t.level} name={t.name} headline={t.headline} measure={t.measure} live={t.live} lastFailure={t.lastFailure} link={{ to: "/services/$service", params: { service: t.key }, search: keep }} now={now} />
           </li>
         ))}
       </ul>

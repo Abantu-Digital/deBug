@@ -6,8 +6,6 @@ import { endpointTimings, retentionFor, type EndpointTiming, type Retention } fr
 import { resolveRange, type DateRange } from "./range";
 import { failing, servicesOf } from "../lib/health";
 
-export { serviceKey, servicesOf } from "../lib/health";
-
 /**
  * Endpoint health: how each API endpoint did over a period. Calls, failure rate and timings come
  * from the SDK's per-minute request summaries, which count every call. What went wrong (statuses,
@@ -60,6 +58,8 @@ export interface EndpointProblem {
 
 /** Endpoints added up per backend service. */
 export interface ServiceHealth {
+  /** What groups it ("balance" for "balance" and "Balances"), and its address: /services/<key>. */
+  key: string;
   /** undefined: endpoints whose service nobody named (in Settings or the app's breadcrumbs). */
   service?: string;
   endpoints: number;

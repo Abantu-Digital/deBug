@@ -1,7 +1,8 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { CopyButton } from "~/components/copy-button";
-import { RangePicker, rangeSearch, RetentionNote, type RangeSearch } from "~/components/range-picker";
-import { HealthBox, levelName } from "~/components/ui";
+import { EmptyState } from "~/components/empty-state";
+import { RangePicker, rangeSearch, RetentionNote, type PageSearch, type RangeSearch } from "~/components/range-picker";
+import { HealthBox, levelName, toneClass } from "~/components/ui";
 import { getHealth } from "~/server/fns";
 import { HEALTH_ORDER, type HealthLevel, type HealthTileData } from "~/lib/health";
 
@@ -30,16 +31,10 @@ function HealthWall() {
   const report = Route.useLoaderData();
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
-  if (!report) {
-    return (
-      <main className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
-        <h1 className="text-xl font-semibold">No apps have sent events yet</h1>
-        <p className="mt-2 text-sm text-muted">Once the SDK sends its first event, every service the app calls shows up here, coloured by how it's doing.</p>
-      </main>
-    );
-  }
+  if (!report) return <EmptyState />;
   const { range, tiles, counts } = report;
-  const keep = { app: report.app, range: search.range, from: search.from, to: search.to };
+  const keep: PageSearch = { app: report.app, range: search.range, from: search.from, to: search.to };
+  const now = Date.parse(report.generatedAt);
   const shown = search.level ? tiles.filter((t) => t.level === search.level) : tiles;
   const problems = shown.filter((t) => t.level !== "healthy");
   const healthy = shown.filter((t) => t.level === "healthy");
@@ -86,7 +81,7 @@ function HealthWall() {
         <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Problems, worst first">
           {problems.map((t) => (
             <li key={`${t.kind}${t.key}`} className={t.level === "critical" ? "sm:col-span-2" : ""}>
-              <Box tile={t} keep={keep} />
+              <Box tile={t} keep={keep} now={now} />
             </li>
           ))}
         </ul>
@@ -98,7 +93,7 @@ function HealthWall() {
           <ul className="grid gap-2 sm:grid-cols-3 lg:grid-cols-5">
             {healthy.map((t) => (
               <li key={`${t.kind}${t.key}`}>
-                <Box tile={t} keep={keep} />
+                <Box tile={t} keep={keep} now={now} />
               </li>
             ))}
           </ul>
@@ -115,34 +110,27 @@ function HealthWall() {
   );
 }
 
-type Keep = { app: string; range?: string; from?: string; to?: string };
-
-function Box({ tile, keep }: { tile: HealthTileData; keep: Keep }) {
+/** A box on the wall, linked one level down. */
+function Box({ tile, keep, now }: { tile: HealthTileData; keep: PageSearch; now: number }) {
   // The app's own code opens its worst crash or code error; a service opens its page.
   const link =
     tile.kind === "app"
       ? tile.fingerprint
         ? { to: "/issues/$fingerprint" as const, params: { fingerprint: tile.fingerprint }, search: keep }
         : { to: "/issues" as const, search: keep }
-      : { to: "/services/$service" as const, params: { service: tile.key || "unnamed" }, search: keep };
-  return <HealthBox level={tile.level} name={tile.name} headline={tile.headline} measure={tile.measure} live={tile.live} lastFailure={tile.lastFailure} link={link} big={tile.level === "critical"} />;
+      : { to: "/services/$service" as const, params: { service: tile.key }, search: keep };
+  return <HealthBox level={tile.level} name={tile.name} headline={tile.headline} measure={tile.measure} live={tile.live} lastFailure={tile.lastFailure} link={link} big={tile.level === "critical"} now={now} />;
 }
 
-const CHIP_TONE: Record<HealthLevel, string> = {
-  critical: "border-level-critical-edge bg-level-critical-bg text-level-critical-fg",
-  high: "border-level-high-edge bg-level-high-bg text-level-high-fg",
-  medium: "border-level-medium-edge bg-level-medium-bg text-level-medium-fg",
-  low: "border-level-low-edge bg-level-low-bg text-level-low-fg",
-  healthy: "border-level-healthy-edge bg-level-healthy-bg text-level-healthy-fg",
-};
-
+/** A level and how many boxes are at it. Click to show only that level, again to show all. None at that level: not clickable. */
 function LevelChip({ level, count, on }: { level: HealthLevel; count: number; on: boolean }) {
+  if (!count) return <span className="tabular rounded-full border border-line px-3 py-1 text-sm text-muted">0 {levelName(level)}</span>;
   return (
     <Link
       to="/"
       search={(s) => ({ ...s, level: on ? undefined : level })}
-      aria-pressed={on}
-      className={`tabular rounded-full border px-3 py-1 text-sm font-semibold hover:brightness-110 ${count ? CHIP_TONE[level] : "border-line text-muted"} ${on ? "ring-2 ring-accent ring-offset-2 ring-offset-bg" : ""}`}
+      aria-current={on ? "true" : undefined}
+      className={`tabular rounded-full border px-3 py-1 text-sm font-semibold hover:brightness-110 ${toneClass(level, "surface")} ${on ? "ring-2 ring-accent ring-offset-2 ring-offset-bg" : ""}`}
     >
       {count} {levelName(level)}
     </Link>

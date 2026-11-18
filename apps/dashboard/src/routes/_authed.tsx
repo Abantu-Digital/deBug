@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { createFileRoute, Link, Outlet, redirect, useRouter } from "@tanstack/react-router";
 import { Logo } from "~/components/ui";
+import type { PageSearch } from "~/components/range-picker";
 import { VersionBanner } from "~/components/version-banner";
 import { getSessionUser, logout } from "~/server/fns";
 
@@ -13,12 +14,13 @@ export const Route = createFileRoute("/_authed")({
   component: Layout,
 });
 
-/** A main-menu link. The page you're on is filled in and underlined, so it's clear where you are. */
+/** A main-menu link. The page you're on is filled in and underlined, so it's clear where you are. Keeps the app and period. */
 function NavLink({ to, exact, children }: { to: "/" | "/issues" | "/endpoints" | "/customers" | "/settings" | "/team"; exact?: boolean; children: ReactNode }) {
   return (
     <Link
       to={to}
-      search={{}}
+      // Keep the app and period; drop page-specific filters.
+      search={(s: PageSearch) => ({ app: s.app, range: s.range, from: s.from, to: s.to })}
       className="rounded-md border-b-2 border-transparent px-2.5 py-1.5 text-muted hover:bg-panel-2 hover:text-ink"
       activeProps={{ className: "!border-accent bg-panel-2 font-semibold !text-ink", "aria-current": "page" }}
       activeOptions={{ exact: !!exact, includeSearch: false }}

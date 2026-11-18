@@ -7,7 +7,12 @@ import { CopyButton } from "~/components/copy-button";
 import { getIssueDetail, updateIssueStatus } from "~/server/fns";
 
 export const Route = createFileRoute("/_authed/issues/$fingerprint")({
-  validateSearch: (s: Record<string, unknown>): { app: string } & RangeSearch => ({ app: typeof s.app === "string" ? s.app : "", ...rangeSearch(s) }),
+  // `service`: the service page this was opened from, for the breadcrumb back to it.
+  validateSearch: (s: Record<string, unknown>): { app: string; service?: string } & RangeSearch => ({
+    app: typeof s.app === "string" ? s.app : "",
+    service: typeof s.service === "string" ? s.service.slice(0, 200) : undefined,
+    ...rangeSearch(s),
+  }),
   loaderDeps: ({ search }) => ({ app: search.app, range: search.range, from: search.from, to: search.to }),
   loader: async ({ params, deps }) => {
     const d = await getIssueDetail({ data: { ...deps, fingerprint: params.fingerprint } });
@@ -32,7 +37,13 @@ function IssuePage() {
         <nav aria-label="Breadcrumb" className="text-sm text-muted">
           <Link to="/" search={{ app: d.app, range: search.range, from: search.from, to: search.to }} className="hover:text-ink hover:underline">Health</Link>
           <span aria-hidden> › </span>
-          <Link to="/issues" search={{ app: d.app, range: search.range, from: search.from, to: search.to }} className="hover:text-ink hover:underline">Issues</Link>
+          {search.service ? (
+            <Link to="/services/$service" params={{ service: search.service }} search={{ app: d.app, range: search.range, from: search.from, to: search.to }} className="hover:text-ink hover:underline">
+              {search.service}
+            </Link>
+          ) : (
+            <Link to="/issues" search={{ app: d.app, range: search.range, from: search.from, to: search.to }} className="hover:text-ink hover:underline">Issues</Link>
+          )}
         </nav>
         <RangePicker key={`${range.preset}${range.from}${range.to}`} value={range} today={new Date().toISOString().slice(0, 10)} onChange={(r) => navigate({ search: (s) => ({ ...s, ...r }) })} />
       </div>

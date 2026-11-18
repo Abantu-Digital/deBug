@@ -39,6 +39,7 @@ export function appTile(issues: readonly IssueRow[], now: number): HealthTileDat
   };
 }
 
+/** The health wall: every service's box and the app code's box, worst first, with the counts and the client answer. */
 export function buildHealth(endpoints: EndpointsReport, summary: Summary, now = Date.now()): HealthReport {
   const tiles = [...endpoints.services.map((s) => serviceTile(s, endpoints.endpoints, now)), appTile(summary.issues, now)].sort(byHealth);
   const counts: Record<HealthLevel, number> = { critical: 0, high: 0, medium: 0, low: 0, healthy: 0 };

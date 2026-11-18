@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { CATEGORY_INFO, IMPACT_INFO, OWNER_INFO, SEVERITY_INFO, type Classification, type Impact, type Severity } from "@debugkit/schema";
+import type { HealthLevel } from "~/lib/health";
 
 export function Logo() {
   return (
@@ -15,7 +16,7 @@ export function Logo() {
 
 /* ---------- Issue levels (ABA-139): words always, colour too; green only for healthy services and journeys */
 
-type Tone = Severity | "healthy";
+type Tone = HealthLevel;
 
 /** Full class names (not built from parts) so Tailwind keeps them. */
 const TONE: Record<Tone, { surface: string; edge: string; text: string }> = {
@@ -25,6 +26,9 @@ const TONE: Record<Tone, { surface: string; edge: string; text: string }> = {
   low: { surface: "bg-level-low-bg text-level-low-fg border-level-low-edge", edge: "border-level-low-edge", text: "text-level-low-fg" },
   healthy: { surface: "bg-level-healthy-bg text-level-healthy-fg border-level-healthy-edge", edge: "border-level-healthy-edge", text: "text-level-healthy-fg" },
 };
+
+/** A level's classes: `surface` fills a box (background, text, edge), `edge` and `text` colour one part. */
+export const toneClass = (level: Tone, part: "surface" | "edge" | "text"): string => TONE[level][part];
 
 /** An issue's level, in words and colour. */
 export function LevelBadge({ level }: { level: Severity }) {
@@ -72,10 +76,10 @@ export const levelName = (level: Tone): string => (level === "healthy" ? "Health
 
 /**
  * A box on the health wall: the whole box in its level's colour, so the wall reads at a glance.
- * The whole box is a link one level down, and looks it (arrow, lift on hover, focus ring). One
- * still happening pulses and says so.
+ * The whole box is a link one level down, and looks it (arrow, lift on hover, focus ring). A
+ * critical one still failing in the last hour pulses; any still failing says so.
  */
-export function HealthBox({ level, name, headline, measure, live, lastFailure, link, big }: {
+export function HealthBox({ level, name, headline, measure, live, lastFailure, link, big, now }: {
   level: Tone;
   name: string;
   headline?: string;
@@ -84,13 +88,15 @@ export function HealthBox({ level, name, headline, measure, live, lastFailure, l
   lastFailure?: string;
   link: LinkProps;
   big?: boolean;
+  /** The time the page's data was read, so the server and the browser print the same "last …". */
+  now: number;
 }) {
   return (
     <Link
       {...link}
       style={{ "--alarm": `var(--level-${level}-edge)` } as CSSProperties}
       aria-label={`${name}: ${levelName(level)}. ${headline ? `${headline}. ` : ""}${measure}.${live ? " Still happening." : ""}`}
-      className={`group relative flex h-full flex-col gap-1.5 rounded-xl border-2 p-4 pr-10 transition hover:-translate-y-0.5 hover:shadow-lg hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${TONE[level].surface} ${live && (level === "critical" || level === "high") ? "level-alarm" : ""}`}
+      className={`group relative flex h-full flex-col gap-1.5 rounded-xl border-2 p-4 pr-10 transition hover:-translate-y-0.5 hover:shadow-lg hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${TONE[level].surface} ${live && level === "critical" ? "level-alarm" : ""}`}
     >
       <span className="flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-wide">
         {levelName(level)}
@@ -108,7 +114,7 @@ export function HealthBox({ level, name, headline, measure, live, lastFailure, l
       {headline && <span className={`break-words font-mono ${big ? "text-sm" : "line-clamp-2 text-xs"}`}>{headline}</span>}
       <span className="tabular mt-auto pt-1 text-xs opacity-90">
         {measure}
-        {lastFailure && level !== "healthy" ? ` · last ${timeAgo(lastFailure)}` : ""}
+        {lastFailure && level !== "healthy" ? ` · last ${timeAgo(lastFailure, now)}` : ""}
       </span>
       <span aria-hidden className="absolute right-3 top-1/2 -translate-y-1/2 text-xl opacity-60 transition group-hover:translate-x-0.5 group-hover:opacity-100">→</span>
     </Link>

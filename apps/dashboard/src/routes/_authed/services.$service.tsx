@@ -1,11 +1,12 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { RangePicker, rangeSearch, RetentionNote, type RangeSearch } from "~/components/range-picker";
-import { LevelRow, levelName, timeAgo } from "~/components/ui";
+import { EmptyState } from "~/components/empty-state";
+import { RangePicker, rangeSearch, RetentionNote, type PageSearch } from "~/components/range-picker";
+import { LevelRow, levelName, timeAgo, toneClass } from "~/components/ui";
+import { endpointsOf, failing, HEALTH_ORDER, pct, plural, serviceLevel, servicesOf, serviceTile } from "~/lib/health";
 import type { EndpointHealth } from "~/server/endpoints";
 import { getEndpoints } from "~/server/fns";
-import { HEALTH_ORDER, serviceKey, serviceLevel, servicesOf, serviceTile, shortPath } from "~/lib/health";
 
-type Search = { app?: string } & RangeSearch;
+type Search = PageSearch;
 
 export const Route = createFileRoute("/_authed/services/$service")({
   validateSearch: (s: Record<string, unknown>): Search => ({ app: typeof s.app === "string" ? s.app : undefined, ...rangeSearch(s) }),
@@ -13,9 +14,6 @@ export const Route = createFileRoute("/_authed/services/$service")({
   loader: ({ deps }) => getEndpoints({ data: deps }),
   component: ServicePage,
 });
-
-/** "unnamed" in the address is the endpoints nobody named a service for. */
-const keyOf = (param: string) => serviceKey(param === "unnamed" ? undefined : param);
 
 /**
  * One service, one level down from the health wall: its endpoints worst first, each with what
@@ -26,18 +24,19 @@ function ServicePage() {
   const { service } = Route.useParams();
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
-  if (!report) return <main className="mx-auto max-w-3xl px-4 py-10 sm:px-6"><h1 className="text-xl font-semibold">No apps have sent events yet</h1></main>;
+  if (!report) return <EmptyState />;
 
   const { range } = report;
-  const keep = { app: report.app, range: search.range, from: search.from, to: search.to };
-  const endpoints = report.endpoints.filter((e) => serviceKey(e.service) === keyOf(service));
-  const summary = servicesOf(endpoints)[0];
+  const keep: PageSearch = { app: report.app, range: search.range, from: search.from, to: search.to };
+  const endpoints = endpointsOf(service, report.endpoints);
+  const grouped = servicesOf(endpoints)[0];
+  const summary = grouped && { ...grouped, key: service };
   const now = Date.parse(report.generatedAt);
   const tile = summary && serviceTile(summary, endpoints, now);
   const rows = endpoints
     .map((e) => ({ e, level: serviceLevel({ calls: e.calls ?? 0, failedCalls: e.failedCalls ?? 0, failures: e.failures }) }))
-    .sort((a, b) => HEALTH_ORDER[b.level] - HEALTH_ORDER[a.level] || Math.max(b.e.failedCalls ?? 0, b.e.failures) - Math.max(a.e.failedCalls ?? 0, a.e.failures));
-  const failing = rows.filter((r) => r.level !== "healthy");
+    .sort((a, b) => HEALTH_ORDER[b.level] - HEALTH_ORDER[a.level] || failing(b.e) - failing(a.e));
+  const broken = rows.filter((r) => r.level !== "healthy");
   const healthy = rows.filter((r) => r.level === "healthy");
 
   return (
@@ -58,22 +57,22 @@ function ServicePage() {
         <>
           <header>
             <p className="text-xs font-bold uppercase tracking-wide">
-              <span className={TEXT[tile.level]}>{levelName(tile.level)}</span>
-              {tile.live && <span className={`ml-2 normal-case ${TEXT[tile.level]}`}>· Still happening</span>}
+              <span className={toneClass(tile.level, "text")}>{levelName(tile.level)}</span>
+              {tile.live && <span className={`ml-2 normal-case ${toneClass(tile.level, "text")}`}>· Still happening</span>}
             </p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight">{tile.name}</h1>
             <p className="mt-1 text-sm text-muted">
               {tile.measure} in {range.label}
-              {tile.lastFailure ? `, the last ${timeAgo(tile.lastFailure, now)}` : ""}. {endpoints.length} endpoint{endpoints.length === 1 ? "" : "s"}, worst first.
+              {tile.lastFailure ? `, the last ${timeAgo(tile.lastFailure, now)}` : ""}. {plural(endpoints.length, "endpoint")}, worst first.
             </p>
           </header>
 
-          {failing.length > 0 ? (
+          {broken.length > 0 ? (
             <ol className="space-y-3" aria-label="Failing endpoints, worst first">
-              {failing.map(({ e, level }) => (
+              {broken.map(({ e, level }) => (
                 <li key={e.endpoint}>
-                  <LevelRow level={level} aside={e.failureRate !== null ? `${pct(e.failureRate)} failed` : `${e.failures} failures`}>
-                    <EndpointProblems row={e} keep={keep} now={now} />
+                  <LevelRow level={level} aside={e.failureRate !== null ? `${pct(e.failureRate)} failed` : plural(e.failures, "failure")}>
+                    <EndpointProblems row={e} keep={keep} now={now} service={service} />
                   </LevelRow>
                 </li>
               ))}
@@ -101,16 +100,8 @@ function ServicePage() {
   );
 }
 
-const TEXT: Record<string, string> = {
-  critical: "text-level-critical-fg",
-  high: "text-level-high-fg",
-  medium: "text-level-medium-fg",
-  low: "text-level-low-fg",
-  healthy: "text-level-healthy-fg",
-};
-
 /** One failing endpoint: what the server said, how often, and the issues behind it. */
-function EndpointProblems({ row, keep, now }: { row: EndpointHealth; keep: { app: string; range?: string; from?: string; to?: string }; now: number }) {
+function EndpointProblems({ row, keep, now, service }: { row: EndpointHealth; keep: PageSearch; now: number; service: string }) {
   const said = [...row.statuses.slice(0, 3).map((s) => `${s.key} ×${s.count}`)];
   const code = row.backendCodes[0];
   const message = row.backendMessages[0];
@@ -121,7 +112,7 @@ function EndpointProblems({ row, keep, now }: { row: EndpointHealth; keep: { app
           {row.method} {row.path}
         </h2>
         <span className="tabular text-xs text-muted">
-          {row.calls !== null ? `${(row.failedCalls ?? 0).toLocaleString()} of ${row.calls.toLocaleString()} calls failed` : `${row.failures} stored failures`}
+          {row.calls !== null ? `${(row.failedCalls ?? 0).toLocaleString()} of ${plural(row.calls, "call")} failed` : plural(row.failures, "stored failure")}
           {row.lastFailure ? ` · last ${timeAgo(row.lastFailure, now)}` : ""}
         </span>
       </div>
@@ -138,13 +129,13 @@ function EndpointProblems({ row, keep, now }: { row: EndpointHealth; keep: { app
         </p>
       )}
       {row.problems.length > 0 && (
-        <ul className="space-y-1.5" aria-label={`What's causing it on ${shortPath(row.path)}`}>
+        <ul className="space-y-1.5" aria-label={`What's causing it on ${row.method ?? ""} ${row.path ?? row.endpoint}`}>
           {row.problems.map((p) => (
             <li key={p.fingerprint}>
               <Link
                 to="/issues/$fingerprint"
                 params={{ fingerprint: p.fingerprint }}
-                search={keep}
+                search={{ ...keep, app: keep.app ?? "", service }}
                 className="group flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm hover:border-accent focus-visible:outline-2 focus-visible:outline-accent"
               >
                 <span className="min-w-0 break-words">
@@ -165,5 +156,3 @@ function EndpointProblems({ row, keep, now }: { row: EndpointHealth; keep: { app
     </div>
   );
 }
-
-const pct = (r: number) => (r > 0 && r < 0.01 ? "<1%" : `${Math.round(r * 100)}%`);
