@@ -1,6 +1,6 @@
 import type { ReadStore } from "@debugkit/adapters";
 import { isRequestCategory } from "@debugkit/ingest";
-import { hostNameFor, nameUrlsIn, type HostName, type Issue, type StoredEvent } from "@debugkit/schema";
+import { hostNameFor, nameUrlsIn, type HostName, type Issue, type IssueStatus, type StoredEvent } from "@debugkit/schema";
 import { apiCallOf, EVENT_LOOKBACK, failedRequest, timelineOf, type ApiCall } from "./event";
 import { endpointTimings, retentionFor, type EndpointTiming, type Retention } from "./queries";
 import { resolveRange, type DateRange } from "./range";
@@ -54,6 +54,9 @@ export interface EndpointProblem {
   /** Platforms and app versions they were on, most first. */
   platforms: string[];
   versions: string[];
+  /** The issue's status: resolved and ignored ones are listed apart. */
+  issueStatus: IssueStatus;
+  resolvedIn?: string;
 }
 
 /** Endpoints added up per backend service. */
@@ -224,7 +227,7 @@ export async function buildEndpoints(
   const named = events.flatMap((e) => (e.event.type === "error" ? (e.event.breadcrumbs ?? []) : [])).map((b) => apiCallOf(b, hosts)).filter((c): c is ApiCall => !!c?.service && !!c.path);
   const serviceFor = (endpoint: string) => named.find((c) => sameCall(endpoint, c.method, c.path!));
 
-  const titles = new Map(issues.map((i) => [i.fingerprint, nameUrlsIn(i.title, hosts)]));
+  const byFingerprint = new Map(issues.map((i) => [i.fingerprint, { ...i, title: nameUrlsIn(i.title, hosts) }]));
   const rowFor = (endpoint: string): EndpointHealth => {
     const fs = byEndpoint.get(endpoint) ?? [];
     const t = timings.get(endpoint);
@@ -248,7 +251,7 @@ export async function buildEndpoints(
       statuses: counts(fs.map(statusOf)),
       backendCodes: counts(fs.map((f) => f.call?.backendCode)),
       backendMessages: counts(fs.map((f) => f.call?.backendTitle)),
-      problems: problemsOf(fs, titles),
+      problems: problemsOf(fs, byFingerprint),
       lastFailure: fs.map((f) => f.e.event.ts).sort().pop(),
     };
   };
@@ -294,13 +297,15 @@ export async function buildEndpoints(
 }
 
 /** An endpoint's failures grouped by issue, most first. */
-function problemsOf(fs: readonly Failure[], titles: ReadonlyMap<string, string>): EndpointProblem[] {
+function problemsOf(fs: readonly Failure[], issues: ReadonlyMap<string, Pick<Issue, "title" | "status" | "resolvedIn">>): EndpointProblem[] {
   const by = new Map<string, Failure[]>();
   for (const f of fs) if (f.e.fingerprint) by.set(f.e.fingerprint, [...(by.get(f.e.fingerprint) ?? []), f]);
   return [...by.entries()]
     .map(([fingerprint, list]) => ({
       fingerprint,
-      title: titles.get(fingerprint) ?? list[0]!.e.fingerprint!,
+      title: issues.get(fingerprint)?.title ?? fingerprint,
+      issueStatus: issues.get(fingerprint)?.status ?? "open",
+      resolvedIn: issues.get(fingerprint)?.resolvedIn,
       count: list.length,
       status: counts(list.map(statusOf))[0]?.key ?? "no answer",
       lastSeen: list.map((f) => f.e.event.ts).sort().pop()!,

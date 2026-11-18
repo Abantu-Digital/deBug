@@ -102,8 +102,7 @@ function HealthWall() {
 
       {!shown.length && <p className="text-sm text-muted">Nothing at this level in {range.label}.</p>}
 
-      <p className="flex flex-wrap gap-4 text-sm">
-        <Link to="/issues" search={keep} className="text-accent hover:underline">Every issue, worst first →</Link>
+      <p className="text-sm">
         <Link to="/endpoints" search={keep} className="text-accent hover:underline">Every endpoint, with timings →</Link>
       </p>
     </main>
@@ -112,13 +111,7 @@ function HealthWall() {
 
 /** A box on the wall, linked one level down. */
 function Box({ tile, keep, now }: { tile: HealthTileData; keep: PageSearch; now: number }) {
-  // The app's own code opens its worst crash or code error; a service opens its page.
-  const link =
-    tile.kind === "app"
-      ? tile.fingerprint
-        ? { to: "/issues/$fingerprint" as const, params: { fingerprint: tile.fingerprint }, search: keep }
-        : { to: "/issues" as const, search: keep }
-      : { to: "/services/$service" as const, params: { service: tile.key }, search: keep };
+  const link = tile.kind === "app" ? { to: "/app-code" as const, search: keep } : { to: "/services/$service" as const, params: { service: tile.key }, search: keep };
   return <HealthBox level={tile.level} name={tile.name} headline={tile.headline} measure={tile.measure} live={tile.live} lastFailure={tile.lastFailure} link={link} big={tile.level === "critical"} now={now} />;
 }
 

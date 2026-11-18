@@ -31,6 +31,9 @@ export const SERVICE_LEVELS = {
 /** Failing within this long ago counts as still happening. */
 export const LIVE_MS = 60 * 60 * 1000;
 
+/** How an issue page knows it was opened from the App code page (its `via`). */
+export const APP_CODE = "app-code";
+
 /** The address part for endpoints nobody named a service for. */
 export const UNNAMED = "-";
 
@@ -133,8 +136,6 @@ export interface HealthTileData {
   lastFailure?: string;
   /** For ranking within a level: failed calls, or open occurrences for the app box. */
   weight: number;
-  /** The app box opens its worst open issue until the issue list can filter to app code (ABA-142). */
-  fingerprint?: string;
 }
 
 /** A service's box: its level, what's wrong, and how much. */

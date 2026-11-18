@@ -171,13 +171,12 @@ deBug hosts nothing.
      can be copied for a client. A service's level comes from the share of its
      calls that failed and from how many failed (`SERVICE_LEVELS`).
   2. **Service** (`/services/:service`): its endpoints worst first, each with what
-     the server said, how often, and the issues behind it, each one click from the
-     issue page.
-  3. **Issues** (`/issues`): a plain-language narrative, KPI tiles (including
-     crash-free sessions), errors by flow (coloured by severity, click to filter),
-     a 14-day trend, release health (crash-free and error-free rates per version),
-     failing endpoints, issues ranked by severity, and OS, app version, and device
-     breakdowns.
+     the server said, how often, and the open issues behind it, each one click from
+     the issue page. Resolved and ignored issues are folded away at the bottom.
+  3. **App code** (`/app-code`): the app's own crashes and code errors, worst
+     first, the same way. There's no separate issue list: issues are reached by
+     drilling down (`/issues` goes to Health). Charts, breakdowns and release health
+     stay in `GET /api/summary` until a Releases page.
   4. **Issue:** severity, the culprit frame, 48h hourly occurrences, where it
      happens (OS, version, device, network), the stack trace with in-app frames
      highlighted, breadcrumbs leading to the error, recent occurrences, and

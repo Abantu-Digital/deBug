@@ -5,23 +5,12 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import { SEVERITY_INFO, type Severity } from "@debugkit/schema";
-
-/** The issue-level palette (ABA-139), so bars match the badges. */
-const SEV_COLOR: Record<Severity, string> = {
-  critical: "var(--level-critical-edge)",
-  high: "var(--level-high-edge)",
-  medium: "var(--level-medium-edge)",
-  low: "var(--level-low-edge)",
-};
-
 const axis = { stroke: "var(--muted)", fontSize: 11, tickLine: false, axisLine: false } as const;
 const tooltipStyle = {
   contentStyle: { background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12, color: "var(--text)" },
@@ -73,33 +62,6 @@ export function TrendChart({ data, markers = [] }: { data: { day: string; errors
             />
           ))}
         </AreaChart>
-      </ResponsiveContainer>
-    </ClientOnly>
-  );
-}
-
-export function FlowChart({
-  data,
-  onSelect,
-}: {
-  data: { flow: string; errors24h: number; severity: Severity }[];
-  onSelect?: (flow: string) => void;
-}) {
-  const rows = data.slice(0, 8);
-  const height = Math.max(120, rows.length * 34 + 24);
-  return (
-    <ClientOnly height={height}>
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={rows} layout="vertical" margin={{ top: 0, right: 16, bottom: 0, left: 0 }} accessibilityLayer>
-          <CartesianGrid horizontal={false} stroke="var(--chart-grid)" />
-          <XAxis type="number" allowDecimals={false} {...axis} />
-          <YAxis type="category" dataKey="flow" width={130} {...axis} tick={{ fill: "var(--text)", fontSize: 12 }} />
-          <Tooltip {...tooltipStyle} formatter={(v, _name, item: { payload?: { severity?: Severity } }) => [`${v} · ${item.payload?.severity ? SEVERITY_INFO[item.payload.severity].name : ""}`, "Errors (24h)"]} />
-          <Bar dataKey="errors24h" name="Errors (24h)" radius={[0, 4, 4, 0]} barSize={18} cursor={onSelect ? "pointer" : undefined}
-            onClick={(d: { payload?: { flow?: string } }) => d.payload?.flow && onSelect?.(d.payload.flow)}>
-            {rows.map((r) => <Cell key={r.flow} fill={SEV_COLOR[r.severity]} />)}
-          </Bar>
-        </BarChart>
       </ResponsiveContainer>
     </ClientOnly>
   );

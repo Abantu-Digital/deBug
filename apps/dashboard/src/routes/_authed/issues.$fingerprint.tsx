@@ -1,16 +1,17 @@
 import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { HourlyChart, TrendChart } from "~/components/charts";
-import { RangePicker, rangeSearch, RetentionNote, type RangeSearch } from "~/components/range-picker";
+import { RangePicker, rangeSearch, RetentionNote, type PageSearch, type RangeSearch } from "~/components/range-picker";
+import { APP_CODE } from "~/lib/health";
 import { Card, DataTable, IssueLabels, LevelBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
 import { CopyButton } from "~/components/copy-button";
 import { getIssueDetail, updateIssueStatus } from "~/server/fns";
 
 export const Route = createFileRoute("/_authed/issues/$fingerprint")({
-  // `service`: the service page this was opened from, for the breadcrumb back to it.
-  validateSearch: (s: Record<string, unknown>): { app: string; service?: string } & RangeSearch => ({
+  // `via`: the page this was opened from (a service's key, or APP_CODE), for the breadcrumb back to it.
+  validateSearch: (s: Record<string, unknown>): { app: string; via?: string } & RangeSearch => ({
     app: typeof s.app === "string" ? s.app : "",
-    service: typeof s.service === "string" ? s.service.slice(0, 200) : undefined,
+    via: typeof s.via === "string" ? s.via.slice(0, 200) : undefined,
     ...rangeSearch(s),
   }),
   loaderDeps: ({ search }) => ({ app: search.app, range: search.range, from: search.from, to: search.to }),
@@ -30,20 +31,21 @@ function IssuePage() {
   const navigate = Route.useNavigate();
   const search = Route.useSearch();
   const { range } = d;
+  const keep: PageSearch = { app: d.app, range: search.range, from: search.from, to: search.to };
 
   return (
     <main className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <nav aria-label="Breadcrumb" className="text-sm text-muted">
-          <Link to="/" search={{ app: d.app, range: search.range, from: search.from, to: search.to }} className="hover:text-ink hover:underline">Health</Link>
-          <span aria-hidden> › </span>
-          {search.service ? (
-            <Link to="/services/$service" params={{ service: search.service }} search={{ app: d.app, range: search.range, from: search.from, to: search.to }} className="hover:text-ink hover:underline">
-              {search.service}
+          <Link to="/" search={keep} className="hover:text-ink hover:underline">Health</Link>
+          {search.via && <span aria-hidden> › </span>}
+          {search.via === APP_CODE ? (
+            <Link to="/app-code" search={keep} className="hover:text-ink hover:underline">App code</Link>
+          ) : search.via ? (
+            <Link to="/services/$service" params={{ service: search.via }} search={keep} className="hover:text-ink hover:underline">
+              {search.via}
             </Link>
-          ) : (
-            <Link to="/issues" search={{ app: d.app, range: search.range, from: search.from, to: search.to }} className="hover:text-ink hover:underline">Issues</Link>
-          )}
+          ) : null}
         </nav>
         <RangePicker key={`${range.preset}${range.from}${range.to}`} value={range} today={new Date().toISOString().slice(0, 10)} onChange={(r) => navigate({ search: (s) => ({ ...s, ...r }) })} />
       </div>
@@ -60,10 +62,7 @@ function IssuePage() {
         <IssueLabels issue={issue} />
         {issue.incidentTitle && (
           <p className="mt-2 text-sm text-muted">
-            Part of an incident:{" "}
-            <Link to="/issues" search={{ app: d.app }} className="font-medium text-ink hover:text-accent">
-              {issue.incidentTitle}
-            </Link>
+            Part of an incident: <span className="font-medium text-ink">{issue.incidentTitle}</span>
           </p>
         )}
       </div>

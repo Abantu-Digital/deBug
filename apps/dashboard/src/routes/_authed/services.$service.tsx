@@ -1,4 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { ClosedIssues, type ClosedIssue } from "~/components/closed-issues";
 import { EmptyState } from "~/components/empty-state";
 import { RangePicker, rangeSearch, RetentionNote, type PageSearch } from "~/components/range-picker";
 import { LevelRow, levelName, timeAgo, toneClass } from "~/components/ui";
@@ -38,6 +39,9 @@ function ServicePage() {
     .sort((a, b) => HEALTH_ORDER[b.level] - HEALTH_ORDER[a.level] || failing(b.e) - failing(a.e));
   const broken = rows.filter((r) => r.level !== "healthy");
   const healthy = rows.filter((r) => r.level === "healthy");
+  // Resolved and ignored issues behind any endpoint, once each, folded away at the bottom.
+  const closed = new Map<string, ClosedIssue>();
+  for (const e of endpoints) for (const p of e.problems) if (p.issueStatus === "resolved" || p.issueStatus === "ignored") closed.set(p.fingerprint, { ...p, status: p.issueStatus });
 
   return (
     <main className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6">
@@ -81,6 +85,8 @@ function ServicePage() {
             <p className="rounded-lg border border-level-healthy-edge bg-level-healthy-bg px-3 py-2 text-sm text-level-healthy-fg">Every call to {tile.name} worked in {range.label}.</p>
           )}
 
+          <ClosedIssues issues={[...closed.values()]} keep={keep} now={now} via={service} />
+
           {healthy.length > 0 && (
             <section aria-label="Healthy endpoints">
               <h2 className="mb-2 text-sm font-semibold text-muted">Healthy</h2>
@@ -104,6 +110,7 @@ function ServicePage() {
 function EndpointProblems({ row, keep, now, service }: { row: EndpointHealth; keep: PageSearch; now: number; service: string }) {
   const said = [...row.statuses.slice(0, 3).map((s) => `${s.key} ×${s.count}`)];
   const code = row.backendCodes[0];
+  const open = row.problems.filter((p) => p.issueStatus !== "resolved" && p.issueStatus !== "ignored");
   const message = row.backendMessages[0];
   return (
     <div className="space-y-2">
@@ -128,14 +135,14 @@ function EndpointProblems({ row, keep, now, service }: { row: EndpointHealth; ke
           )}
         </p>
       )}
-      {row.problems.length > 0 && (
+      {open.length > 0 && (
         <ul className="space-y-1.5" aria-label={`What's causing it on ${row.method ?? ""} ${row.path ?? row.endpoint}`}>
-          {row.problems.map((p) => (
+          {open.map((p) => (
             <li key={p.fingerprint}>
               <Link
                 to="/issues/$fingerprint"
                 params={{ fingerprint: p.fingerprint }}
-                search={{ ...keep, app: keep.app ?? "", service }}
+                search={{ ...keep, app: keep.app ?? "", via: service }}
                 className="group flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm hover:border-accent focus-visible:outline-2 focus-visible:outline-accent"
               >
                 <span className="min-w-0 break-words">

@@ -19,9 +19,43 @@ export interface HealthReport {
   answer: string;
 }
 
+/** An issue in the app's own code: a crash or code error, not a failed call (those belong to a service). */
+export const isAppCodeIssue = (i: IssueRow): boolean => !(i.labels && isRequestCategory(i.labels.category));
+
+/** Still open: not resolved or ignored. */
+export const isOpen = (i: Pick<IssueRow, "status">): boolean => i.status === "open" || i.status === "regressed";
+
+/** The App code page: its open issues worst first, and the resolved or ignored ones apart. */
+export interface AppCodeReport {
+  app: string;
+  apps: string[];
+  generatedAt: string;
+  range: Summary["range"];
+  retention: Summary["retention"];
+  tile: HealthTileData;
+  open: IssueRow[];
+  closed: IssueRow[];
+}
+
+/** The App code page's data, from the summary the health wall also reads. */
+export function buildAppCode(summary: Summary, now = Date.now()): AppCodeReport {
+  const mine = summary.issues.filter(isAppCodeIssue);
+  return {
+    app: summary.app,
+    apps: summary.apps,
+    generatedAt: new Date(now).toISOString(),
+    range: summary.range,
+    retention: summary.retention,
+    tile: appTile(summary.issues, now),
+    // The summary already ranks by level, then count.
+    open: mine.filter(isOpen),
+    closed: mine.filter((i) => !isOpen(i)),
+  };
+}
+
 /** The app's own code: crashes and errors that aren't a failed call. Its level is its worst open issue's. */
 export function appTile(issues: readonly IssueRow[], now: number): HealthTileData {
-  const open = issues.filter((i) => (i.status === "open" || i.status === "regressed") && !(i.labels && isRequestCategory(i.labels.category)));
+  const open = issues.filter((i) => isOpen(i) && isAppCodeIssue(i));
   const worst = [...open].sort((a, b) => SEVERITY_ORDER[b.severity] - SEVERITY_ORDER[a.severity] || b.countRange - a.countRange)[0];
   const lastSeen = open.map((i) => i.lastSeen).sort().pop();
   const occurrences = open.reduce((n, i) => n + i.countRange, 0);
@@ -35,7 +69,6 @@ export function appTile(issues: readonly IssueRow[], now: number): HealthTileDat
     live: !!lastSeen && now - Date.parse(lastSeen) < LIVE_MS,
     lastFailure: lastSeen,
     weight: occurrences,
-    fingerprint: worst?.fingerprint,
   };
 }
 

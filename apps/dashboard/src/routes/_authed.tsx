@@ -14,16 +14,23 @@ export const Route = createFileRoute("/_authed")({
   component: Layout,
 });
 
-/** A main-menu link. The page you're on is filled in and underlined, so it's clear where you are. Keeps the app and period. */
-function NavLink({ to, exact, children }: { to: "/" | "/issues" | "/endpoints" | "/customers" | "/settings" | "/team"; exact?: boolean; children: ReactNode }) {
+/** The pages under Health (drilled down from a box), so the menu keeps Health lit on them. */
+const UNDER_HEALTH = /^\/(app-code|services\/|issues\/|events\/|sessions\/)/;
+
+/**
+ * A main-menu link. The page you're on is filled in and underlined, so it's clear where you are;
+ * Health stays lit on the pages drilled down from it. Keeps the app and period.
+ */
+function NavLink({ to, exact, children }: { to: "/" | "/endpoints" | "/customers" | "/settings" | "/team"; exact?: boolean; children: ReactNode }) {
+  const path = useRouterState({ select: (s) => s.location.pathname });
+  const on = to === "/" ? path === "/" || UNDER_HEALTH.test(path) : path === to || (!exact && path.startsWith(`${to}/`));
   return (
     <Link
       to={to}
       // Keep the app and period; drop page-specific filters.
       search={(s: PageSearch) => ({ app: s.app, range: s.range, from: s.from, to: s.to })}
-      className="rounded-md border-b-2 border-transparent px-2.5 py-1.5 text-muted hover:bg-panel-2 hover:text-ink"
-      activeProps={{ className: "!border-accent bg-panel-2 font-semibold !text-ink", "aria-current": "page" }}
-      activeOptions={{ exact: !!exact, includeSearch: false }}
+      aria-current={on ? "page" : undefined}
+      className={`rounded-md border-b-2 px-2.5 py-1.5 hover:bg-panel-2 hover:text-ink ${on ? "border-accent bg-panel-2 font-semibold text-ink" : "border-transparent text-muted"}`}
     >
       {children}
     </Link>
@@ -46,7 +53,6 @@ function Layout() {
             <Link to="/" search={{}} className="shrink-0"><Logo /></Link>
             <nav className="flex flex-wrap items-center gap-1 text-sm" aria-label="Main">
               <NavLink to="/" exact>Health</NavLink>
-              <NavLink to="/issues">Issues</NavLink>
               <NavLink to="/endpoints">Endpoints</NavLink>
               <NavLink to="/customers">Customers</NavLink>
               <NavLink to="/settings">Settings</NavLink>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EndpointsReport } from "./endpoints";
-import { appTile, buildHealth } from "./health";
+import { appTile, buildAppCode, buildHealth } from "./health";
 import type { IssueRow, Summary } from "./queries";
 
 const NOW = Date.parse("2026-11-18T12:00:00Z");
@@ -20,7 +20,7 @@ describe("the app code box", () => {
       ],
       NOW,
     );
-    expect(t).toMatchObject({ kind: "app", level: "high", headline: "Error: screen crashed", fingerprint: "b", measure: "2 crash or code errors open, 4 times", live: true });
+    expect(t).toMatchObject({ kind: "app", level: "high", headline: "Error: screen crashed", measure: "2 crash or code errors open, 4 times", live: true });
   });
 
   it("is green with nothing open", () => {
@@ -47,5 +47,26 @@ describe("buildHealth", () => {
     expect(h.counts).toEqual({ critical: 1, high: 0, medium: 0, low: 0, healthy: 2 });
     expect(h.answer).toContain("1 part is failing badly in the last 14 days: balance.");
     expect(h.answer).toContain("2 of 3 parts are healthy.");
+  });
+});
+
+describe("buildAppCode", () => {
+  it("lists the app's own open issues, and keeps resolved or ignored ones apart", () => {
+    const summary = {
+      app: "cell-c",
+      apps: ["cell-c"],
+      range: { label: "the last 14 days" },
+      retention: {},
+      issues: [
+        issue({ fingerprint: "a" }),
+        issue({ fingerprint: "b", status: "resolved" }),
+        issue({ fingerprint: "c", status: "ignored" }),
+        issue({ fingerprint: "net", labels: { category: "server" } as IssueRow["labels"] }),
+      ],
+    } as unknown as Summary;
+    const r = buildAppCode(summary, NOW);
+    expect(r.open.map((i) => i.fingerprint)).toEqual(["a"]);
+    expect(r.closed.map((i) => i.fingerprint)).toEqual(["b", "c"]);
+    expect(r.tile).toMatchObject({ name: "App code", level: "medium" });
   });
 });

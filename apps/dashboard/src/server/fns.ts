@@ -6,7 +6,7 @@ import { buildEventDetail } from "./event";
 import { buildSessionDetail } from "./session";
 import { lookupCustomer } from "./customers";
 import { buildEndpoints } from "./endpoints";
-import { buildHealth } from "./health";
+import { buildAppCode, buildHealth } from "./health";
 import { buildVersionStatus } from "./versions";
 import { isMissingIndex } from "./errors";
 import { buildIssueDetail, buildSummary } from "./queries";
@@ -101,6 +101,15 @@ export const getHealth = createServerFn({ method: "GET" })
     const opts = { range: data, retentionDays: config().retentionDays };
     const [endpoints, summary] = await Promise.all([buildEndpoints(store, data.app, now, opts), buildSummary(store, data.app, config().severity, now, opts)]);
     return endpoints && summary ? buildHealth(endpoints, summary, now) : null;
+  });
+
+/** The App code page: the app's own crashes and code errors, worst first. */
+export const getAppCode = createServerFn({ method: "GET" })
+  .validator((d: { app?: string } & RangeInput) => ({ app: str(d?.app), ...rangeOf(d) }))
+  .handler(async ({ data }) => {
+    await requireUser();
+    const summary = await buildSummary(await getStore(), data.app, config().severity, Date.now(), { range: data, retentionDays: config().retentionDays });
+    return summary ? buildAppCode(summary) : null;
   });
 
 export const getEndpoints = createServerFn({ method: "GET" })
