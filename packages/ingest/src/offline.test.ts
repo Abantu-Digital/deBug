@@ -60,13 +60,13 @@ describe("offline bursts (ABA-132)", () => {
     expect(store.events.filter((e) => e.fingerprint === OFFLINE_FINGERPRINT)).toHaveLength(3);
   });
 
-  it("one never-sent failure on its own, with no burst, resume or airplane mode, stays its own issue", async () => {
+  it("folds the first failure of a burst too, though nothing failed before it", async () => {
     const store = new MemoryStore();
     await send(store, [neverSent(1, "POST", BAL)]);
     const [issue] = await store.listIssues("cell-c");
-    expect(issue!.fingerprint).not.toBe(OFFLINE_FINGERPRINT);
-    expect(issue!.lastEvent.labels?.category).toBe("network.never_sent");
-    expect(Object.keys(await rollup(store, "endpoint"))).toEqual([`POST ${BAL}`]);
+    expect(issue!.fingerprint).toBe(OFFLINE_FINGERPRINT);
+    expect(await rollup(store, "endpoint")).toEqual({});
+    expect(await rollup(store, "flow")).toEqual({});
   });
 
   it("a timeout or a server error is never folded, burst or not", async () => {
@@ -81,8 +81,8 @@ describe("offline bursts (ABA-132)", () => {
 });
 
 describe("request timings leave out calls that never left the phone (ABA-132)", () => {
-  it("counts them as unsent, not as requests or failures", async () => {
-    const sent: { events: { type: string; count?: number; errors?: number; unsent?: number }[] }[] = [];
+  it("leaves them out of the requests and failures the endpoint is charged with", async () => {
+    const sent: { events: { type: string; count?: number; errors?: number }[] }[] = [];
     const client = new DebugClient().init({
       endpoint: "x",
       ingestKey: "k",
@@ -103,6 +103,7 @@ describe("request timings leave out calls that never left the phone (ABA-132)", 
     await client.flush();
     await client.close();
     const metric = sent.flatMap((b) => b.events).find((e) => e.type === "metric");
-    expect(metric).toMatchObject({ count: 3, errors: 2, unsent: 1 });
+    expect(metric).toMatchObject({ count: 3, errors: 2 });
+    expect(metric).not.toHaveProperty("unsent");
   });
 });

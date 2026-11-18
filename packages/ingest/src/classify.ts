@@ -73,7 +73,7 @@ function category(e: ErrorEvent): Category {
   const source = e.tags?.source;
   if (r && r.status === undefined) {
     // network.offline isn't decided here: ingest folds never-sent failures that look like an
-    // offline phone into it afterwards (isOfflineBurst, ABA-132).
+    // offline phone into it afterwards (isOfflineFailure, ABA-132).
     if (TIMED_OUT.test(e.error.message)) return "network.timeout";
     if (r.durationMs !== undefined && r.durationMs < NEVER_SENT_MS) return "network.never_sent";
     return "network.failed";
@@ -92,15 +92,11 @@ function category(e: ErrorEvent): Category {
 }
 
 /**
- * A request that never left the phone while the phone was offline (ABA-132): never sent, and one
- * of several failures at once (a burst), or right after reopening with nothing working since (the
- * phone hadn't reconnected), or sent with airplane mode on (the app's network.airplaneMode tag).
- * One never-sent failure with none of these is left as it is.
+ * A request that never left the phone (ABA-132): no status, too fast to have reached a server, not
+ * a timeout. Every one counts as the phone being offline, including the first of a burst, which
+ * has no failed calls before it to show it was one.
  */
-export function isOfflineBurst(e: ErrorEvent, labels: Classification): boolean {
-  if (labels.category !== "network.never_sent") return false;
-  return labels.causes.includes("burst") || labels.causes.includes("resumed_from_background") || e.tags?.["network.airplaneMode"] === "true";
-}
+export const isOfflineFailure = (labels: Classification): boolean => labels.category === "network.never_sent";
 
 /** The last foreground/background breadcrumb before the error. */
 function lastLifecycle(crumbs: Breadcrumb[]): Breadcrumb | undefined {

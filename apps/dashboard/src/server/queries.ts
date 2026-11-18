@@ -7,7 +7,7 @@ import {
   hostNameFor,
   nameUrlsIn,
   isTestIssue,
-  OFFLINE_FINGERPRINT,
+  isOfflineIssue,
   percentileMs,
   SEVERITY_ORDER,
   severityFromCount,
@@ -24,9 +24,9 @@ import {
 } from "@debugkit/schema";
 import { explain, explanationLines, explanationMarkdown, findingLine, type Explanation } from "./explain";
 import { findingsOf, type Finding } from "./detectors";
-import { burstSummary, offlineBursts, type OfflineBurst } from "./offline";
+import { burstSummary, inRange, offlineBursts, type OfflineBurst } from "./offline";
 import { EVENT_LOOKBACK, failedRequest, timelineOf } from "./event";
-import { daysBetween, resolveRange, weekOf, type DateRange } from "./range";
+import { daysBetween, rangeBounds, resolveRange, weekOf, type DateRange } from "./range";
 
 /**
  * Distinct users, or 0 when the count can't be made (for example a Firestore index added in a
@@ -179,7 +179,8 @@ export interface Summary {
     failingFlows: number;
   };
   /** Phones going offline in the range (ABA-132), grouped into bursts; null when there were none. */
-  connectivity: { fingerprint: string; bursts: number; phones: number; failures: number; lastSeen?: string } | null;
+  /** `capped`: bursts and phones were worked out from only the newest occurrences. */
+  connectivity: { fingerprint: string; bursts: number; phones: number; failures: number; lastSeen?: string; capped: boolean } | null;
   narrative: string[];
   /** One point per hour (24h), day (up to 90 days) or week (longer), labelled by its start. */
   trend: { day: string; errors: number; events: number }[];
@@ -382,11 +383,11 @@ export async function buildSummary(
 
   const issueRange = new Map<string, number>();
   for (const r of issueDays) issueRange.set(r.key, (issueRange.get(r.key) ?? 0) + r.errors);
-  const rangeStart = hourly ? new Date(now - DAY).toISOString() : `${from}T00:00:00.000Z`;
+  const { start: rangeStart, end: rangeEnd } = rangeBounds(range, now);
   const versionsInRange = [...new Set(sessionRows.map((r) => r.key.split("|")[0]!).filter((v) => v && v !== "unknown"))].sort(compareVersions);
   const latestVersion = versionsInRange[versionsInRange.length - 1] ?? null;
   const issueRows: IssueRow[] = issues
-    .filter((i) => i.lastSeen >= rangeStart && i.firstSeen <= `${to}T23:59:59.999Z`)
+    .filter((i) => i.lastSeen >= rangeStart && i.firstSeen <= rangeEnd)
     .map((i) => toIssueRow(i, issue24h.get(i.fingerprint) ?? 0, hourly ? (issue24h.get(i.fingerprint) ?? 0) : (issueRange.get(i.fingerprint) ?? 0), thresholds, latestVersion, criticalFlows, hosts))
     .sort(bySeverityThenCount);
   // Users affected: one count per issue, so only for the issues people look at first. Test errors
@@ -397,9 +398,17 @@ export async function buildSummary(
   const lastEvents = new Map(issues.map((i) => [i.fingerprint, i.lastEvent]));
   // Offline bursts (ABA-132): one extra read, only when a phone went offline in the range.
   const offlineRow = issueRows.find((i) => i.offline);
-  const connectivity = offlineRow
-    ? { fingerprint: offlineRow.fingerprint, ...burstSummary(offlineBursts((await store.listIssueEvents(app, offlineRow.fingerprint, { limit: EVENT_LOOKBACK })).filter((e) => e.event.ts >= rangeStart), hosts)) }
-    : null;
+  let connectivity: Summary["connectivity"] = null;
+  if (offlineRow) {
+    const events = await store.listIssueEvents(app, offlineRow.fingerprint, { limit: EVENT_LOOKBACK });
+    connectivity = {
+      fingerprint: offlineRow.fingerprint,
+      ...burstSummary(offlineBursts(inRange(events, rangeStart, rangeEnd), hosts)),
+      // Exact, from the rollups; bursts and phones come from the newest EVENT_LOOKBACK occurrences.
+      failures: offlineRow.countRange,
+      capped: events.length >= EVENT_LOOKBACK,
+    };
+  }
   for (const row of issueRows)
     if (row.labels) row.explanation = explain({ issue: row, labels: row.labels, lastEvent: lastEvents.get(row.fingerprint), users: row.users, hosts, rangeLabel: range.label, now });
 
@@ -682,7 +691,9 @@ function toIssueRow(
 ): IssueRow {
   const test = isTestIssue(i);
   // A test error is never urgent, however often someone taps the button (ABA-133).
-  const base = test ? "low" : severityFromCount(count24h, t);
+  const offline = isOfflineIssue(i);
+  // Neither test errors nor the phone being offline rank by count: low, under the real problems.
+  const base = test || offline ? "low" : severityFromCount(count24h, t);
   const critical = new Set(criticalFlows);
   return {
     labels: issueLabels(i, latestVersion, criticalFlows, hosts),
@@ -705,7 +716,7 @@ function toIssueRow(
     firstSeen: i.firstSeen,
     lastSeen: i.lastSeen,
     test,
-    offline: i.fingerprint === OFFLINE_FINGERPRINT,
+    offline,
   };
 }
 
@@ -791,6 +802,8 @@ export interface IssueDetail {
   findings: Finding[];
   /** For the offline issue (ABA-132): its occurrences grouped into bursts per phone, newest first. */
   bursts?: OfflineBurst[];
+  /** The bursts were worked out from only the newest occurrences. */
+  burstsCapped?: boolean;
   /** The explanation as Markdown, for "Copy for a ticket". */
   ticketMarkdown?: string;
   /**
@@ -824,7 +837,7 @@ export async function buildIssueDetail(
   const [hourRows, dayRows, events, retention, settings] = await Promise.all([
     store.getRollups(app, "issueHour", hs[0]!, hs[hs.length - 1]!),
     store.getRollups(app, "issue", range.from, range.to),
-    store.listIssueEvents(app, fingerprint, { limit: 200 }),
+    store.listIssueEvents(app, fingerprint, { limit: EVENT_LOOKBACK }),
     retentionFor(store, app, opts.retentionDays, now),
     store.getSettings(app).catch(() => null),
   ]);
@@ -878,7 +891,7 @@ export async function buildIssueDetail(
         now,
       })
     : undefined;
-  const offline = fingerprint === OFFLINE_FINGERPRINT;
+  const offline = row.offline;
   // Trail patterns don't apply to a phone going offline: its bursts say what happened instead.
   const findings = offline ? [] : findingsOf(errorEvents.flatMap((e) => (e.event.type === "error" ? [e.event] : [])), hosts);
   const link = issueUrl(opts.trackers?.dashboardUrl, app, fingerprint);
@@ -907,7 +920,8 @@ export async function buildIssueDetail(
     })),
     hints,
     findings,
-    ...(offline ? { bursts: offlineBursts(events, hosts) } : {}),
+    // The same range the counts cover, so the bursts and the overview agree.
+    ...(offline ? { bursts: offlineBursts(inRange(events, rangeBounds(range, now).start, rangeBounds(range, now).end), hosts), burstsCapped: events.length >= EVENT_LOOKBACK } : {}),
     ticketMarkdown: row.explanation ? explanationMarkdown(row.title, row.explanation, link, findings) : undefined,
   } satisfies IssueDetail;
   detail.links = trackerLinks(detail, opts.trackers ?? {});

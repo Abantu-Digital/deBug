@@ -310,7 +310,8 @@ describe("culprit in app code", () => {
       handled: true,
       tags: { source: "network" },
       error: { name: "NetworkError", message: "POST api-b.example.com/api/balance/getBalances failed", stack: stagingRequestStack, frames },
-      request: { method: "POST", url: "api-b.example.com/api/balance/getBalances", durationMs: 16 },
+      // Slow enough to have reached a server: a 16 ms failure would never have left the phone (ABA-132).
+      request: { method: "POST", url: "api-b.example.com/api/balance/getBalances", durationMs: 1500 },
     };
     const env = { sdk: { name: "t", version: "0.7.0" }, context: { app: { id: "a" }, os: { name: "ios" }, runtime: { name: "react-native" } }, session: { id: "s", startedAt: ts }, events: [event] };
     await ingest(JSON.stringify(env), "k", { store, keys: { k: "a" }, now: () => new Date(ts) });
@@ -339,7 +340,9 @@ describe("incidents", () => {
     await ingest(JSON.stringify(env), "k", { store, keys: { k: "cell-c" }, now: () => new Date(last) });
     const s = (await buildSummary(store, "cell-c", DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last)))!;
     expect(s.incidents).toEqual([]);
-    expect(s.connectivity).toMatchObject({ fingerprint: "offline", bursts: 1, phones: 1, failures: 6 });
+    expect(s.connectivity).toMatchObject({ fingerprint: "offline", bursts: 1, phones: 1, failures: 6, capped: false });
+    // Low: a phone losing signal ranks under every real problem.
+    expect(s.issues.find((i) => i.offline)?.severity).toBe("low");
 
     // The offline issue's page lists the burst, with the calls that never left the phone.
     const d = (await buildIssueDetail(store, "cell-c", "offline", DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last)))!;
@@ -447,5 +450,81 @@ describe("host names", () => {
     const d = (await buildIssueDetail(store, "a", s.issues[0]!.fingerprint, DEFAULT_SEVERITY_THRESHOLDS, Date.parse(ts)))!;
     expect(d.issue.title).toBe(s.issues[0]!.title);
     expect(d.recent[0]!.message).toBe("POST Payments · /v1/charge responded 503");
+  });
+});
+
+describe("offline replay: the preview data from 14 to 16 Nov (ABA-132)", () => {
+  const BAL = "2qpssug3bh.execute-api.af-south-1.amazonaws.com/ppd/api";
+  const NOTIF = "3eysq9x2ub.execute-api.af-south-1.amazonaws.com/ppd/api/notifications";
+  const NOW = Date.parse("2026-11-16T08:00:00.000Z");
+  /** One phone's episode: each failure uploaded on its own, as the SDK flushes on every error. */
+  async function episode(store: MemoryStore, phone: { install: string; os: string; osVersion: string; model: string }, start: string, calls: string[], opts: { resumed?: boolean; airplane?: boolean } = {}) {
+    const t0 = Date.parse(start);
+    const crumbs = opts.resumed ? [{ ts: new Date(t0 - 400).toISOString(), category: "ui", message: "App came to the foreground" }] : [];
+    for (const [n, call] of calls.entries()) {
+      const [method, url] = call.split(" ") as [string, string];
+      const ts = new Date(t0 + n * 700).toISOString();
+      const event = {
+        type: "error",
+        id: `evt_${phone.install}_${n}`,
+        ts,
+        handled: true,
+        tags: { source: "network", ...(opts.airplane ? { "network.airplaneMode": "true" } : {}) },
+        error: { name: "NetworkError", message: `${method} ${url} failed` },
+        request: { method, url, durationMs: 25 },
+        breadcrumbs: [...crumbs],
+      };
+      crumbs.push({ ts, category: "network", message: `${method} ${url} → failed (25ms)` } as never);
+      const env = {
+        sdk: { name: "t", version: "0.9.0" },
+        context: { app: { id: "cell-c", version: "10.1.29" }, os: { name: phone.os, version: phone.osVersion }, runtime: { name: "react-native" }, device: { model: phone.model } },
+        user: { anonymousId: phone.install },
+        session: { id: `s-${phone.install}`, startedAt: start },
+        events: [event],
+      };
+      expect((await ingest(JSON.stringify(env), "k", { store, keys: { k: "cell-c" }, now: () => new Date(NOW) })).status).toBe(202);
+    }
+  }
+
+  it("reads as 3 times on 3 phones, one Low issue, nothing charged to an endpoint or owner", async () => {
+    const store = new MemoryStore();
+    await episode(store, { install: "iphone", os: "ios", osVersion: "27.3", model: "iPhone15,2" }, "2026-11-14T13:00:00.000Z", [
+      `GET ${BAL}/app/force-update`,
+      `GET ${BAL}/app/maintenance`,
+      `POST ${BAL}/balance`,
+    ], { resumed: true });
+    await episode(store, { install: "pixel", os: "android", osVersion: "17", model: "Pixel 8a" }, "2026-11-14T13:29:00.000Z", [
+      `GET ${BAL}/content/banners`,
+      `GET ${BAL}/linked-numbers`,
+      `GET ${BAL}/airtime`,
+      `POST ${BAL}/cellc/balance/getBalances`,
+    ], { airplane: true });
+    await episode(store, { install: "samsung", os: "android", osVersion: "16", model: "SM-S921B" }, "2026-11-16T07:52:00.000Z", [
+      ...Array.from({ length: 6 }, () => `GET ${NOTIF}/get-history`),
+      `POST ${BAL}/cellc/balance/getBalances`,
+      `GET ${BAL}/airtime`,
+      `POST ${BAL}/validate-misdn`,
+      `GET ${BAL}/bundles/eligibility`,
+      `GET ${BAL}/content/banners`,
+    ]);
+
+    const issues = await store.listIssues("cell-c");
+    expect(issues.map((i) => i.fingerprint)).toEqual(["offline"]);
+    const rollup = async (d: "endpoint" | "owner" | "flow") => store.getRollups("cell-c", d, "2026-11-14", "2026-11-16");
+    expect(await rollup("endpoint")).toEqual([]);
+    expect(await rollup("owner")).toEqual([]);
+
+    const s = (await buildSummary(store, "cell-c", DEFAULT_SEVERITY_THRESHOLDS, NOW, { range: { range: "7d" } }))!;
+    expect(s.connectivity).toMatchObject({ bursts: 3, phones: 3, failures: 18, capped: false });
+    expect(s.issues[0]).toMatchObject({ offline: true, severity: "low" });
+    // Nothing for the list or the active count: the phones were offline, nothing is broken.
+    expect(filterIssues(s.issues, {})).toEqual([]);
+
+    const d = (await buildIssueDetail(store, "cell-c", "offline", DEFAULT_SEVERITY_THRESHOLDS, NOW, { range: { range: "7d" } }))!;
+    expect(d.bursts!.map((b) => [b.device, b.failures, b.airplaneMode])).toEqual([
+      ["SM-S921B", 11, false],
+      ["Pixel 8a", 4, true],
+      ["iPhone15,2", 3, false],
+    ]);
   });
 });

@@ -60,3 +60,12 @@ describe("issue filters", () => {
     expect(typeof f === "object" && ids(filterIssues(issues, f))).toEqual(["crash", "server"]);
   });
 });
+
+describe("the offline issue (ABA-132)", () => {
+  const offline = { ...issue("offline", "open", { category: "network.offline", owner: "unknown", impact: "degraded" }), offline: true };
+  it("stays out of the list, but the category options offer it", () => {
+    expect(filterIssues([...issues, offline], {}).map((i) => i.id)).not.toContain("offline");
+    expect(labelCounts([...issues, offline], {}, "category").get("network.offline")).toBe(1);
+    expect(filterIssues([...issues, offline], { category: "network.offline" }).map((i) => i.id)).toEqual(["offline"]);
+  });
+});

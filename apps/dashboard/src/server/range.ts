@@ -69,6 +69,12 @@ export function resolveRange(input: { range?: string; from?: string; to?: string
 }
 
 /** Every UTC day from `from` to `to`, inclusive. */
+/** The range as ISO instants: the last 24 hours for "24h", else whole UTC days from `from` to `to`. */
+export function rangeBounds(range: DateRange, now = Date.now()): { start: string; end: string } {
+  if (range.preset === "24h") return { start: new Date(now - 86_400_000).toISOString(), end: new Date(now).toISOString() };
+  return { start: `${range.from}T00:00:00.000Z`, end: `${range.to}T23:59:59.999Z` };
+}
+
 export function daysBetween(from: string, to: string): string[] {
   const out: string[] = [];
   for (let t = Date.parse(`${from}T00:00:00Z`); t <= Date.parse(`${to}T00:00:00Z`); t += DAY) out.push(dayKey(t));

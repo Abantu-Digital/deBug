@@ -76,7 +76,8 @@ describe("explain: every category reads cleanly", () => {
     expect(x.summary).toMatch(/Pass to: .+\.$/);
     // 3 users, platforms not given: don't claim they were all on Android.
     expect(x.summary).not.toContain("Android");
-    if (request) expect(x.summary).toMatch(/^Orders /);
+    // The offline issue spans every call the phone couldn't make, so it isn't named after one.
+    if (request && category !== "network.offline") expect(x.summary).toMatch(/^Orders /);
   });
 
   it("adds a line for every cause, in the summary and the fix", () => {
@@ -142,5 +143,16 @@ describe("explain: host names from Settings", () => {
     const x = explain({ ...base, labels: classify(e, { hosts }), lastEvent: stored(e), hosts });
     expect(x.summary).toMatch(/^Balances \(Balance service\) failed with a server error\./);
     expect(x.summary).toMatch(/Pass to: backend team \(Balance service\)\.$/);
+  });
+});
+
+describe("explain: the offline issue (ABA-132)", () => {
+  it("passes it to the app team with no endpoint to blame", () => {
+    const labels: Classification = { category: "network.offline", owner: "unknown", impact: "degraded", causes: [] };
+    const event = { id: "evt-000002", ts: "2026-11-14T13:00:00Z", type: "error" as const, handled: true, error: { name: "NetworkError", message: "x" }, request: { method: "GET", url: "api.x/v1/orders/:id", durationMs: 20 } };
+    const x = explain({ ...base, labels, lastEvent: stored(event, "android"), users: 3 });
+    expect(x.summary).toMatch(/^Requests never left the phone/);
+    expect(x.summary).toContain("Pass to: app team, to handle being offline. No endpoint or server is at fault.");
+    expect(x.technical.evidence.join(" ")).not.toContain("Request:");
   });
 });

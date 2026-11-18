@@ -77,12 +77,12 @@ export function matchesStatus(i: { status: string }, status: StatusFilter = "ope
 }
 
 /** Issues matching every filter that's set. An issue without labels never matches a label filter. */
-export function filterIssues<T extends FilterableIssue>(issues: readonly T[], f: IssueFilter): T[] {
+export function filterIssues<T extends FilterableIssue>(issues: readonly T[], f: IssueFilter, keepOffline = false): T[] {
   return issues.filter(
     (i) =>
       (f.tests || !i.test) &&
       // The offline issue lives under Connectivity, unless the list is filtered to it (ABA-132).
-      (!i.offline || f.category === "network.offline") &&
+      (!i.offline || keepOffline || f.category === "network.offline") &&
       matchesStatus(i, f.status) &&
       (!f.flow || (i.flow ?? "untagged") === f.flow) &&
       LABEL_FILTER_KEYS.every((k) => !f[k] || i.labels?.[k] === f[k]),
@@ -94,7 +94,8 @@ export function filterIssues<T extends FilterableIssue>(issues: readonly T[], f:
  * option, and "whose is it" for the filtered list. Values with no issues are left out.
  */
 export function labelCounts<T extends FilterableIssue>(issues: readonly T[], f: IssueFilter, key: LabelFilterKey): Map<string, number> {
-  const rest = filterIssues(issues, { ...f, [key]: undefined });
+  // The category options include network.offline, the one way to list the offline issue.
+  const rest = filterIssues(issues, { ...f, [key]: undefined }, key === "category");
   const out = new Map<string, number>();
   for (const i of rest) {
     const v = i.labels?.[key];

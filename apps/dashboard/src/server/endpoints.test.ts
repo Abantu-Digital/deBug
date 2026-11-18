@@ -122,3 +122,11 @@ describe("endpoint health", () => {
     expect(r.endpoints).toEqual([]);
   });
 });
+
+describe("calls that never left the phone (ABA-132)", () => {
+  it("aren't charged to the endpoint", async () => {
+    const neverSent = { type: "error", id: "evt_offline_01", ts: at(400), handled: true, tags: { source: "network" }, error: { name: "NetworkError", message: "GET /v1/balances failed" }, request: { method: "GET", url: "/v1/balances", durationMs: 20 } };
+    const balances = async (extra: unknown[]) => (await buildEndpoints(await store(extra), "a", NOW, { range: { range: "7d" } }))!.endpoints.find((e) => e.endpoint === "GET /v1/balances");
+    expect(await balances([neverSent])).toEqual(await balances([]));
+  });
+});

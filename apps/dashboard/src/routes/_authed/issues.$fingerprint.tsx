@@ -74,7 +74,7 @@ function IssuePage() {
 
       {/* A phone going offline (ABA-132): each burst, per phone, with the calls that never left it. */}
       {d.bursts && d.bursts.length > 0 && (
-        <Card title="When phones went offline" subtitle="Requests that never left the phone, several at once or with airplane mode on. Not counted against any endpoint or owner.">
+        <Card title="When phones went offline" subtitle={`Requests that never left the phone, grouped per phone. Not counted against any endpoint or owner.${d.burstsCapped ? " From the newest occurrences only." : ""}`}>
           <ol className="space-y-3">
             {d.bursts.map((b) => (
               <li key={`${b.phone}${b.start}`} className="text-sm">

@@ -65,16 +65,23 @@ export const TEST_TAG = "test";
 /** Whether an error or event was made on purpose to test deBug. */
 export const isTestEvent = (e: { tags?: Record<string, string> } | undefined): boolean => e?.tags?.[TEST_TAG] === "true";
 
+/** A failure with no HTTP status faster than this never reached a server: the request never left the phone. */
+export const NEVER_SENT_MS = 100;
+
 /**
- * The one issue that collects a phone's offline bursts (ABA-132): requests that never left the
- * phone, several at once or with airplane mode on. Not a problem with any endpoint or owner, so it
- * stays out of their counts and shows under Connectivity.
+ * The one issue that collects every request that never left the phone (ABA-132). Not a problem
+ * with any endpoint or owner, so it stays out of their counts and shows under Connectivity.
  */
 export const OFFLINE_FINGERPRINT = "offline";
 
-/** A failure with no HTTP status faster than this never reached a server: the request never left the phone. */
-export const NEVER_SENT_MS = 100;
+/** The offline issue's title. */
 export const OFFLINE_TITLE = "Phone offline: requests never left the phone";
+
+/** Whether an issue is the offline one. */
+export const isOfflineIssue = (i: { fingerprint: string } | undefined): boolean => i?.fingerprint === OFFLINE_FINGERPRINT;
+
+/** Tag the React Native SDK sets on Android: "true" when airplane mode was on at the time. */
+export const AIRPLANE_TAG = "network.airplaneMode";
 
 /** Whether an issue is made of test errors: its newest occurrence carries the tag. */
 export const isTestIssue = (i: { lastEvent?: { event: { tags?: Record<string, string> } } } | undefined): boolean => isTestEvent(i?.lastEvent?.event);

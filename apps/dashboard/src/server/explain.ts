@@ -129,6 +129,9 @@ const PASS_TO: Record<string, string> = {
   unknown: "app team first, to find out whose it is",
 };
 
+/** Nobody owns the phone's signal, but the app decides what happens without it (ABA-132). */
+const OFFLINE_PASS_TO = "Pass to: app team, to handle being offline. No endpoint or server is at fault.";
+
 interface Template {
   /** What the user saw: `name` is the thing that failed ("balances"), `are` its verb. */
   saw: (name: string, are: string) => string;
@@ -141,7 +144,8 @@ interface Template {
 
 const TEMPLATES: Record<Category, Template> = {
   "network.offline": {
-    saw: (n, are) => `${cap(n)} ${are === "are" ? "weren't" : "wasn't"} available`,
+    // Not named after an endpoint: the occurrences span every call the phone couldn't make.
+    saw: () => "Requests never left the phone",
     why: () => "The phone was offline.",
     diagnosis: () => "No connection when the request was made.",
     fix: () => "Check connectivity before sending (NetInfo), queue the request until the phone is back online, and show an offline state.",
@@ -246,6 +250,7 @@ export function explain(input: ExplainInput): Explanation {
   const e = ev0?.type === "error" ? ev0 : undefined;
   const ev = e ? evidenceOf(e) : NO_EVIDENCE;
   const t = TEMPLATES[labels.category] ?? TEMPLATES.other;
+  const offline = labels.category === "network.offline";
   const causes = labels.causes;
   const model = input.lastEvent?.context.device.model;
   const service = e?.request ? hostNameFor(e.request.url, input.hosts)?.host.name : undefined;
@@ -265,13 +270,13 @@ export function explain(input: ExplainInput): Explanation {
     t.why(ev, causes),
     ...causeSentences,
     stillHappening(issue, rangeLabel, now),
-    `Pass to: ${PASS_TO[labels.owner] ?? PASS_TO.unknown}${service && (labels.owner === "backend" || labels.owner === "third_party") ? ` (${service})` : ""}.`,
+    offline ? OFFLINE_PASS_TO : `Pass to: ${PASS_TO[labels.owner] ?? PASS_TO.unknown}${service && (labels.owner === "backend" || labels.owner === "third_party") ? ` (${service})` : ""}.`,
   ].join(" ");
 
   // Technical: category and owner, evidence, where, fix.
   const took = durationText(input.durations?.length ? input.durations : ev.durationMs !== undefined ? [ev.durationMs] : []);
   const evidence = [t.diagnosis(ev, took)];
-  if (e?.request) evidence.push(`Request: \`${e.request.method.toUpperCase()} ${e.request.url}\`${service ? ` (${service})` : ""}.`);
+  if (e?.request && !offline) evidence.push(`Request: \`${e.request.method.toUpperCase()} ${e.request.url}\`${service ? ` (${service})` : ""}.`);
   if (causes.includes("resumed_from_background") && ev.msSinceForeground !== undefined)
     evidence.push(`The app came to the foreground ${seconds(ev.msSinceForeground)} before; no request has succeeded since.`);
   if (ev.failedBefore > 0) evidence.push(`${plural(ev.failedBefore, "other request")} failed in the 5 s before${ev.failedHosts.length > 1 ? `, across ${ev.failedHosts.length} hosts` : ""}.`);

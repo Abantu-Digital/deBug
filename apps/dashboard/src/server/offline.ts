@@ -1,4 +1,4 @@
-import { nameUrl, type HostName, type StoredEvent } from "@debugkit/schema";
+import { AIRPLANE_TAG, nameUrl, type HostName, type StoredEvent } from "@debugkit/schema";
 
 /**
  * A phone going offline (ABA-132): the calls that never left it, close together, read as one
@@ -17,11 +17,15 @@ export interface OfflineBurst {
   /** The calls that never left the phone, named by Settings, most first. */
   calls: { call: string; count: number }[];
   failures: number;
-  /** The phone said airplane mode was on (the app's network.airplaneMode tag). */
+  /** The phone said airplane mode was on (AIRPLANE_TAG). */
   airplaneMode: boolean;
 }
 
-/** Failures this close together on one phone are one burst. */
+/**
+ * Failures this close together on one phone are one burst. Longer than ingest's BURST_WINDOW_MS
+ * (5 s, "several at once"), on purpose: a phone that stays offline keeps failing every few
+ * seconds or minutes as the app polls, and that is still one time it went offline.
+ */
 export const BURST_GAP_MS = 60_000;
 
 export function offlineBursts(events: readonly StoredEvent[], hosts: readonly HostName[] = []): OfflineBurst[] {
@@ -54,7 +58,7 @@ export function offlineBursts(events: readonly StoredEvent[], hosts: readonly Ho
         appVersion: last.context.app.version,
         calls: [...counts].map(([call, count]) => ({ call, count })).sort((a, b) => b.count - a.count),
         failures: cur.length,
-        airplaneMode: cur.some((e) => e.event.tags?.["network.airplaneMode"] === "true"),
+        airplaneMode: cur.some((e) => e.event.tags?.[AIRPLANE_TAG] === "true"),
       });
       cur = [];
     };
@@ -67,12 +71,10 @@ export function offlineBursts(events: readonly StoredEvent[], hosts: readonly Ho
   return bursts.sort((a, b) => b.start.localeCompare(a.start));
 }
 
-/** "3 times on 2 phones · 38 calls never sent" for the Connectivity line. */
-export function burstSummary(bursts: readonly OfflineBurst[]): { bursts: number; phones: number; failures: number; lastSeen?: string } {
-  return {
-    bursts: bursts.length,
-    phones: new Set(bursts.map((b) => b.phone)).size,
-    failures: bursts.reduce((a, b) => a + b.failures, 0),
-    lastSeen: bursts[0]?.end,
-  };
+/** How many bursts on how many phones, for the Connectivity line. */
+export function burstSummary(bursts: readonly OfflineBurst[]): { bursts: number; phones: number; lastSeen?: string } {
+  return { bursts: bursts.length, phones: new Set(bursts.map((b) => b.phone)).size, lastSeen: bursts[0]?.end };
 }
+
+/** The offline issue's occurrences in a range: [start, end]. */
+export const inRange = (events: readonly StoredEvent[], start: string, end: string): StoredEvent[] => events.filter((e) => e.event.ts >= start && e.event.ts <= end);

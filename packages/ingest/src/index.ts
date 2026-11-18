@@ -1,16 +1,16 @@
 import { createHash } from "node:crypto";
-import { Envelope, isTestEvent, isTestIssue, markLibraryFrames, OFFLINE_FINGERPRINT, OFFLINE_TITLE, parseStack, releaseKey, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debugkit/schema";
+import { Envelope, isOfflineIssue, isTestEvent, isTestIssue, markLibraryFrames, OFFLINE_FINGERPRINT, OFFLINE_TITLE, parseStack, releaseKey, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debugkit/schema";
 import { compareVersions, type IssueUpsert, type UserMark, type WriteStore } from "@debugkit/adapters";
 import { cachedSettings, effectiveRetention } from "./admin";
 import { sendAlerts } from "./alerts";
 import { countryOf } from "./country";
-import { classify, isOfflineBurst } from "./classify";
+import { classify, isOfflineFailure } from "./classify";
 import { assignIncidents, incidentIssueKey, type BatchError } from "./incidents";
 import { culpritOf, fingerprint, titleOf } from "./fingerprint";
 import { INGEST_VERSION, VERSION_HEADER } from "./version";
 
 export * from "./fingerprint";
-export { BACKGROUND, classify, evidenceOf, FOREGROUND, hostOwner, isOfflineBurst, NO_EVIDENCE, issueCauses, withIssueCauses, type ClassifyOptions, type Evidence, type IssueFacts } from "./classify";
+export { BACKGROUND, classify, evidenceOf, FOREGROUND, hostOwner, isOfflineFailure, NO_EVIDENCE, issueCauses, withIssueCauses, type ClassifyOptions, type Evidence, type IssueFacts } from "./classify";
 export { incidentKey, incidentIssueKey, isRequestCategory, parseIncidentIssueKey, parseIncidentKey, type IncidentKey } from "./incidents";
 export { handleAdmin, effectiveRetention, cachedSettings, type AdminOptions } from "./admin";
 export { countryOf } from "./country";
@@ -163,7 +163,7 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
       labels = classify({ ...event, ts: raw.ts }, { criticalFlows, hosts });
       const test = isTestEvent(event);
       // A phone going offline (ABA-132): one issue for all of it, no endpoint or owner to blame.
-      offline = !test && isOfflineBurst(event, labels);
+      offline = !test && isOfflineFailure(labels);
       if (offline) {
         labels = { ...labels, category: "network.offline", owner: "unknown" };
         fp = OFFLINE_FINGERPRINT;
@@ -199,7 +199,8 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
     }
 
     inc("total", "all");
-    inc("flow", event.flow ?? "untagged");
+    // A phone going offline isn't a flow failing either.
+    if (!offline) inc("flow", event.flow ?? "untagged");
     inc("os", `${context.os.name} ${context.os.version ?? ""}`.trim());
     inc("appVersion", context.app.version);
     inc("deviceModel", context.device.model);
@@ -248,7 +249,7 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
   ]);
 
   // Test errors (ABA-133) and offline bursts (ABA-132) never alert.
-  const real = (fp: string) => fp !== OFFLINE_FINGERPRINT && !isTestIssue(issues.get(fp));
+  const real = (fp: string) => !isOfflineIssue(issues.get(fp)) && !isTestIssue(issues.get(fp));
   const alerting = outcome && { ...outcome, created: outcome.created.filter(real), regressed: outcome.regressed.filter(real) };
   if (alerting && (alerting.created.length || alerting.regressed.length)) await sendAlerts(app, alerting, issues, settings);
 
