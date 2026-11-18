@@ -4,6 +4,7 @@ import { HourlyChart, TrendChart } from "~/components/charts";
 import { RangePicker, rangeSearch, RetentionNote, type PageSearch, type RangeSearch } from "~/components/range-picker";
 import { Card, DataTable, IssueLabels, LevelBadge, ShareBars, Stat, timeAgo } from "~/components/ui";
 import { CopyButton } from "~/components/copy-button";
+import { RequestPanel } from "~/components/request-panel";
 import { getIssueDetail, updateIssueStatus } from "~/server/fns";
 
 export const Route = createFileRoute("/_authed/issues/$fingerprint")({
@@ -71,6 +72,21 @@ function IssuePage() {
         <Stat label="Users affected" value={d.affectedUsers.toLocaleString()} hint={`since ${range.preset === "24h" ? "yesterday" : range.from}`} />
         <Stat label="Top app version" value={d.breakdowns.appVersion[0]?.key ?? "—"} hint={d.breakdowns.appVersion[0] ? `${Math.round(d.breakdowns.appVersion[0].share * 100)}% of occurrences` : undefined} />
       </div>
+
+      {/* A failed call: what the app sent and what the server answered, up front (not for the offline issue: nothing was sent). */}
+      {d.call && !d.bursts && (
+        <Card
+          title="The call that failed"
+          subtitle={`What the app sent and what the server answered, ${timeAgo(d.call.ts)}.`}
+          right={
+            <Link to="/events/$eventId" params={{ eventId: d.call.eventId }} search={{ app: d.app, issue: issue.fingerprint, range: search.range, from: search.from, to: search.to }} className="whitespace-nowrap text-xs text-accent hover:underline">
+              That occurrence →
+            </Link>
+          }
+        >
+          <RequestPanel call={d.call.call} exchange={d.call.exchange} />
+        </Card>
+      )}
 
       {/* A phone going offline (ABA-132): each burst, per phone, with the calls that never left it. */}
       {d.bursts && d.bursts.length > 0 && (
