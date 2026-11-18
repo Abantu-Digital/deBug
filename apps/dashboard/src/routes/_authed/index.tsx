@@ -5,7 +5,7 @@ import { RangePicker, rangeSearch, RetentionNote, type PageSearch, type RangeSea
 import { HealthBox, levelName, toneClass } from "~/components/ui";
 import { getHealth } from "~/server/fns";
 import type { HealthReport } from "~/server/health";
-import { HEALTH_ORDER, type HealthLevel, type HealthTileData } from "~/lib/health";
+import { HEALTH_ORDER, plural, type HealthLevel, type HealthTileData } from "~/lib/health";
 
 const LEVELS = (Object.keys(HEALTH_ORDER) as HealthLevel[]).sort((a, b) => HEALTH_ORDER[b] - HEALTH_ORDER[a]);
 const isLevel = (v: unknown): v is HealthLevel => typeof v === "string" && v in HEALTH_ORDER;
@@ -133,15 +133,35 @@ function LevelChip({ level, count, on }: { level: HealthLevel; count: number; on
   );
 }
 
-/** What's kept off the wall on purpose, each linking to where it's listed and why. Nothing when there's nothing. */
+/**
+ * What's kept off the wall on purpose, each linking to where it's listed and why: phones going
+ * offline (ABA-132) and test errors (ABA-133). Nothing when there's nothing.
+ */
 function Folded({ folded, keep }: { folded: HealthReport["folded"]; keep: PageSearch }) {
-  if (!folded.tests) return null;
+  const { tests, offline } = folded;
+  if (!tests && !offline) return null;
+  const parts = [
+    offline && (
+      <Link key="offline" to="/issues/$fingerprint" params={{ fingerprint: offline.fingerprint }} search={{ ...keep, app: keep.app ?? "" }} className="text-accent hover:underline">
+        {/* Bursts and phones come from the newest occurrences when there are many; calls never sent is exact. */}
+        Offline phones: {plural(offline.bursts, "time")}{offline.capped ? " (at least)" : ""} on {plural(offline.phones, "phone")}, {plural(offline.failures, "call")} never sent →
+      </Link>
+    ),
+    tests > 0 && (
+      <Link key="tests" to="/app-code" search={{ ...keep, tests: true }} hash="test-errors" className="text-accent hover:underline">
+        Test errors: {tests} →
+      </Link>
+    ),
+  ].filter(Boolean);
   return (
     <p className="text-sm text-muted">
       <span className="font-semibold">Folded away: </span>
-      <Link to="/app-code" search={{ ...keep, tests: true }} hash="test-errors" className="text-accent hover:underline">
-        Test errors: {folded.tests} →
-      </Link>
+      {parts.map((p, i) => (
+        <span key={i}>
+          {i > 0 && " · "}
+          {p}
+        </span>
+      ))}
     </p>
   );
 }

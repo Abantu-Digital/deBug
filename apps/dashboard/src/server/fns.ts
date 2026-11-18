@@ -74,6 +74,8 @@ async function requireManager(): Promise<SessionUser> {
 
 type RangeInput = { range?: string; from?: string; to?: string };
 const str = (v: unknown) => (typeof v === "string" && v.length <= 32 ? v : undefined);
+/** An endpoint key ("GET host/path…") is far longer than an app or a date: up to the 300 the SDK keeps. */
+const endpointParam = (v: unknown) => (typeof v === "string" && v.length <= 400 ? v : undefined);
 const rangeOf = (d: RangeInput | undefined): RangeInput => ({ range: str(d?.range), from: str(d?.from), to: str(d?.to) });
 
 export const refreshData = createServerFn({ method: "POST" }).handler(async () => {
@@ -104,7 +106,7 @@ export const getAppCode = createServerFn({ method: "GET" })
   });
 
 export const getEndpoints = createServerFn({ method: "GET" })
-  .validator((d: { app?: string; endpoint?: string } & RangeInput) => ({ app: str(d?.app), endpoint: str(d?.endpoint)?.slice(0, 400), ...rangeOf(d) }))
+  .validator((d: { app?: string; endpoint?: string } & RangeInput) => ({ app: str(d?.app), endpoint: endpointParam(d?.endpoint), ...rangeOf(d) }))
   .handler(async ({ data }) => {
     await requireUser();
     return buildEndpoints(await getStore(), data.app, Date.now(), { range: data, endpoint: data.endpoint, retentionDays: config().retentionDays });

@@ -1,16 +1,16 @@
 import { createHash } from "node:crypto";
-import { Envelope, isTestEvent, isTestIssue, markLibraryFrames, parseStack, releaseKey, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debugkit/schema";
+import { Envelope, isOfflineIssue, isTestEvent, isTestIssue, markLibraryFrames, OFFLINE_FINGERPRINT, OFFLINE_TITLE, parseStack, releaseKey, type Context, type Event, type RollupIncrement, type StoredEvent } from "@debugkit/schema";
 import { compareVersions, type IssueUpsert, type UserMark, type WriteStore } from "@debugkit/adapters";
 import { cachedSettings, effectiveRetention } from "./admin";
 import { sendAlerts } from "./alerts";
 import { countryOf } from "./country";
-import { classify } from "./classify";
+import { classify, isOfflineFailure } from "./classify";
 import { assignIncidents, incidentIssueKey, type BatchError } from "./incidents";
 import { culpritOf, fingerprint, titleOf } from "./fingerprint";
 import { INGEST_VERSION, VERSION_HEADER } from "./version";
 
 export * from "./fingerprint";
-export { BACKGROUND, classify, evidenceOf, FOREGROUND, hostOwner, NO_EVIDENCE, issueCauses, withIssueCauses, type ClassifyOptions, type Evidence, type IssueFacts } from "./classify";
+export { BACKGROUND, classify, evidenceOf, FOREGROUND, hostOwner, isOfflineFailure, NO_EVIDENCE, issueCauses, withIssueCauses, type ClassifyOptions, type Evidence, type IssueFacts } from "./classify";
 export { incidentKey, incidentIssueKey, isRequestCategory, parseIncidentIssueKey, parseIncidentKey, type IncidentKey } from "./incidents";
 export { handleAdmin, effectiveRetention, cachedSettings, type AdminOptions } from "./admin";
 export { countryOf } from "./country";
@@ -156,21 +156,29 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
     let fp: string | undefined;
     let labels: StoredEvent["labels"];
     let se: StoredEvent | undefined;
+    let offline = false;
     if (event.type === "error") {
       fp = fingerprint(event);
       // The device's own clock: breadcrumbs use it too, and sanitiseTs may have replaced event.ts.
       labels = classify({ ...event, ts: raw.ts }, { criticalFlows, hosts });
+      const test = isTestEvent(event);
+      // A phone going offline (ABA-132): one issue for all of it, no endpoint or owner to blame.
+      offline = !test && isOfflineFailure(labels);
+      if (offline) {
+        labels = { ...labels, category: "network.offline", owner: "unknown" };
+        fp = OFFLINE_FINGERPRINT;
+      }
       const cur = issues.get(fp);
       se = storedEvent(day, event, fp, labels);
-      const test = isTestEvent(event);
-      // Test errors join no incident: they aren't a problem anyone has.
-      if (!test) batchErrors.push({ ts: raw.ts, labels, se, fp });
+      // Test errors and offline bursts join no incident: one isn't a problem anyone has, and the
+      // other is already one problem.
+      if (!test && !offline) batchErrors.push({ ts: raw.ts, labels, se, fp });
       issues.set(fp, {
         app,
         fingerprint: fp,
-        title: titleOf(event),
-        culprit: culpritOf(event),
-        flow: event.flow,
+        title: offline ? OFFLINE_TITLE : titleOf(event),
+        culprit: offline ? undefined : culpritOf(event),
+        flow: offline ? undefined : event.flow,
         by: (cur?.by ?? 0) + 1,
         ts: cur && cur.ts > event.ts ? cur.ts : event.ts,
         firstTs: cur && cur.firstTs < event.ts ? cur.firstTs : event.ts,
@@ -186,11 +194,13 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
         stored.push(se);
         continue;
       }
-      if (event.request) inc("endpoint", `${event.request.method.toUpperCase()} ${event.request.url}`);
+      // A call that never left the phone isn't the endpoint failing.
+      if (event.request && !offline) inc("endpoint", `${event.request.method.toUpperCase()} ${event.request.url}`);
     }
 
     inc("total", "all");
-    inc("flow", event.flow ?? "untagged");
+    // A phone going offline isn't a flow failing either.
+    if (!offline) inc("flow", event.flow ?? "untagged");
     inc("os", `${context.os.name} ${context.os.version ?? ""}`.trim());
     inc("appVersion", context.app.version);
     inc("deviceModel", context.device.model);
@@ -203,7 +213,8 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
       inc("country", countryOf(context));
       if (labels) {
         inc("category", labels.category);
-        inc("owner", labels.owner);
+        // Nobody owns the phone's signal.
+        if (!offline) inc("owner", labels.owner);
         inc("impact", labels.impact);
       }
     }
@@ -237,8 +248,8 @@ export async function ingest(rawBody: string, ingestKey: string | undefined, opt
     noteVersions(opts.store, app, env.sdk.version, receivedAt),
   ]);
 
-  // Test errors (ABA-133) never alert.
-  const real = (fp: string) => !isTestIssue(issues.get(fp));
+  // Test errors (ABA-133) and offline bursts (ABA-132) never alert.
+  const real = (fp: string) => !isOfflineIssue(issues.get(fp)) && !isTestIssue(issues.get(fp));
   const alerting = outcome && { ...outcome, created: outcome.created.filter(real), regressed: outcome.regressed.filter(real) };
   if (alerting && (alerting.created.length || alerting.regressed.length)) await sendAlerts(app, alerting, issues, settings);
 

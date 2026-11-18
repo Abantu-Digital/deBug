@@ -1,5 +1,5 @@
 import type { Breadcrumb, ContextInput, EnvelopeInput, EventInput, Severity } from "@debugkit/schema/core";
-import { latencyBucket, LATENCY_BUCKETS_MS, markLibraryFrames, MAX_BREADCRUMBS, MAX_CAPTURED_BODY, isTestEvent, parseStack, TEST_TAG } from "@debugkit/schema/core";
+import { latencyBucket, LATENCY_BUCKETS_MS, markLibraryFrames, MAX_BREADCRUMBS, MAX_CAPTURED_BODY, isTestEvent, NEVER_SENT_MS, parseStack, TEST_TAG } from "@debugkit/schema/core";
 
 /** Marks an Error from `testError()`. Symbol.for, so it survives two copies of the SDK in one app. */
 const TEST_MARK = Symbol.for("debugkit.test");
@@ -391,8 +391,9 @@ export class DebugClient {
   /** Set when the ingest rejects metric events (older than 0.7): stop sending them, keep the rest. */
   private noMetrics = false;
 
-  private timeRequest(key: string, ms: number, failed: boolean) {
-    if (this.noMetrics) return;
+  /** `unsent`: the call never left the phone, so it isn't a request the endpoint answered or failed (ABA-132). */
+  private timeRequest(key: string, ms: number, failed: boolean, unsent = false) {
+    if (this.noMetrics || unsent) return;
     let t = this.timings.get(key);
     if (!t) {
       if (this.timings.size >= 50) return; // cap the endpoints tracked per minute
@@ -841,7 +842,8 @@ export class DebugClient {
       ...(failed && readProblemDetails(r.responseBody)),
     };
     const crumb = this.addCrumb("network", `${r.method} ${name.matched ? name.path : url} → ${ended} (${ms}ms)`, data, failed ? "error" : slow ? "warning" : "info");
-    if (!r.aborted) this.timeRequest(`${r.method} ${url}`, ms, failed);
+    const unsent = failed && r.status === undefined && !r.timedOut && ms < NEVER_SENT_MS;
+    if (!r.aborted) this.timeRequest(`${r.method} ${url}`, ms, failed, unsent);
     if (!failed) return;
 
     const flow = net.flows?.find(([p]) => (typeof p === "string" ? url.includes(p) : p.test(url)))?.[1];

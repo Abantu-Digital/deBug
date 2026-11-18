@@ -72,6 +72,26 @@ function IssuePage() {
         <Stat label="Top app version" value={d.breakdowns.appVersion[0]?.key ?? "—"} hint={d.breakdowns.appVersion[0] ? `${Math.round(d.breakdowns.appVersion[0].share * 100)}% of occurrences` : undefined} />
       </div>
 
+      {/* A phone going offline (ABA-132): each burst, per phone, with the calls that never left it. */}
+      {d.bursts && d.bursts.length > 0 && (
+        <Card title="When phones went offline" subtitle={`Requests that never left the phone, grouped per phone. Not counted against any endpoint or owner.${d.burstsCapped ? " From the newest occurrences only." : ""}`}>
+          <ol className="space-y-3">
+            {d.bursts.map((b) => (
+              <li key={`${b.phone}${b.start}`} className="text-sm">
+                <p className="font-medium">
+                  {new Date(b.start).toLocaleString()} · {b.failures} call{b.failures === 1 ? "" : "s"} never sent
+                  {b.airplaneMode && <span className="ml-2 rounded bg-panel-2 px-1.5 py-0.5 text-xs text-muted">airplane mode on</span>}
+                </p>
+                <p className="text-xs text-muted">{[b.device, b.os, b.appVersion && `app ${b.appVersion}`].filter(Boolean).join(" · ")}</p>
+                <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-xs text-muted">
+                  {b.calls.map((c) => <li key={c.call} className="break-all">{c.call}{c.count > 1 ? ` ×${c.count}` : ""}</li>)}
+                </ul>
+              </li>
+            ))}
+          </ol>
+        </Card>
+      )}
+
       {/* Specific findings first, then the general advice (ABA-146). */}
       {d.findings.length > 0 && (
         <Card title="What the trail shows" subtitle="Patterns deBug found in what customers did before the error, and what to do about each.">

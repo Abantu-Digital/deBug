@@ -1,4 +1,5 @@
 import { Dimensions, NativeModules, PixelRatio, Platform } from "react-native";
+import { AIRPLANE_TAG } from "@debugkit/schema/core";
 import type { ContextPatch } from "./context";
 
 /**
@@ -184,5 +185,5 @@ export function staticDeviceTags(di: DeviceInfoModule | undefined, collect?: Col
 export function liveDeviceTags(di: DeviceInfoModule | undefined, collect?: CollectOptions): Record<string, string> {
   if (!di || Platform.OS !== "android" || !on(collect, "airplaneMode")) return {};
   const airplane = read(di.isAirplaneModeSync?.bind(di));
-  return airplane === undefined ? {} : { "network.airplaneMode": String(airplane) };
+  return airplane === undefined ? {} : { [AIRPLANE_TAG]: String(airplane) };
 }

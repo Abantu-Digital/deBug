@@ -171,6 +171,7 @@ export const MetricEvent = EventBase.extend({
   count: z.number().int().min(1).max(1_000_000),
   errors: z.number().int().min(0).max(1_000_000),
   buckets: z.array(z.number().int().min(0)).length(13),
+  // Calls that never left the phone (ABA-132) aren't in count or errors: the endpoint never saw them.
 });
 
 export const Event = z.discriminatedUnion("type", [ErrorEvent, CustomEvent, SessionEvent, MetricEvent]);

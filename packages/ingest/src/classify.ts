@@ -1,4 +1,4 @@
-import { hostNameFor, type Breadcrumb, type Category, type Cause, type Classification, type ErrorEvent, type HostName, type Impact, type Owner } from "@debugkit/schema";
+import { hostNameFor, NEVER_SENT_MS, type Breadcrumb, type Category, type Cause, type Classification, type ErrorEvent, type HostName, type Impact, type Owner } from "@debugkit/schema";
 
 /**
  * Labels for one error: category, likely owner, user impact and cause patterns. The rules, and
@@ -18,7 +18,6 @@ export interface ClassifyOptions {
 /** The SDK's app-lifecycle breadcrumb messages (client.ts). */
 export const FOREGROUND = "App came to the foreground";
 export const BACKGROUND = "App went to the background";
-const NEVER_SENT_MS = 100;
 /** How long after reopening a failure still counts as "on resume", if nothing has succeeded since. */
 const RESUME_WINDOW_MS = 10_000;
 export const BURST_WINDOW_MS = 5_000;
@@ -73,7 +72,8 @@ function category(e: ErrorEvent): Category {
   const r = e.request;
   const source = e.tags?.source;
   if (r && r.status === undefined) {
-    // network.offline needs the phone's network state, which the SDK doesn't send yet.
+    // network.offline isn't decided here: ingest folds never-sent failures that look like an
+    // offline phone into it afterwards (isOfflineFailure, ABA-132).
     if (TIMED_OUT.test(e.error.message)) return "network.timeout";
     if (r.durationMs !== undefined && r.durationMs < NEVER_SENT_MS) return "network.never_sent";
     return "network.failed";
@@ -90,6 +90,13 @@ function category(e: ErrorEvent): Category {
   if (!r) return "app_reported";
   return "other";
 }
+
+/**
+ * A request that never left the phone (ABA-132): no status, too fast to have reached a server, not
+ * a timeout. Every one counts as the phone being offline, including the first of a burst, which
+ * has no failed calls before it to show it was one.
+ */
+export const isOfflineFailure = (labels: Classification): boolean => labels.category === "network.never_sent";
 
 /** The last foreground/background breadcrumb before the error. */
 function lastLifecycle(crumbs: Breadcrumb[]): Breadcrumb | undefined {

@@ -42,9 +42,9 @@ describe("buildHealth", () => {
       ],
       endpoints: [],
     } as unknown as EndpointsReport;
-    const summary = { app: "cell-c", apps: ["cell-c"], range: { label: "the last 14 days" }, retention: {}, issues: [], totals: { testIssues: 2 } } as unknown as Summary;
+    const summary = { app: "cell-c", apps: ["cell-c"], range: { label: "the last 14 days" }, retention: {}, issues: [], totals: { testIssues: 2 }, connectivity: null } as unknown as Summary;
     const h = buildHealth(endpoints, summary, NOW);
-    expect(h.folded).toEqual({ tests: 2 });
+    expect(h.folded).toEqual({ tests: 2, offline: null });
     expect(h.tiles.map((t) => [t.name, t.level])).toEqual([
       ["balance", "critical"],
       ["App code", "healthy"],

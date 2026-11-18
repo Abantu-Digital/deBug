@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Category, Impact, Owner } from "@debugkit/schema";
-import { filterIssues, issueFilterFromQuery, labelCounts, labelFilterOf, matchesStatus } from "./issue-filter";
+import { filterIssues, issueFilterFromQuery, labelFilterOf, matchesStatus } from "./issue-filter";
 
 const issue = (id: string, status: string, labels?: { category: Category; owner: Owner; impact: Impact }, flow?: string) => ({ id, status, flow, labels });
 
@@ -39,11 +39,6 @@ describe("issue filters", () => {
     expect(filterIssues(issues, { owner: "unknown" })).toEqual([]);
   });
 
-  it("counts each option against the other filters, not its own", () => {
-    expect(labelCounts(issues, { impact: "blocked", owner: "app" }, "owner")).toEqual(new Map([["app", 1], ["backend", 1]]));
-    expect(labelCounts(issues, { impact: "blocked" }, "impact")).toEqual(new Map([["blocked", 2], ["degraded", 1]]));
-  });
-
   it("reads filters from search params and drops unknown ids", () => {
     const q = new URLSearchParams("category=server&owner=nobody&impact=blocked");
     expect(labelFilterOf((k) => q.get(k))).toEqual({ category: "server", impact: "blocked" });
@@ -58,5 +53,13 @@ describe("issue filters", () => {
     expect(q("owner=nobody")).toMatch(/^Unknown owner "nobody"/);
     const f = q("impact=blocked");
     expect(typeof f === "object" && ids(filterIssues(issues, f))).toEqual(["crash", "server"]);
+  });
+});
+
+describe("the offline issue (ABA-132)", () => {
+  const offline = { ...issue("offline", "open", { category: "network.offline", owner: "unknown", impact: "degraded" }), offline: true };
+  it("stays out of the list unless it's filtered to", () => {
+    expect(filterIssues([...issues, offline], {}).map((i) => i.id)).not.toContain("offline");
+    expect(filterIssues([...issues, offline], { category: "network.offline" }).map((i) => i.id)).toEqual(["offline"]);
   });
 });

@@ -65,7 +65,7 @@ as `CATEGORIES`.
 
 | Id | Plain label | Rule |
 |---|---|---|
-| `network.offline` | Phone offline | `request` with no `status`, and the phone was offline. *Later*: needs the network state, so nothing gets this label yet. |
+| `network.offline` | Phone offline | Set by ingest, not the classifier: every `network.never_sent` failure, including the first of a burst, which has nothing failed before it. All of them go to one issue (`offline`), ranked Low, folded away on Health ("Offline phones: …"), and never count against an endpoint, owner, flow or incident. The dashboard groups them into bursts per phone (failures within 60 s of each other), and flags airplane mode from the SDK's `network.airplaneMode` tag. |
 | `network.timeout` | Request timed out | `request` with no `status`, and the message is the SDK's `<METHOD> <url> timed out`, optionally followed by `: <cause>`. |
 | `network.never_sent` | Request never sent | `request` with no `status`, and `durationMs` < 100 ms: too fast to have reached a server. |
 | `network.failed` | Connection failed | `request` with no `status`, anything else: DNS, TLS or a refused connection. |
@@ -209,8 +209,10 @@ sent, and none succeeded. One of them, 5.9 s after reopening:
 | Causes | `resumed_from_background`, `burst` | reopened 5.9 s before, nothing has worked since; 2 other failures in the 5 s before |
 
 All six get the same category, owner and impact, and all get `resumed_from_background`. The first
-one doesn't get `burst`. They make one incident, `resumed_from_background|network.never_sent|ios`:
-"Requests failed on app resume (iOS)", 6 errors across 4 issues, 1 user.
+one doesn't get `burst`, but every never-sent failure is a phone going offline, so ingest moves all six to
+`network.offline` with owner `unknown`, in the one `offline` issue. The dashboard shows them under
+Health's Folded away line as one burst on one phone ("6 calls never left the phone"), not as 4 issues against
+the backends they never reached, and not as an incident.
 
-Plain version: "Balance didn't load right after reopening the app; the phone hadn't reconnected.
-Not a server outage. Pass to: app team."
+Plain version: "Balance didn't load right after reopening the app; the phone was offline. Not a
+server outage."
