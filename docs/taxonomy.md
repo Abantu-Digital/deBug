@@ -152,7 +152,7 @@ worked out when the dashboard reads the issue, so they're always current.
 - **API:** `GET /api/summary` takes the same filters: `?category=`, `?owner=`, `?impact=`, plus
   `?status=` (`open`, `resolved`, `ignored` or `all`) and `?flow=`. Unlike the page, it lists
   every status unless `?status=` is given, as it did before filters existed. An unknown id or
-  status is a 400.
+  status is a 400. Test errors (tag `test=true`) are left out unless `?tests=1`.
 
 The breakdown counts every error in the range, with the labels it got when it arrived, whatever
 its issue's status. The badges and filters use each issue's labels now, including host owners

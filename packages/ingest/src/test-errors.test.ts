@@ -80,6 +80,43 @@ describe("test errors (ABA-133)", () => {
     expect(sessions).toEqual({ "10.1.30|started": 1, "10.1.30|errored": 1, "10.1.30|crashed": 1 });
   });
 
+  it("a rejection with deBug.testError() is a test however it's reported, and never marks the session", async () => {
+    const { store, client, drain } = harness();
+    // What the React Native rejection tracker does with an unhandled rejection's reason, later.
+    client.error(client.testError("deBug crash test: unhandled promise rejection"), { handled: false, tags: { source: "unhandled-rejection" } });
+    await drain();
+    expect(isTestEvent(store.events.find((e) => e.event.type === "error")?.event)).toBe(true);
+    const sessions = Object.fromEntries((await store.getRollups("cell-c", "session", DAY, DAY)).map((r) => [r.key, r.events]));
+    expect(sessions).toEqual({ "10.1.30|started": 1 });
+  });
+
+  it("ingest ignores an errored or crashed marker that only test errors caused (an older SDK sends one)", async () => {
+    const store = new MemoryStore();
+    const ts = "2026-11-18T11:00:00.000Z";
+    const env = {
+      sdk: { name: "old", version: "0.8.0" },
+      context: { app: { id: "cell-c", version: "10.1.30" }, os: { name: "ios" }, runtime: { name: "rn" } },
+      session: { id: "s1", startedAt: ts },
+      events: [
+        { type: "session", id: "evt_sess_err", ts, status: "errored" },
+        { type: "session", id: "evt_sess_crash", ts, status: "crashed" },
+        { type: "error", id: "evt_test_crash", ts, handled: false, tags: { test: "true" }, error: { name: "Error", message: "Test crash" } },
+      ],
+    };
+    expect((await ingest(JSON.stringify(env), "pk_test", { store, keys: { pk_test: "cell-c" }, now: () => NOW })).status).toBe(202);
+    expect(await store.getRollups("cell-c", "session", DAY, DAY)).toEqual([]);
+  });
+
+  it("test events that aren't errors (track() outcomes from a test run) count nowhere", async () => {
+    const { store, client, drain } = harness();
+    client.setTags({ test: "true" });
+    await client.track("onboarding.test", "submit", async () => true);
+    client.setTags({ test: undefined });
+    await drain();
+    expect(await rollup(store, "flowOutcome")).toEqual({});
+    expect(Object.keys(await rollup(store, "total"))).toEqual([]);
+  });
+
   it("only test=\"true\" counts: other values of the tag are ordinary errors", async () => {
     const { store, client, drain } = harness();
     client.error(amountOfNull(), { tags: { test: "false" } });

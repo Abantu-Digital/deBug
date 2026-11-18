@@ -42,6 +42,9 @@ export function labelFilterOf(get: (key: LabelFilterKey) => unknown): Pick<Issue
   return out as Pick<IssueFilter, LabelFilterKey>;
 }
 
+/** "Show test errors" from a URL: tests=1 or tests=true, whether parsed as text, number or boolean. */
+export const testsFlag = (v: unknown): boolean => v === true || v === 1 || v === "1" || v === "true";
+
 export const isStatusFilter = (v: unknown): v is StatusFilter => typeof v === "string" && (STATUS_FILTERS as readonly string[]).includes(v);
 
 /**
@@ -55,7 +58,7 @@ export function issueFilterFromQuery(q: URLSearchParams): IssueFilter | string {
     const v = q.get(k);
     if (v !== null && !Object.hasOwn(LABEL_FILTERS[k].info, v)) return `Unknown ${k} "${v}": use one of ${Object.keys(LABEL_FILTERS[k].info).join(", ")}`;
   }
-  const tests = q.get("tests") === "1" || q.get("tests") === "true";
+  const tests = testsFlag(q.get("tests"));
   return { status, flow: q.get("flow") ?? undefined, ...(tests ? { tests } : {}), ...labelFilterOf((k) => q.get(k)) };
 }
 

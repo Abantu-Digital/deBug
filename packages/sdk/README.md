@@ -416,10 +416,14 @@ crash-free status, never alert, and the dashboard hides them until you press "Sh
 
 ```ts
 deBug.error(err, { test: true });
-// A test crash nothing catches: tag it just before.
-deBug.setTags({ test: "true" });
-throw new Error("Test crash");
+// A test crash or rejection nothing catches: throw or reject with a test error. It's a test
+// whichever handler reports it, even later.
+throw deBug.testError("Test crash");
+Promise.reject(deBug.testError("Test rejection"));
 ```
+
+`deBug.setTags({ test: "true" })` also works, but marks every error until you remove it with
+`deBug.setTags({ test: undefined })`.
 
 To scrub personal data before anything leaves the device, use `beforeSend`:
 

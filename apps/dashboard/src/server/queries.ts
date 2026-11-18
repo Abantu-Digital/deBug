@@ -6,7 +6,7 @@ import {
   compareVersions,
   hostNameFor,
   nameUrlsIn,
-  isTestEvent,
+  isTestIssue,
   percentileMs,
   SEVERITY_ORDER,
   severityFromCount,
@@ -231,7 +231,8 @@ export const SUMMARY_FIELDS = {
   "totals.criticalIssues": "Issues whose 24h occurrence count meets the critical threshold.",
   "flows[]": "Parts of the app as tagged by the developer (e.g. auth.login). Sorted by severity, then errors24h, then errorsRange.",
   "flows[].failureRate": "failures/(failures+successes) in the range from events logged with an outcome. null when the app logs no outcomes for that flow.",
-  "issues[]": "Grouped errors seen in the range. Sorted by severity, then count24h, then countRange. Narrow with ?status=open|resolved|ignored|all (default all), ?flow=, ?category=, ?owner= and ?impact= (ids from breakdowns); an unknown value is a 400. _filter echoes what was applied.",
+  "issues[]": "Grouped errors seen in the range. Sorted by severity, then count24h, then countRange. Narrow with ?status=open|resolved|ignored|all (default all), ?flow=, ?category=, ?owner= and ?impact= (ids from breakdowns); an unknown value is a 400. Test errors are left out unless ?tests=1. _filter echoes what was applied.",
+  "issues[].test": "true for an issue made on purpose to test deBug (tag test=true): listed only with ?tests=1, never counted, always severity low.",
   "issues[].severity": "Derived from count24h using thresholds critical/high/medium.",
   "issues[].title": "Error name and message, with hosts named in Settings shown by their names.",
   "issues[].culprit": "Top in-app stack frame: function (file:line).",
@@ -340,7 +341,7 @@ export async function buildSummary(
   let errorsPrev24h = 0;
   const issue24h = new Map<string, number>();
   // Test errors (ABA-133) keep their own issue's count, but never add to totals or the trend.
-  const testIssues = new Set(issues.filter((i) => isTestEvent(i.lastEvent?.event)).map((i) => i.fingerprint));
+  const testIssues = new Set(issues.filter(isTestIssue).map((i) => i.fingerprint));
   const realHours = hourRows.filter((r) => !testIssues.has(r.key));
   for (const r of hourRows) if (last24.has(r.day)) issue24h.set(r.key, (issue24h.get(r.key) ?? 0) + r.errors);
   for (const r of realHours) {
@@ -664,7 +665,9 @@ function toIssueRow(
   criticalFlows: readonly string[] = [],
   hosts: readonly HostName[] = [],
 ): IssueRow {
-  const base = severityFromCount(count24h, t);
+  const test = isTestIssue(i);
+  // A test error is never urgent, however often someone taps the button (ABA-133).
+  const base = test ? "low" : severityFromCount(count24h, t);
   const critical = new Set(criticalFlows);
   return {
     labels: issueLabels(i, latestVersion, criticalFlows, hosts),
@@ -680,13 +683,13 @@ function toIssueRow(
     culprit: i.culprit,
     flow: i.flow,
     // Issues in a critical flow rank one level higher (only once they've happened in the last 24h).
-    severity: i.flow && critical.has(i.flow) && count24h > 0 ? BUMP[base] : base,
+    severity: !test && i.flow && critical.has(i.flow) && count24h > 0 ? BUMP[base] : base,
     count24h,
     countRange,
     countTotal: i.count,
     firstSeen: i.firstSeen,
     lastSeen: i.lastSeen,
-    test: isTestEvent(i.lastEvent?.event),
+    test,
   };
 }
 
