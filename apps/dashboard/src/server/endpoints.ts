@@ -37,6 +37,11 @@ export interface EndpointHealth {
   backendCodes: Count[];
   /** The backend's own error messages on the failures ("Balance lookup unsuccessful"), most first. */
   backendMessages: Count[];
+  /**
+   * What the server said the last time it answered a failed call here: its status and body as
+   * the SDK captured them (redacted on the phone), and the occurrence. Unset when it never did.
+   */
+  lastAnswer?: { status: number; body?: string; ts: string; eventId: string; fingerprint: string };
   /** The issues the failures belong to, most failures first: where to click for the cause and fix. */
   problems: EndpointProblem[];
   lastFailure?: string;
@@ -253,6 +258,7 @@ export async function buildEndpoints(
       backendCodes: counts(fs.map((f) => f.call?.backendCode)),
       backendMessages: counts(fs.map((f) => f.call?.backendTitle)),
       problems: problemsOf(fs, byFingerprint),
+      lastAnswer: lastAnswerOf(fs),
       lastFailure: fs.map((f) => f.e.event.ts).sort().pop(),
     };
   };
@@ -295,6 +301,21 @@ export async function buildEndpoints(
     missing: opts.endpoint && !chosen ? opts.endpoint : undefined,
     truncated: issues.length >= ISSUE_READ_LIMIT || network.length > read.length || capped,
   };
+}
+
+/** How much of a server's answer an endpoint row carries. */
+export const ANSWER_CHARS = 1_500;
+
+/** The newest failure the server answered, with what it said. */
+function lastAnswerOf(fs: readonly Failure[]): EndpointHealth["lastAnswer"] {
+  const answered = fs
+    .filter((f) => f.e.event.type === "error" && f.e.event.response)
+    .sort((a, b) => b.e.event.ts.localeCompare(a.e.event.ts))[0];
+  if (!answered || answered.e.event.type !== "error") return undefined;
+  const r = answered.e.event.response!;
+  // A page lists every endpoint: keep it light. The full body is on the occurrence's page.
+  const body = r.body && r.body.length > ANSWER_CHARS ? `${r.body.slice(0, ANSWER_CHARS)}…` : r.body;
+  return { status: r.status, body, ts: answered.e.event.ts, eventId: answered.e.event.id, fingerprint: answered.e.fingerprint! };
 }
 
 /** An endpoint's failures grouped by issue, most first. */
