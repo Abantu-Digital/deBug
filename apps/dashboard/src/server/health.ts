@@ -16,10 +16,15 @@ export interface HealthReport {
   counts: Record<HealthLevel, number>;
   /** One paragraph a product owner can give a client. */
   answer: string;
+  /** What's kept off the wall on purpose, and how much: test errors (ABA-133). */
+  folded: { tests: number };
 }
 
-/** An issue in the app's own code: a crash or code error, not a failed call (those belong to a service). */
-export const isAppCodeIssue = (i: IssueRow): boolean => !(i.labels && isRequestCategory(i.labels.category));
+/**
+ * An issue in the app's own code: a crash or code error, not a failed call (those belong to a
+ * service), and not one made on purpose to test deBug (ABA-133: those are folded away).
+ */
+export const isAppCodeIssue = (i: IssueRow): boolean => !i.test && !(i.labels && isRequestCategory(i.labels.category));
 
 /** The App code page: its open issues worst first, and the resolved or ignored ones apart. */
 export interface AppCodeReport {
@@ -31,6 +36,8 @@ export interface AppCodeReport {
   tile: HealthTileData;
   open: IssueRow[];
   closed: IssueRow[];
+  /** Errors made on purpose to test deBug: listed apart, never counted. */
+  tests: IssueRow[];
 }
 
 /** The App code page's data, from the summary the health wall also reads. */
@@ -46,6 +53,7 @@ export function buildAppCode(summary: Summary, now = Date.now()): AppCodeReport 
     // The summary already ranks by level, then count.
     open: mine.filter((i) => isOpen(i.status)),
     closed: mine.filter((i) => !isOpen(i.status)),
+    tests: summary.issues.filter((i) => i.test),
   };
 }
 
@@ -83,5 +91,6 @@ export function buildHealth(endpoints: EndpointsReport, summary: Summary, now = 
     tiles,
     counts,
     answer: answerOf(tiles, summary.range.label),
+    folded: { tests: summary.totals.testIssues },
   };
 }

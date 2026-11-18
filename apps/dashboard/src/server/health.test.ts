@@ -24,6 +24,10 @@ describe("the app code box", () => {
     expect(t).toMatchObject({ kind: "app", level: "high", headline: "Error: screen crashed", measure: "2 crash or code errors open, 4 times", live: true });
   });
 
+  it("leaves out errors made on purpose to test deBug", () => {
+    expect(appTile([issue({ fingerprint: "t", severity: "high", test: true })], NOW)).toMatchObject({ level: "healthy" });
+  });
+
   it("is green with nothing open", () => {
     expect(appTile([], NOW)).toMatchObject({ level: "healthy", measure: "No crashes or code errors", live: false });
   });
@@ -38,8 +42,9 @@ describe("buildHealth", () => {
       ],
       endpoints: [],
     } as unknown as EndpointsReport;
-    const summary = { app: "cell-c", apps: ["cell-c"], range: { label: "the last 14 days" }, retention: {}, issues: [] } as unknown as Summary;
+    const summary = { app: "cell-c", apps: ["cell-c"], range: { label: "the last 14 days" }, retention: {}, issues: [], totals: { testIssues: 2 } } as unknown as Summary;
     const h = buildHealth(endpoints, summary, NOW);
+    expect(h.folded).toEqual({ tests: 2 });
     expect(h.tiles.map((t) => [t.name, t.level])).toEqual([
       ["balance", "critical"],
       ["App code", "healthy"],
@@ -63,11 +68,13 @@ describe("buildAppCode", () => {
         issue({ fingerprint: "b", status: "resolved" }),
         issue({ fingerprint: "c", status: "ignored" }),
         issue({ fingerprint: "net", labels: { category: "server" } as IssueRow["labels"] }),
+        issue({ fingerprint: "test", test: true }),
       ],
     } as unknown as Summary;
     const r = buildAppCode(summary, NOW);
     expect(r.open.map((i) => i.fingerprint)).toEqual(["a"]);
     expect(r.closed.map((i) => i.fingerprint)).toEqual(["b", "c"]);
+    expect(r.tests.map((i) => i.fingerprint)).toEqual(["test"]);
     expect(r.tile).toMatchObject({ name: "App code", level: "medium" });
   });
 });

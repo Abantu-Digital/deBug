@@ -4,11 +4,15 @@ import { RangePicker, rangeSearch, RetentionNote, type PageSearch } from "~/comp
 import { ClosedIssues } from "~/components/closed-issues";
 import { IssueLabels, LevelRow, levelName, timeAgo, toneClass } from "~/components/ui";
 import { plural } from "~/lib/health";
+import { testsFlag } from "~/lib/issue-filter";
 import { getAppCode } from "~/server/fns";
 import type { IssueRow } from "~/server/queries";
 
+type Search = PageSearch & { tests?: boolean };
+
 export const Route = createFileRoute("/_authed/app-code")({
-  validateSearch: (s: Record<string, unknown>): PageSearch => ({ app: typeof s.app === "string" ? s.app : undefined, ...rangeSearch(s) }),
+  // tests: show the errors made on purpose to test deBug (the Folded away line links here).
+  validateSearch: (s: Record<string, unknown>): Search => ({ app: typeof s.app === "string" ? s.app : undefined, tests: testsFlag(s.tests) || undefined, ...rangeSearch(s) }),
   loaderDeps: ({ search }) => ({ app: search.app, range: search.range, from: search.from, to: search.to }),
   loader: ({ deps }) => getAppCode({ data: deps }),
   component: AppCodePage,
@@ -64,6 +68,8 @@ function AppCodePage() {
       )}
 
       <ClosedIssues issues={closed} keep={keep} now={now} />
+
+      {search.tests && <TestErrors issues={report.tests} keep={keep} now={now} />}
     </main>
   );
 }
@@ -90,5 +96,29 @@ function Problem({ issue: i, keep, now }: { issue: IssueRow; keep: PageSearch; n
       </span>
       <span className="shrink-0 text-xs font-semibold text-accent group-hover:underline">Cause and fix →</span>
     </Link>
+  );
+}
+
+/** Errors the app made on purpose to test deBug: shown only when asked for, never counted. */
+function TestErrors({ issues, keep, now }: { issues: readonly IssueRow[]; keep: PageSearch; now: number }) {
+  return (
+    <section aria-labelledby="tests-h" className="rounded-xl border border-line bg-panel p-4">
+      <h2 id="tests-h" className="text-sm font-semibold">Test errors ({issues.length})</h2>
+      <p className="mt-0.5 text-xs text-muted">Made on purpose to check deBug works (tag test=true). They never count toward any box, total or rate.</p>
+      {issues.length ? (
+        <ul className="mt-3 space-y-1.5 text-sm">
+          {issues.map((i) => (
+            <li key={i.fingerprint}>
+              <Link to="/issues/$fingerprint" params={{ fingerprint: i.fingerprint }} search={{ ...keep, app: keep.app ?? "" }} className="flex flex-wrap justify-between gap-2 rounded px-1 py-0.5 hover:bg-panel-2">
+                <span className="min-w-0 break-words">{i.title}</span>
+                <span className="shrink-0 text-xs text-muted">{plural(i.countRange, "time")} · last {timeAgo(i.lastSeen, now)}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-3 text-sm text-muted">None in this period.</p>
+      )}
+    </section>
   );
 }
