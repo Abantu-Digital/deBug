@@ -3,6 +3,7 @@ import { DebugClient } from "./client";
 export { DebugClient, SDK_NAME, SDK_VERSION } from "./client";
 export type { InitOptions, EventMeta, QueueStorage, AutoCaptureOptions, NetworkOptions } from "./client";
 export { normaliseUrl } from "./auto";
+export type { BaseUrl } from "./network";
 export { browserContext, mergeContext, type ContextPatch } from "./context";
 export { parseStack } from "@debugkit/schema/core";
 export type { Breadcrumb, EventInput, Severity, StackFrame } from "@debugkit/schema/core";

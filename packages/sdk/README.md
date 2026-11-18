@@ -105,6 +105,22 @@ was no answer), `durationMs` and `outcome` (`answered`, `unreachable` or `aborte
   `"https://api.example.com/v1/orders/42"` with base `"https://api.example.com/v1"` is service
   `orders`, path `/orders/:id`, and its breadcrumb reads `GET /orders/:id → 200 (85ms)`. Calls to
   any other host are named by the host, and their breadcrumb keeps the full URL.
+- **Named services.** When each backend has its own base, give it the name people know it by:
+  `{ url: "https://balances.example.com/v1", name: "Balances" }`. Every call under it is service
+  `Balances`, path `/cellc/getBalances`: the trail, the failed request and the Endpoints page name
+  it that way. Issue titles name hosts from the dashboard's Settings → Host names, so name each
+  host there too. Named and
+  plain bases mix in one list, and the longest match still wins.
+
+  ```ts
+  network: {
+    baseUrls: [
+      { url: process.env.EXPO_PUBLIC_BALANCES_URL!, name: "Balances" },
+      { url: process.env.EXPO_PUBLIC_BUY_URL!, name: "Buy" },
+      "https://gateway.example.com/v1", // shared gateway: services named by path
+    ],
+  },
+  ```
 - **What the backend said.** When a call fails, the SDK reads its JSON response and, if it holds
   [problem details](https://www.rfc-editor.org/rfc/rfc9457) (`title`, `code`, `traceId`, `errors`,
   as .NET and Spring send, or `message`, `trace_id`, `correlationId`), adds `backendTitle`,

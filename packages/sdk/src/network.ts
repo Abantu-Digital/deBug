@@ -6,8 +6,17 @@
 import { normaliseUrl } from "./auto";
 import { maskPersonal, redactValues } from "./redact";
 
+/**
+ * A backend's base URL for `network.baseUrls`: a plain URL, or one with the name people know the
+ * service by. A named base names every call under it.
+ */
+export type BaseUrl = string | { url: string; name: string };
+
 export interface RequestName {
-  /** "buy" for ".../ppd/api/buy/purchase-history" with that base; otherwise the host. */
+  /**
+   * The named base's name ("Balances"); else, with a plain base, the first path segment after
+   * it ("buy" for ".../ppd/api/buy/purchase-history"); else the host.
+   */
   service: string;
   /** The endpoint path, ids masked, no query string or fragment: "/buy/purchase-history". */
   path: string;
@@ -26,31 +35,40 @@ const MAX_TEXT = 200;
 const MAX_ERRORS = 500;
 
 
+/** One `network.baseUrls` entry as a base without its trailing slash, and its name; undefined for one without a URL. */
+function toBase(b: unknown): { base: string; name?: string } | undefined {
+  const url = typeof b === "string" ? b : typeof (b as { url?: unknown })?.url === "string" ? (b as { url: string }).url : undefined;
+  if (!url) return undefined;
+  const name = typeof b === "object" && typeof (b as { name?: unknown }).name === "string" ? (b as { name: string }).name.trim() : "";
+  return { base: url.replace(/\/+$/, ""), name: name || undefined };
+}
+
 /**
  * The longest base the URL starts with, ending on a path-segment boundary. Scheme and host
  * compare without case, as URLs do.
  */
-function findBase(url: string, baseUrls: readonly string[]): string | undefined {
+function findBase(url: string, baseUrls: readonly BaseUrl[]): { base: string; name?: string } | undefined {
   const lower = url.toLowerCase();
   return baseUrls
-    .map((b) => b.replace(/\/+$/, ""))
-    .filter((b) => b && lower.startsWith(b.toLowerCase()) && /^(?:[/?#]|$)/.test(url.slice(b.length)))
-    .sort((a, b) => b.length - a.length)[0];
+    .map(toBase)
+    .filter((b): b is { base: string; name?: string } => !!b?.base && lower.startsWith(b.base.toLowerCase()) && /^(?:[/?#]|$)/.test(url.slice(b.base.length)))
+    .sort((a, b) => b.base.length - a.base.length)[0];
 }
 
 /**
- * Several services often share one base URL (one API gateway), so the base can't name them:
- * strip it, and the first path segment left is the service. A URL matching no base is named
- * by its host (or, same-origin, by its first path segment).
+ * A named base names the service. Otherwise several services often share one base URL (one API
+ * gateway), so the base can't name them: strip it, and the first path segment left is the
+ * service. A URL matching no base is named by its host (or, same-origin, by its first path segment).
  */
-export function nameRequest(url: string, baseUrls: readonly string[] = []): RequestName {
-  const base = findBase(url, baseUrls);
+export function nameRequest(url: string, baseUrls: readonly BaseUrl[] = []): RequestName {
+  const match = findBase(url, baseUrls);
+  const base = match?.base;
   const masked = normaliseUrl(base ? url.slice(base.length) || "/" : url);
   const slash = masked.indexOf("/");
   const host = !base && slash > 0 ? masked.slice(0, slash) : "";
   const path = host ? masked.slice(slash) : masked.startsWith("/") ? masked : `/${masked}`;
   const first = path.split("/").find(Boolean);
-  return { service: host || first || "/", path, matched: !!base };
+  return { service: match?.name || host || first || "/", path, matched: !!base };
 }
 
 function text(v: unknown): string | undefined {
