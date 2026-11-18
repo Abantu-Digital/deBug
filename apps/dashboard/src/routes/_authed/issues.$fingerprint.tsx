@@ -6,6 +6,7 @@ import { Card, DataTable, IssueLabels, LevelBadge, ShareBars, Stat, timeAgo } fr
 import { CopyButton } from "~/components/copy-button";
 import { RequestPanel } from "~/components/request-panel";
 import { getIssueDetail, updateIssueStatus } from "~/server/fns";
+import type { FailedCall, IssueDetail } from "~/server/queries";
 
 export const Route = createFileRoute("/_authed/issues/$fingerprint")({
   validateSearch: (s: Record<string, unknown>): { app: string } & RangeSearch => ({ app: typeof s.app === "string" ? s.app : "", ...rangeSearch(s) }),
@@ -74,19 +75,7 @@ function IssuePage() {
       </div>
 
       {/* A failed call: what the app sent and what the server answered, up front (not for the offline issue: nothing was sent). */}
-      {d.call && !d.bursts && (
-        <Card
-          title="The call that failed"
-          subtitle={`What the app sent and what the server answered, ${timeAgo(d.call.ts)}.`}
-          right={
-            <Link to="/events/$eventId" params={{ eventId: d.call.eventId }} search={{ app: d.app, issue: issue.fingerprint, range: search.range, from: search.from, to: search.to }} className="whitespace-nowrap text-xs text-accent hover:underline">
-              That occurrence →
-            </Link>
-          }
-        >
-          <RequestPanel call={d.call.call} exchange={d.call.exchange} />
-        </Card>
-      )}
+      {d.calls && !d.bursts && <CallCard calls={d.calls} app={d.app} fingerprint={issue.fingerprint} search={search} />}
 
       {/* A phone going offline (ABA-132): each burst, per phone, with the calls that never left it. */}
       {d.bursts && d.bursts.length > 0 && (
@@ -326,3 +315,38 @@ function IssueActions({
 
 /** Explanations mark code with backticks for Markdown; on the page they read as plain text. */
 const plain = (s: string) => s.replaceAll("`", "");
+
+/** "18 Nov, 14:05 UTC": the same on the server and in the browser. */
+const utc = (iso: string) => `${new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC`;
+
+/**
+ * The call that failed, up front: the newest occurrence's request and response. When that one got
+ * no answer (an outage), the last answer the server gave comes next, so both are on the page.
+ */
+function CallCard({ calls, app, fingerprint, search }: { calls: NonNullable<IssueDetail["calls"]>; app: string; fingerprint: string; search: RangeSearch }) {
+  const open = (c: FailedCall) => (
+    <Link to="/events/$eventId" params={{ eventId: c.eventId }} search={{ app, issue: fingerprint, range: search.range, from: search.from, to: search.to }} className="whitespace-nowrap text-xs text-accent hover:underline">
+      That occurrence →
+    </Link>
+  );
+  const { latest, lastAnswer } = calls;
+  if (!latest) {
+    return (
+      <Card title="The call that failed" subtitle="A call failed, but the app recorded nothing about it: no request, and no failed call in the steps before the error.">
+        <p className="text-sm text-muted">Apps built with the SDK's network capture record every failed call, with its request and response.</p>
+      </Card>
+    );
+  }
+  return (
+    <>
+      <Card title="The call that failed" subtitle={`What the app sent and what the server answered, newest: ${utc(latest.ts)}.`} right={open(latest)}>
+        <RequestPanel call={latest.api} exchange={latest.exchange} />
+      </Card>
+      {lastAnswer && (
+        <Card title="The last time the server answered" subtitle={`${utc(lastAnswer.ts)}. The newest call got no answer; this is what the server said before.`} right={open(lastAnswer)}>
+          <RequestPanel call={lastAnswer.api} exchange={lastAnswer.exchange} />
+        </Card>
+      )}
+    </>
+  );
+}

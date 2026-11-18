@@ -810,10 +810,11 @@ export interface IssueDetail {
   /** The explanation as Markdown, for "Copy for a ticket". */
   ticketMarkdown?: string;
   /**
-   * For a failed call: the call, and what the app sent and the server answered, from the newest
-   * occurrence that captured them (one with a response first). `eventId` and `ts` say which.
+   * For an issue that is a failed call: the newest occurrence's call (what the app sent and what
+   * the server answered, when captured), and when that one got no answer, the newest that did.
+   * `{}` when a call failed but the app recorded nothing about it. Unset for other issues.
    */
-  call?: { call: ApiCall; exchange?: Exchange; eventId: string; ts: string };
+  calls?: { latest?: FailedCall; lastAnswer?: FailedCall };
   /**
    * Where the issue sits under Health, for its breadcrumb: the service whose call failed, or the
    * app's own code. null for a failed call whose service nobody named.
@@ -821,18 +822,30 @@ export interface IssueDetail {
   area: { kind: "service"; name: string } | { kind: "app" } | { kind: "tests" } | null;
 }
 
+/** One occurrence's failed call: what the app sent and what the server answered, when captured. */
+export interface FailedCall {
+  api: ApiCall;
+  exchange?: Exchange;
+  /** The occurrence it's from. */
+  eventId: string;
+  ts: string;
+}
+
 /**
- * The failed call to show on an issue's page: from the newest occurrence with a captured
- * response, else the newest with a captured request, else the newest at all. undefined when the
- * issue isn't a failed call.
+ * The failed call to show on an issue's page, from occurrences newest first. `latest` is the
+ * newest (what's happening now: during an outage, a timeout with no answer); when it captured
+ * nothing, the newest that did. `lastAnswer` is the newest the server answered, when that's not
+ * `latest`: what the server said last time it said anything.
  */
-export function callOf(events: readonly StoredEvent[], hosts: readonly HostName[]): IssueDetail["call"] {
-  const calls = events.flatMap((se) => {
+export function callsOf(events: readonly StoredEvent[], hosts: readonly HostName[]): NonNullable<IssueDetail["calls"]> {
+  const calls: FailedCall[] = events.flatMap((se) => {
     if (se.event.type !== "error") return [];
-    const call = failedRequest(se.event.request, timelineOf(se.event.breadcrumbs, hosts), hosts);
-    return call ? [{ call, exchange: exchangeOf(se.event), eventId: se.event.id, ts: se.event.ts }] : [];
+    const api = failedRequest(se.event.request, timelineOf(se.event.breadcrumbs, hosts), hosts);
+    return api ? [{ api, exchange: exchangeOf(se.event), eventId: se.event.id, ts: se.event.ts }] : [];
   });
-  return calls.find((c) => c.exchange?.response) ?? calls.find((c) => c.exchange) ?? calls[0];
+  const latest = calls[0]?.exchange ? calls[0] : (calls.find((c) => c.exchange) ?? calls[0]);
+  const answered = calls.find((c) => c.exchange?.response);
+  return { latest, lastAnswer: answered && answered !== latest && !latest?.exchange?.response ? answered : undefined };
 }
 
 /** The service whose call an issue's newest occurrence failed, or the app's own code. */
@@ -917,8 +930,10 @@ export async function buildIssueDetail(
   // Trail patterns don't apply to a phone going offline: its bursts say what happened instead.
   const findings = offline ? [] : findingsOf(errorEvents.flatMap((e) => (e.event.type === "error" ? [e.event] : [])), hosts);
   const link = issueUrl(opts.trackers?.dashboardUrl, app, fingerprint);
-  const call = callOf(errorEvents.length ? errorEvents : issue.lastEvent ? [issue.lastEvent] : [], hosts);
+  // Only an issue that is a failed call gets one; from the occurrences in the range when there are any.
   const bounds = rangeBounds(range, now);
+  const inPeriod = errorEvents.filter((e) => e.event.ts >= bounds.start && e.event.ts <= bounds.end);
+  const calls = row.labels && isRequestCategory(row.labels.category) ? callsOf(inPeriod.length ? inPeriod : errorEvents.length ? errorEvents : [issue.lastEvent], hosts) : undefined;
   const detail = {
     // A test error is listed with the other test errors; the offline issue sits under no service
     // (the phone had no signal); anything else under its service or App code.
@@ -933,7 +948,7 @@ export async function buildIssueDetail(
     affectedUsers,
     links: {},
     sample: events[0] ?? issue.lastEvent ?? null,
-    call,
+    calls,
     recent: events.slice(0, 25).map((e) => ({
       id: e.event.id,
       type: e.event.type,

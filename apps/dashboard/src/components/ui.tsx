@@ -219,3 +219,18 @@ export function IssueLabels({ issue }: { issue: { status: string; resolvedIn?: s
     </>
   );
 }
+
+/** Label/value rows; empty values are left out. */
+export function Facts({ rows, mono }: { rows: [string, ReactNode | undefined][]; mono?: boolean }) {
+  const shown = rows.filter(([, v]) => v !== undefined && v !== "");
+  return (
+    <dl className="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-4 gap-y-1.5 text-sm">
+      {shown.map(([k, v]) => (
+        <div key={k} className="contents">
+          <dt className={`text-muted ${mono ? "break-all font-mono text-xs" : ""}`}>{k}</dt>
+          <dd className={`min-w-0 break-words ${mono ? "font-mono text-xs" : ""}`}>{v}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}

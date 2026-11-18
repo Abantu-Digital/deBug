@@ -1,9 +1,10 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { CopyButton } from "./copy-button";
+import { Facts } from "./ui";
 import { joined } from "./timeline";
 import type { ApiCall } from "~/server/event";
 import type { Exchange, ExchangeSide } from "~/server/exchange";
-import { bodyView, curlOf, size, uncut } from "~/lib/exchange-view";
+import { bodyView, curlOf, size, uncut, whyNoAnswer } from "~/lib/exchange-view";
 
 /**
  * A failed call, as the app made it and as the server answered: the facts first (status, the
@@ -11,39 +12,32 @@ import { bodyView, curlOf, size, uncut } from "~/lib/exchange-view";
  * side by side. Shown the same way on the issue page and on each occurrence's page.
  */
 export function RequestPanel({ call, exchange }: { call: ApiCall; exchange?: Exchange }) {
+  const id = useId();
+  const noAnswer = call.status === undefined ? whyNoAnswer(call) : undefined;
   return (
     <div className="space-y-4">
       <CallFacts call={call} />
       {exchange ? (
         <div className="grid gap-4 xl:grid-cols-2">
-          <section aria-label="Request" className="min-w-0 rounded-lg border border-line p-3">
-            <h3 className="mb-2 text-sm font-semibold">What the app sent</h3>
+          <section aria-labelledby={`${id}-sent`} className="min-w-0 rounded-lg border border-line p-3">
+            <h3 id={`${id}-sent`} className="mb-2 text-sm font-semibold">What the app sent</h3>
             <RequestSide exchange={exchange} />
           </section>
-          <section aria-label="Response" className="min-w-0 rounded-lg border border-line p-3">
-            <h3 className="mb-2 text-sm font-semibold">What the server answered</h3>
-            {exchange.response ? <Side side={exchange.response} first={["Status", String(exchange.response.status)]} /> : <NoAnswer call={call} />}
+          <section aria-labelledby={`${id}-answer`} className="min-w-0 rounded-lg border border-line p-3">
+            <h3 id={`${id}-answer`} className="mb-2 text-sm font-semibold">What the server answered</h3>
+            {exchange.response ? <Side side={exchange.response} first={["Status", String(exchange.response.status)]} /> : <p className="text-sm">{noAnswer}</p>}
           </section>
         </div>
       ) : (
-        <p className="rounded-md bg-panel-2 px-3 py-2 text-sm text-muted">
-          {call.status === undefined ? <NoAnswer call={call} /> : null}
-          The app didn't capture this call's request and response. Turn on the SDK's <code>network.bodies</code> (headers and bodies are redacted on the phone) to see them here.
-        </p>
+        <div className="space-y-1 rounded-md bg-panel-2 px-3 py-2 text-sm">
+          {noAnswer && <p>{noAnswer}</p>}
+          <p className="text-muted">
+            The app didn't capture this call's request and response. Apps built with the SDK's <code>network.bodies</code> on capture them, with headers and bodies redacted on the phone; older app versions don't.
+          </p>
+        </div>
       )}
     </div>
   );
-}
-
-/** Why there's no response: the call never got one. The app names the outcome in its own words. */
-function NoAnswer({ call }: { call: ApiCall }) {
-  const said = `${call.outcome ?? ""} ${call.errorKind ?? ""}`;
-  const why = /time/i.test(said)
-    ? "The call timed out: the server didn't answer in time."
-    : /never|offline|no.?connection/i.test(said)
-      ? "The call never left the phone: there was no connection."
-      : "No answer came back: the server couldn't be reached, or the connection dropped.";
-  return <span className="block text-sm">{why} </span>;
 }
 
 function RequestSide({ exchange }: { exchange: Exchange }) {
@@ -79,7 +73,7 @@ function Side({ side, first }: { side: ExchangeSide; first: [string, ReactNode |
         {body?.text ? (
           <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-md border border-line bg-panel-2 p-2 font-mono text-[11px] leading-relaxed">{body.text}</pre>
         ) : (
-          !body?.note && <p className="text-sm text-muted">None.</p>
+          !body?.note && <p className="text-sm text-muted">None captured.</p>
         )}
       </div>
       <details>
@@ -112,20 +106,5 @@ function CallFacts({ call }: { call: ApiCall }) {
         ["Retry", call.retry === undefined ? undefined : String(call.retry)],
       ]}
     />
-  );
-}
-
-/** Label/value rows; empty values are left out. */
-export function Facts({ rows, mono }: { rows: [string, ReactNode | undefined][]; mono?: boolean }) {
-  const shown = rows.filter(([, v]) => v !== undefined && v !== "");
-  return (
-    <dl className="grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-4 gap-y-1.5 text-sm">
-      {shown.map(([k, v]) => (
-        <div key={k} className="contents">
-          <dt className={`text-muted ${mono ? "break-all font-mono text-xs" : ""}`}>{k}</dt>
-          <dd className={`min-w-0 break-words ${mono ? "font-mono text-xs" : ""}`}>{v}</dd>
-        </div>
-      ))}
-    </dl>
   );
 }

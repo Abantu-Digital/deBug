@@ -4,6 +4,7 @@ import { EmptyState } from "~/components/empty-state";
 import { RangePicker, rangeSearch, RetentionNote, type PageSearch } from "~/components/range-picker";
 import { LevelRow, levelName, timeAgo, toneClass } from "~/components/ui";
 import { endpointsOf, failing, HEALTH_ORDER, isOpen, pct, plural, serviceLevel, servicesOf, serviceTile } from "~/lib/health";
+import { bodyView } from "~/lib/exchange-view";
 import type { EndpointHealth } from "~/server/endpoints";
 import { getEndpoints } from "~/server/fns";
 
@@ -134,6 +135,17 @@ function EndpointProblems({ row, keep, now, service }: { row: EndpointHealth; ke
             </>
           )}
         </p>
+      )}
+      {row.lastAnswer?.body && (
+        <details open className="rounded-lg border border-line bg-panel-2 p-2">
+          <summary className="cursor-pointer text-xs font-medium text-muted hover:text-ink">
+            What the server answered last, {row.lastAnswer.status}, {timeAgo(row.lastAnswer.ts, now)}
+          </summary>
+          <pre className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed">{bodyView({ body: row.lastAnswer.body })?.text ?? row.lastAnswer.body}</pre>
+          <Link to="/issues/$fingerprint" params={{ fingerprint: row.lastAnswer.fingerprint }} search={{ ...keep, app: keep.app ?? "" }} className="text-xs text-accent hover:underline">
+            The request and the whole response →
+          </Link>
+        </details>
       )}
       {open.length > 0 && (
         <ul className="space-y-1.5" aria-label={`What's causing it on ${row.method ?? ""} ${row.path ?? row.endpoint}`}>

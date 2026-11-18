@@ -1,13 +1,13 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { CopyButton } from "~/components/copy-button";
 import { rangeSearch, type RangeSearch } from "~/components/range-picker";
 import { CrumbBody, ICON, clock, joined, offset } from "~/components/timeline";
-import { Card } from "~/components/ui";
+import { Card, Facts } from "~/components/ui";
 import { getEventDetail } from "~/server/fns";
 import { shownOf, supportSummary, ticketText, ticketTime } from "~/lib/support-summary";
-import type { ApiCall, EventDetail, TimelineItem } from "~/server/event";
-import { Facts, RequestPanel } from "~/components/request-panel";
+import type { EventDetail, TimelineItem } from "~/server/event";
+import { RequestPanel } from "~/components/request-panel";
 
 export const Route = createFileRoute("/_authed/events/$eventId")({
   // The range is kept only to take it back to the issue page.

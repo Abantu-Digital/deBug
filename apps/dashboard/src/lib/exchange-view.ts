@@ -84,3 +84,14 @@ export function curlOf(x: Exchange): { command: string; complete: boolean } {
   const command = parts.join(" \\\n  ");
   return { command: fill.length ? `# From deBug, as captured: ${fill.join("; ")}.\n${command}` : command, complete: fill.length === 0 };
 }
+
+/**
+ * Why a failed call got no answer, from the outcome and kind the app gave it (free text, in the
+ * app's own words): it timed out, it never left the phone, or no answer came back.
+ */
+export function whyNoAnswer(call: { outcome?: string; errorKind?: string }): string {
+  const said = `${call.outcome ?? ""} ${call.errorKind ?? ""}`;
+  if (/time/i.test(said)) return "The call timed out: the server didn't answer in time.";
+  if (/never|offline|no.?connection/i.test(said)) return "The call never left the phone: there was no connection.";
+  return "No answer came back: the server couldn't be reached, or the connection dropped.";
+}
