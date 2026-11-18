@@ -34,6 +34,8 @@ export function getRouter() {
     routeTree,
     scrollRestoration: true,
     defaultPreload: "intent",
+    // A page already loaded in the last 30 s opens at once, without asking the server again.
+    defaultStaleTime: 30_000,
     defaultErrorComponent: ErrorPage,
     defaultNotFoundComponent: () => <div className="p-8 text-muted">Not found.</div>,
   });

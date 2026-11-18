@@ -1,11 +1,23 @@
 import type { ReadStore, WriteStore } from "@debugkit/adapters";
 import { config } from "./config";
+import { cacheStore, type StoreCache } from "./store-cache";
 
 let store: Promise<ReadStore> | undefined;
+let cache: StoreCache | undefined;
 
 /** The dashboard only ever reads. Point it at read-only credentials. */
 export function getStore(): Promise<ReadStore> {
-  return (store ??= create());
+  return (store ??= create().then((s) => {
+    cache = cacheStore(s);
+    // Read the health wall now, so the first person to open the dashboard doesn't wait for it.
+    void import("./warm").then((m) => m.warmUp(cache!.store)).catch(() => undefined);
+    return cache.store;
+  }));
+}
+
+/** Forget every cached read: called after the dashboard changes anything (status, settings, team). */
+export function clearStoreCache(): void {
+  cache?.clear();
 }
 
 /**
