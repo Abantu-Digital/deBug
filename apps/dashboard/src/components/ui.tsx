@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { CATEGORY_INFO, IMPACT_INFO, OWNER_INFO, type Classification, type Impact, type Severity } from "@debugkit/schema";
+import { Link, type LinkProps } from "@tanstack/react-router";
+import { CATEGORY_INFO, IMPACT_INFO, OWNER_INFO, SEVERITY_INFO, type Classification, type Impact, type Severity } from "@debugkit/schema";
 
 export function Logo() {
   return (
@@ -12,18 +13,68 @@ export function Logo() {
   );
 }
 
-const SEV_STYLE: Record<Severity, string> = {
-  critical: "bg-sev-critical text-white",
-  high: "bg-sev-high text-white",
-  medium: "bg-sev-medium text-black",
-  low: "bg-panel-2 text-muted border border-line",
+/* ---------- Issue levels (ABA-139): words always, colour too; green only for healthy services and journeys */
+
+type Tone = Severity | "healthy";
+
+/** Full class names (not built from parts) so Tailwind keeps them. */
+const TONE: Record<Tone, { surface: string; edge: string; text: string }> = {
+  critical: { surface: "bg-level-critical-bg text-level-critical-fg border-level-critical-edge", edge: "border-level-critical-edge", text: "text-level-critical-fg" },
+  high: { surface: "bg-level-high-bg text-level-high-fg border-level-high-edge", edge: "border-level-high-edge", text: "text-level-high-fg" },
+  medium: { surface: "bg-level-medium-bg text-level-medium-fg border-level-medium-edge", edge: "border-level-medium-edge", text: "text-level-medium-fg" },
+  low: { surface: "bg-level-low-bg text-level-low-fg border-level-low-edge", edge: "border-level-low-edge", text: "text-level-low-fg" },
+  healthy: { surface: "bg-level-healthy-bg text-level-healthy-fg border-level-healthy-edge", edge: "border-level-healthy-edge", text: "text-level-healthy-fg" },
 };
 
-export function SeverityBadge({ severity }: { severity: Severity }) {
+/** An issue's level, in words and colour. */
+export function LevelBadge({ level }: { level: Severity }) {
   return (
-    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${SEV_STYLE[severity]}`}>
-      {severity}
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${TONE[level].surface}`} title={SEVERITY_INFO[level].description}>
+      {SEVERITY_INFO[level].name}
     </span>
+  );
+}
+
+/**
+ * One level's box on the health screen: how many issues are open at that level and how many
+ * customers they affect. The whole box links to the list filtered to that level. Coloured only
+ * when something is open.
+ */
+export function LevelBox({ level, count, customers, link }: { level: Severity; count: number; customers: number; link: LinkProps }) {
+  const open = count > 0;
+  return (
+    <Link {...link} className={`flex h-full flex-col gap-1.5 rounded-xl border p-4 hover:brightness-110 ${open ? TONE[level].surface : "border-line bg-panel text-muted"}`}>
+      <span className="text-xs font-bold uppercase tracking-wide">{SEVERITY_INFO[level].name}</span>
+      <span className="tabular text-4xl font-semibold leading-none">{count}</span>
+      <span className="text-xs">{open ? `${customers.toLocaleString()} customer${customers === 1 ? "" : "s"} affected` : "None open"}</span>
+    </Link>
+  );
+}
+
+/**
+ * A row in a list ranked by level: a coloured block with the level in words (and, say, the
+ * customers affected), then the row's content. The block sits on top at phone width.
+ */
+export function LevelRow({ level, aside, children }: { level: Severity; aside?: ReactNode; children: ReactNode }) {
+  return (
+    <div className={`flex flex-col overflow-hidden rounded-xl border bg-panel sm:flex-row ${TONE[level].edge}`}>
+      <div className={`flex shrink-0 flex-row items-center justify-between gap-2 px-3 py-2 sm:w-28 sm:flex-col sm:justify-center sm:py-3 sm:text-center ${TONE[level].surface}`}>
+        <strong className="text-sm">{SEVERITY_INFO[level].name}</strong>
+        {aside && <span className="text-xs">{aside}</span>}
+      </div>
+      <div className="min-w-0 flex-1 p-3 sm:p-4">{children}</div>
+    </div>
+  );
+}
+
+/** A service or journey, coloured by its worst open level; green when nothing is open. */
+export function HealthTile({ name, level, state }: { name: string; level: Severity | null; state: ReactNode }) {
+  const tone: Tone = level ?? "healthy";
+  return (
+    <div className={`flex h-full flex-col gap-1 rounded-xl border bg-panel px-3 py-2.5 ${TONE[tone].edge}`}>
+      <strong className="text-sm">{name}</strong>
+      <span className={`text-xs ${TONE[tone].text}`}>{state}</span>
+    </div>
   );
 }
 
