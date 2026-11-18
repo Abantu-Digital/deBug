@@ -220,7 +220,7 @@ describe("labels", () => {
     expect(filterIssues(s.issues, { owner: "backend" }).map((i) => i.labels?.category)).toEqual(["server"]);
   });
 
-  it("ingest labels the staging resume incident, and the summary shows the labels and breakdowns", async () => {
+  it("ingest folds the staging resume incident (a phone offline) into the one offline issue, with no owner (ABA-132)", async () => {
     const { resumeIncident } = await import("../../../../packages/ingest/src/fixtures/resume-incident");
     const store = new MemoryStore();
     const ts = resumeIncident[0]!.ts;
@@ -234,12 +234,19 @@ describe("labels", () => {
     expect((await ingest(JSON.stringify(env), "k", { store, keys: { k: "cell-c" }, now: () => new Date(last) })).status).toBe(202);
 
     const s = (await buildSummary(store, "cell-c", DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last)))!;
-    expect(s.issues).toHaveLength(4);
-    for (const i of s.issues) expect(i.labels).toMatchObject({ category: "network.never_sent", owner: "app", impact: "degraded" });
-    expect(s.issues.every((i) => i.labels!.causes.includes("resumed_from_background"))).toBe(true);
-    expect(s.breakdowns.category).toEqual([{ key: "network.never_sent", errors: 6 }]);
-    expect(s.breakdowns.owner).toEqual([{ key: "app", errors: 6 }]);
+    expect(s.issues).toHaveLength(1);
+    expect(s.issues[0]).toMatchObject({ fingerprint: "offline", offline: true, title: "Phone offline: requests never left the phone" });
+    expect(s.issues[0]!.labels).toMatchObject({ category: "network.offline", impact: "degraded" });
+    expect(s.issues[0]!.labels!.causes).toContain("resumed_from_background");
+    expect(s.breakdowns.category).toEqual([{ key: "network.offline", errors: 6 }]);
+    // Nobody owns the phone's signal, and no endpoint failed.
+    expect(s.breakdowns.owner).toEqual([]);
+    expect(s.health.endpoints).toEqual([]);
     expect(s.breakdowns.impact).toEqual([{ key: "degraded", errors: 6 }]);
+    // Under Connectivity, not in the list or the counts.
+    expect(s.totals.activeIssues).toBe(0);
+    expect(filterIssues(s.issues, {})).toEqual([]);
+    expect(filterIssues(s.issues, { category: "network.offline" })).toHaveLength(1);
   });
 
   it("works out labels for issues stored before the classifier existed, and adds the issue's causes", async () => {
@@ -317,7 +324,7 @@ describe("culprit in app code", () => {
 });
 
 describe("incidents", () => {
-  it("folds the staging resume incident's 4 issues into 1 incident", async () => {
+  it("shows the staging resume incident as one offline burst on one phone, not an incident (ABA-132)", async () => {
     const { resumeIncident } = await import("../../../../packages/ingest/src/fixtures/resume-incident");
     const store = new MemoryStore();
     const ts = resumeIncident[0]!.ts;
@@ -331,25 +338,49 @@ describe("incidents", () => {
     };
     await ingest(JSON.stringify(env), "k", { store, keys: { k: "cell-c" }, now: () => new Date(last) });
     const s = (await buildSummary(store, "cell-c", DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last)))!;
+    expect(s.incidents).toEqual([]);
+    expect(s.connectivity).toMatchObject({ fingerprint: "offline", bursts: 1, phones: 1, failures: 6 });
 
+    // The offline issue's page lists the burst, with the calls that never left the phone.
+    const d = (await buildIssueDetail(store, "cell-c", "offline", DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last)))!;
+    expect(d.bursts).toHaveLength(1);
+    expect(d.bursts![0]).toMatchObject({ phone: "install-1", failures: 6 });
+    expect(d.bursts![0]!.calls.map((c) => c.count)).toEqual([2, 2, 1, 1]);
+    expect(d.findings).toEqual([]);
+  });
+
+  it("folds issues that failed together for the same reason into one incident", async () => {
+    const { resumeIncident } = await import("../../../../packages/ingest/src/fixtures/resume-incident");
+    // The staging resume incident, slowed down: failures that reached for a server, not an offline phone.
+    const slow = resumeIncident.map((e) => ({
+      ...e,
+      ...(e.request ? { request: { ...e.request, durationMs: 1500 } } : {}),
+      breadcrumbs: e.breadcrumbs?.map((b) => (b.data && "durationMs" in b.data ? { ...b, data: { ...b.data, durationMs: 1500 } } : b)),
+    }));
+    const store = new MemoryStore();
+    const ts = slow[0]!.ts;
+    const last = slow[slow.length - 1]!.ts;
+    const env = {
+      sdk: { name: "t", version: "1" },
+      context: { app: { id: "cell-c", version: "10.1.29" }, os: { name: "ios", version: "27.3" }, runtime: { name: "react-native" } },
+      user: { anonymousId: "install-1" },
+      session: { id: "s", startedAt: ts },
+      events: slow,
+    };
+    await ingest(JSON.stringify(env), "k", { store, keys: { k: "cell-c" }, now: () => new Date(last) });
+    const s = (await buildSummary(store, "cell-c", DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last)))!;
+
+    expect(s.connectivity).toBeNull();
     expect(s.incidents).toHaveLength(1);
-    expect(s.incidents[0]).toMatchObject({
-      key: "resumed_from_background|network.never_sent|ios",
-      title: "Requests failed on app resume (iOS)",
-      errors: 6,
-      users: 1,
-      episodes: 1,
-      firstDay: "2026-11-14",
-      lastDay: "2026-11-14",
-      active: true,
-    });
+    expect(s.incidents[0]).toMatchObject({ errors: 6, users: 1, episodes: 1, firstDay: "2026-11-14", lastDay: "2026-11-14", active: true });
+    expect(s.incidents[0]!.key).toMatch(/^resumed_from_background\|network\.failed\|ios$/);
     expect(s.incidents[0]!.issues).toHaveLength(4);
     expect(s.incidents[0]!.issues.map((i) => i.errors).sort()).toEqual([1, 1, 2, 2]);
     expect(s.issues.every((i) => i.incident === s.incidents[0]!.key)).toBe(true);
 
     // The issue page links back up to it.
     const d = (await buildIssueDetail(store, "cell-c", s.issues[0]!.fingerprint, DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last)))!;
-    expect(d.issue.incidentTitle).toBe("Requests failed on app resume (iOS)");
+    expect(d.issue.incidentTitle).toBe(s.incidents[0]!.title);
 
     // Once every issue in it is resolved, it's no longer active, and the 24h view counts the same way.
     for (const i of s.issues) await store.setIssueStatus("cell-c", i.fingerprint, { status: "resolved", resolvedIn: "10.1.30" });
@@ -372,8 +403,10 @@ describe("explanations", () => {
     const env = { sdk: { name: "t", version: "1" }, context: { app: { id: "cell-c" }, os: { name: "ios" }, runtime: { name: "react-native" } }, user: { anonymousId: "i1" }, session: { id: "s", startedAt: resumeIncident[0]!.ts }, events: resumeIncident };
     await ingest(JSON.stringify(env), "k", { store, keys: { k: "cell-c" }, now: () => new Date(last) });
     const s = (await buildSummary(store, "cell-c", DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last)))!;
+    // The staging resume incident is a phone offline (ABA-132): one issue, explained as such.
+    expect(s.issues).toHaveLength(1);
     for (const i of s.issues) {
-      expect(i.explanation?.summary).toMatch(/right after reopening the app.*Not a server outage.*Pass to: app team\.$/);
+      expect(i.explanation?.summary).toMatch(/right after reopening the app.*The phone was offline/);
       expect(i.explanation?.technical.fix).toMatch(/NetInfo/);
     }
     const d = (await buildIssueDetail(store, "cell-c", s.issues[0]!.fingerprint, DEFAULT_SEVERITY_THRESHOLDS, Date.parse(last), { trackers: { dashboardUrl: "https://debug.example" } }))!;

@@ -1,5 +1,5 @@
 import type { Breadcrumb, ContextInput, EnvelopeInput, EventInput, Severity } from "@debugkit/schema/core";
-import { latencyBucket, LATENCY_BUCKETS_MS, markLibraryFrames, MAX_BREADCRUMBS, MAX_CAPTURED_BODY, isTestEvent, parseStack, TEST_TAG } from "@debugkit/schema/core";
+import { latencyBucket, LATENCY_BUCKETS_MS, markLibraryFrames, MAX_BREADCRUMBS, MAX_CAPTURED_BODY, isTestEvent, NEVER_SENT_MS, parseStack, TEST_TAG } from "@debugkit/schema/core";
 
 /** Marks an Error from `testError()`. Symbol.for, so it survives two copies of the SDK in one app. */
 const TEST_MARK = Symbol.for("debugkit.test");
@@ -386,17 +386,22 @@ export class DebugClient {
   }
 
   /** Response times per endpoint, sent as one metric event each about once a minute. */
-  private timings = new Map<string, { count: number; errors: number; buckets: number[] }>();
+  private timings = new Map<string, { count: number; errors: number; unsent: number; buckets: number[] }>();
   private timingsSince = Date.now();
   /** Set when the ingest rejects metric events (older than 0.7): stop sending them, keep the rest. */
   private noMetrics = false;
 
-  private timeRequest(key: string, ms: number, failed: boolean) {
+  /** `unsent`: the call never left the phone. It's counted apart: not a request the endpoint failed (ABA-132). */
+  private timeRequest(key: string, ms: number, failed: boolean, unsent = false) {
     if (this.noMetrics) return;
     let t = this.timings.get(key);
     if (!t) {
       if (this.timings.size >= 50) return; // cap the endpoints tracked per minute
-      this.timings.set(key, (t = { count: 0, errors: 0, buckets: new Array(LATENCY_BUCKETS_MS.length + 1).fill(0) }));
+      this.timings.set(key, (t = { count: 0, errors: 0, unsent: 0, buckets: new Array(LATENCY_BUCKETS_MS.length + 1).fill(0) }));
+    }
+    if (unsent) {
+      t.unsent++;
+      return;
     }
     t.count++;
     if (failed) t.errors++;
@@ -406,7 +411,9 @@ export class DebugClient {
   /** Turn the collected timings into metric events (every minute, or now when `force`). */
   private queueTimings(force = false) {
     if (!this.timings.size || this.noMetrics || (!force && Date.now() - this.timingsSince < 60_000)) return;
-    for (const [key, t] of this.timings) this.push({ type: "metric", id: uid(), ts: now(), name: "http", key: key.slice(0, 300), count: t.count, errors: t.errors, buckets: t.buckets });
+    // An endpoint whose every call this minute never left the phone sends nothing: no requests to time.
+    for (const [key, t] of this.timings)
+      if (t.count) this.push({ type: "metric", id: uid(), ts: now(), name: "http", key: key.slice(0, 300), count: t.count, errors: t.errors, buckets: t.buckets, ...(t.unsent ? { unsent: t.unsent } : {}) });
     this.timings.clear();
     this.timingsSince = Date.now();
   }
@@ -841,7 +848,8 @@ export class DebugClient {
       ...(failed && readProblemDetails(r.responseBody)),
     };
     const crumb = this.addCrumb("network", `${r.method} ${name.matched ? name.path : url} → ${ended} (${ms}ms)`, data, failed ? "error" : slow ? "warning" : "info");
-    if (!r.aborted) this.timeRequest(`${r.method} ${url}`, ms, failed);
+    const unsent = failed && r.status === undefined && !r.timedOut && ms < NEVER_SENT_MS;
+    if (!r.aborted) this.timeRequest(`${r.method} ${url}`, ms, failed, unsent);
     if (!failed) return;
 
     const flow = net.flows?.find(([p]) => (typeof p === "string" ? url.includes(p) : p.test(url)))?.[1];

@@ -67,6 +67,7 @@ interface FilterableIssue {
   flow?: string;
   labels?: Pick<Classification, LabelFilterKey>;
   test?: boolean;
+  offline?: boolean;
 }
 
 export function matchesStatus(i: { status: string }, status: StatusFilter = "open"): boolean {
@@ -80,6 +81,8 @@ export function filterIssues<T extends FilterableIssue>(issues: readonly T[], f:
   return issues.filter(
     (i) =>
       (f.tests || !i.test) &&
+      // The offline issue lives under Connectivity, unless the list is filtered to it (ABA-132).
+      (!i.offline || f.category === "network.offline") &&
       matchesStatus(i, f.status) &&
       (!f.flow || (i.flow ?? "untagged") === f.flow) &&
       LABEL_FILTER_KEYS.every((k) => !f[k] || i.labels?.[k] === f[k]),

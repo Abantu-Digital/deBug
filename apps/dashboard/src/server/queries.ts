@@ -7,6 +7,7 @@ import {
   hostNameFor,
   nameUrlsIn,
   isTestIssue,
+  OFFLINE_FINGERPRINT,
   percentileMs,
   SEVERITY_ORDER,
   severityFromCount,
@@ -23,7 +24,8 @@ import {
 } from "@debugkit/schema";
 import { explain, explanationLines, explanationMarkdown, findingLine, type Explanation } from "./explain";
 import { findingsOf, type Finding } from "./detectors";
-import { failedRequest, timelineOf } from "./event";
+import { burstSummary, offlineBursts, type OfflineBurst } from "./offline";
+import { EVENT_LOOKBACK, failedRequest, timelineOf } from "./event";
 import { daysBetween, resolveRange, weekOf, type DateRange } from "./range";
 
 /**
@@ -80,6 +82,8 @@ export interface IssueRow {
   explanation?: Explanation;
   /** Made on purpose to test deBug (tagged test=true): hidden unless asked, never counted (ABA-133). */
   test: boolean;
+  /** The one issue that collects offline bursts (ABA-132): shown under Connectivity, not in the list or counts. */
+  offline: boolean;
 }
 
 /**
@@ -174,6 +178,8 @@ export interface Summary {
     testIssues: number;
     failingFlows: number;
   };
+  /** Phones going offline in the range (ABA-132), grouped into bursts; null when there were none. */
+  connectivity: { fingerprint: string; bursts: number; phones: number; failures: number; lastSeen?: string } | null;
   narrative: string[];
   /** One point per hour (24h), day (up to 90 days) or week (longer), labelled by its start. */
   trend: { day: string; errors: number; events: number }[];
@@ -228,10 +234,12 @@ export const SUMMARY_FIELDS = {
   "totals.changePct": "Percent change of errors vs the previous period of the same length. null when that period had fewer than 10 errors.",
   "totals.activeIssues": "Distinct grouped errors (issues) seen in the range, without test errors.",
   "totals.testIssues": "Issues made on purpose to test deBug (tag test=true). Left out of every count; list them with ?tests=1.",
+  connectivity: "Phones going offline (requests that never left the phone, several at once or in airplane mode), as bursts per phone. Not counted against any endpoint or owner. null when there were none.",
   "totals.criticalIssues": "Issues whose 24h occurrence count meets the critical threshold.",
   "flows[]": "Parts of the app as tagged by the developer (e.g. auth.login). Sorted by severity, then errors24h, then errorsRange.",
   "flows[].failureRate": "failures/(failures+successes) in the range from events logged with an outcome. null when the app logs no outcomes for that flow.",
   "issues[]": "Grouped errors seen in the range. Sorted by severity, then count24h, then countRange. Narrow with ?status=open|resolved|ignored|all (default all), ?flow=, ?category=, ?owner= and ?impact= (ids from breakdowns); an unknown value is a 400. Test errors are left out unless ?tests=1. _filter echoes what was applied.",
+  "issues[].offline": "true for the one issue that collects offline bursts (calls that never left the phone). Shown under connectivity, left out of the list unless ?category=network.offline, and never counted as active.",
   "issues[].test": "true for an issue made on purpose to test deBug (tag test=true): listed only with ?tests=1, never counted, always severity low.",
   "issues[].severity": "Derived from count24h using thresholds critical/high/medium.",
   "issues[].title": "Error name and message, with hosts named in Settings shown by their names.",
@@ -382,10 +390,16 @@ export async function buildSummary(
     .map((i) => toIssueRow(i, issue24h.get(i.fingerprint) ?? 0, hourly ? (issue24h.get(i.fingerprint) ?? 0) : (issueRange.get(i.fingerprint) ?? 0), thresholds, latestVersion, criticalFlows, hosts))
     .sort(bySeverityThenCount);
   // Users affected: one count per issue, so only for the issues people look at first. Test errors
-  // (ABA-133) are listed (App code page, ?tests=1 on the API) but never counted as active.
-  const active = issueRows.filter((i) => !i.test && i.status !== "ignored" && i.status !== "resolved");
+  // (ABA-133) are listed (App code page, ?tests=1 on the API) but never counted as active; nor is
+  // the offline issue (ABA-132).
+  const active = issueRows.filter((i) => !i.test && !i.offline && i.status !== "ignored" && i.status !== "resolved");
   await Promise.all(active.slice(0, 10).map(async (i) => (i.users = await countUsersSafe(store, app, `issue:${i.fingerprint}`, usersSince))));
   const lastEvents = new Map(issues.map((i) => [i.fingerprint, i.lastEvent]));
+  // Offline bursts (ABA-132): one extra read, only when a phone went offline in the range.
+  const offlineRow = issueRows.find((i) => i.offline);
+  const connectivity = offlineRow
+    ? { fingerprint: offlineRow.fingerprint, ...burstSummary(offlineBursts((await store.listIssueEvents(app, offlineRow.fingerprint, { limit: EVENT_LOOKBACK })).filter((e) => e.event.ts >= rangeStart), hosts)) }
+    : null;
   for (const row of issueRows)
     if (row.labels) row.explanation = explain({ issue: row, labels: row.labels, lastEvent: lastEvents.get(row.fingerprint), users: row.users, hosts, rangeLabel: range.label, now });
 
@@ -458,6 +472,7 @@ export async function buildSummary(
     trend,
     flows,
     issues: issueRows,
+    connectivity,
     incidents,
     breakdowns: {
       os: top(os),
@@ -690,6 +705,7 @@ function toIssueRow(
     firstSeen: i.firstSeen,
     lastSeen: i.lastSeen,
     test,
+    offline: i.fingerprint === OFFLINE_FINGERPRINT,
   };
 }
 
@@ -724,7 +740,7 @@ function narrate(s: Summary): string[] {
     const n = r.preset === "24h" ? f.errors24h : f.errorsRange;
     out.push(`${f.flow}${f.critical ? " (a critical flow)" : ""} is the most affected flow (${f.severity}): ${plural(n, "error")} in ${r.label} from ${plural(f.issues, "issue")}.${failRate}`);
   }
-  const i = s.issues.find((x) => !x.test && x.status !== "ignored" && x.status !== "resolved");
+  const i = s.issues.find((x) => !x.test && !x.offline && x.status !== "ignored" && x.status !== "resolved");
   if (i && i.countRange > 0) {
     const isNew = Date.parse(s.generatedAt) - Date.parse(i.firstSeen) < 3 * DAY;
     out.push(`Top issue: "${i.title}"${i.culprit ? ` in ${i.culprit}` : ""}, ${plural(i.countRange, "time")} in ${r.label}${isNew ? `, first seen ${relDays(s.generatedAt, i.firstSeen)}` : ""}.`);
@@ -773,6 +789,8 @@ export interface IssueDetail {
   hints: { title: string; detail: string }[];
   /** Specific advice from patterns in the recent occurrences' trails (ABA-146), best first. */
   findings: Finding[];
+  /** For the offline issue (ABA-132): its occurrences grouped into bursts per phone, newest first. */
+  bursts?: OfflineBurst[];
   /** The explanation as Markdown, for "Copy for a ticket". */
   ticketMarkdown?: string;
   /**
@@ -860,7 +878,9 @@ export async function buildIssueDetail(
         now,
       })
     : undefined;
-  const findings = findingsOf(errorEvents.flatMap((e) => (e.event.type === "error" ? [e.event] : [])), hosts);
+  const offline = fingerprint === OFFLINE_FINGERPRINT;
+  // Trail patterns don't apply to a phone going offline: its bursts say what happened instead.
+  const findings = offline ? [] : findingsOf(errorEvents.flatMap((e) => (e.event.type === "error" ? [e.event] : [])), hosts);
   const link = issueUrl(opts.trackers?.dashboardUrl, app, fingerprint);
   const detail = {
     // A test error is listed with the other test errors, not under App code or a service.
@@ -887,6 +907,7 @@ export async function buildIssueDetail(
     })),
     hints,
     findings,
+    ...(offline ? { bursts: offlineBursts(events, hosts) } : {}),
     ticketMarkdown: row.explanation ? explanationMarkdown(row.title, row.explanation, link, findings) : undefined,
   } satisfies IssueDetail;
   detail.links = trackerLinks(detail, opts.trackers ?? {});
