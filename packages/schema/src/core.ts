@@ -30,8 +30,8 @@ export type {
   RollupRow,
 } from "./index";
 
-export { cleanFnName, markLibraryFrames } from "./frames";
-export { hostNameFor, MAX_HOST_NAMES, nameUrl, nameUrlsIn, normaliseHostMatch, validHostNames, type HostName } from "./hosts";
+export { cleanFnName, markLibraryFrames, RN_BUNDLE } from "./frames";
+export { hostNameFor, hostOf, MAX_HOST_NAMES, nameUrl, nameUrlsIn, normaliseHostMatch, validHostNames, type HostName } from "./hosts";
 export {
   CATEGORIES,
   CATEGORY_INFO,
@@ -51,6 +51,9 @@ export {
 } from "./taxonomy";
 
 export const SCHEMA_VERSION = 1;
+
+/** What the SDK puts in place of a secret it redacted, in headers, bodies and queries. */
+export const REDACTED = "[redacted]";
 
 /** The most of a failed call's captured body kept, in characters (16 KB). */
 export const MAX_CAPTURED_BODY = 16_384;

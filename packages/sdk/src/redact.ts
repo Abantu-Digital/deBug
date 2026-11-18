@@ -3,6 +3,7 @@
  * kept except secrets: values that would let someone act as the user or use their card.
  * Pure functions: no globals, never throws.
  */
+import { REDACTED } from "@debugkit/schema/core";
 
 export interface RedactOptions {
   /** More body field names to redact, at any depth, without case. */
@@ -18,8 +19,6 @@ export interface CapturedBody {
   bodySize?: number;
   truncated?: boolean;
 }
-
-const REDACTED = "[redacted]";
 
 /** Body fields redacted at any depth. Plain `code` is kept: it is usually the backend's error code. */
 const SECRET_FIELDS = [
