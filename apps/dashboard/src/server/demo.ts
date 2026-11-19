@@ -207,6 +207,8 @@ export async function seedDemo(): Promise<MemoryStore> {
     }
   }
   await seedUpstreamOutage(store, keys, now);
+  // What people see the sample app as; its id stays megatron-native.
+  await store.putSettings(DEMO_APP, { displayName: "Megatron Native" });
   return store;
 }
 

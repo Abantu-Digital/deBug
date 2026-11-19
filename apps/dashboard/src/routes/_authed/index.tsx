@@ -2,7 +2,8 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { CopyButton } from "~/components/copy-button";
 import { EmptyState } from "~/components/empty-state";
 import { RangePicker, rangeSearch, RetentionNote, type PageSearch, type RangeSearch } from "~/components/range-picker";
-import { HealthBox, levelName, toneClass } from "~/components/ui";
+import { AppOptions, HealthBox, levelName, toneClass } from "~/components/ui";
+import { appLabel } from "@debugkit/schema";
 import { getHealth } from "~/server/fns";
 import type { HealthReport } from "~/server/health";
 import { HEALTH_ORDER, plural, type HealthLevel, type HealthTileData } from "~/lib/health";
@@ -45,13 +46,13 @@ function HealthWall() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-wide text-muted">Health · {range.label}</p>
-          <h1 className="text-2xl font-semibold tracking-tight">How {report.app} is doing</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">How {appLabel(report.app, report.names[report.app])} is doing</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <RangePicker key={`${range.preset}${range.from}${range.to}`} value={range} today={report.generatedAt.slice(0, 10)} onChange={(r) => navigate({ search: (s) => ({ ...s, ...r }) })} />
           {report.apps.length > 1 && (
             <select aria-label="App" value={report.app} onChange={(e) => navigate({ search: (s) => ({ ...s, app: e.target.value }) })} className="rounded-md border border-line bg-panel px-2 py-1.5 text-sm">
-              {report.apps.map((a) => <option key={a}>{a}</option>)}
+              <AppOptions apps={report.apps} names={report.names} />
             </select>
           )}
         </div>

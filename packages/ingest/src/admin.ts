@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { teamAction } from "./team";
 import { MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, type AlertSettings, type AppSettings, type WriteStore } from "@debugkit/adapters";
-import { validHostNames } from "@debugkit/schema";
+import { validAppName, validHostNames } from "@debugkit/schema";
 import { SLACK_WEBHOOK } from "./alerts";
 
 /** Used when neither the app's settings nor the deployment set a retention period. */
@@ -69,6 +69,12 @@ function settingsPatch(body: Record<string, unknown>, current: AppSettings | nul
     }
     patch.alerts = next;
   }
+  if (body.displayName !== undefined) {
+    const name = validAppName(body.displayName);
+    if (typeof name === "string") return name;
+    // Kept as "" rather than removed: Firestore's merge would leave the old name.
+    patch.displayName = name.name;
+  }
   if (body.hosts !== undefined) {
     const hosts = validHostNames(body.hosts);
     if (typeof hosts === "string") return hosts;
@@ -102,7 +108,7 @@ const APP_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
  * data. Mounted under /admin on the ingest function:
  *
  *   GET  /admin/settings?app=…              { settings, retentionDays }
- *   PUT  /admin/settings   { app, retentionDays?, criticalFlows?, alerts?, hosts? }
+ *   PUT  /admin/settings   { app, displayName?, retentionDays?, criticalFlows?, alerts?, hosts? }
  *   POST /admin/alert-test { app }           send a test message to the app's Slack webhook
  *   POST /admin/restamp    { app, cursor? }  re-stamp existing events' expiry, one page per call
  *   PUT  /admin/issue      { app, fingerprint, status: open|resolved|ignored, resolvedIn? }

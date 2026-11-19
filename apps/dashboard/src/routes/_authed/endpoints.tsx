@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { RangePicker, rangeSearch, RetentionNote, type PageSearch, type RangeSearch } from "~/components/range-picker";
 import { clock, joined } from "~/components/timeline";
-import { Card, HealthBox, timeAgo } from "~/components/ui";
+import { AppOptions, Card, HealthBox, timeAgo } from "~/components/ui";
 import { byHealth, serviceTile } from "~/lib/health";
 import type { Count, EndpointFailure, EndpointHealth, ServiceHealth } from "~/server/endpoints";
 import { getEndpoints } from "~/server/fns";
@@ -47,7 +47,7 @@ function EndpointsPage() {
           <RangePicker key={`${range.preset}${range.from}${range.to}`} value={range} today={report.generatedAt.slice(0, 10)} onChange={(r) => navigate({ search: (s) => ({ ...s, ...r }) })} />
           {report.apps.length > 1 && (
             <select aria-label="App" value={report.app} onChange={(e) => navigate({ search: (s) => ({ ...s, app: e.target.value, endpoint: undefined }) })} className="rounded-md border border-line bg-panel px-2 py-1.5 text-sm">
-              {report.apps.map((a) => <option key={a}>{a}</option>)}
+              <AppOptions apps={report.apps} names={report.names} />
             </select>
           )}
         </div>

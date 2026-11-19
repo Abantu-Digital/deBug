@@ -1,5 +1,5 @@
 import type { AlertSettings, AppSettings, RestampResult } from "@debugkit/adapters";
-import { normaliseHostMatch, validHostNames, type HostName } from "@debugkit/schema";
+import { normaliseHostMatch, validAppName, validHostNames, type HostName } from "@debugkit/schema";
 import { MAX_RETENTION_DAYS, MIN_RETENTION_DAYS } from "@debugkit/adapters";
 import { config } from "./config";
 import { clearStoreCache, getLocalWriteStore, getStore } from "./store";
@@ -35,6 +35,8 @@ async function admin<T>(method: "GET" | "PUT" | "POST", route: string, body?: un
 
 export interface SettingsView {
   app: string;
+  /** What people see the app as; "" shows the id. */
+  displayName: string;
   retentionDays: number | null;
   criticalFlows: string[];
   /** The Slack webhook is shown masked ("https://hooks.slack.com/…abcd"). */
@@ -55,6 +57,7 @@ export async function readSettings(app: string): Promise<SettingsView> {
       const out = await admin<{ settings: AppSettings | null; retentionDays: number }>("GET", "/settings", undefined, { app });
       return {
         app,
+        displayName: out.settings?.displayName ?? "",
         retentionDays: out.retentionDays,
         criticalFlows: out.settings?.criticalFlows ?? [],
         alerts: out.settings?.alerts ?? {},
@@ -64,13 +67,14 @@ export async function readSettings(app: string): Promise<SettingsView> {
         writer,
       };
     } catch (err) {
-      return { app, retentionDays: c.retentionDays ?? null, criticalFlows: [], alerts: {}, hosts: [], source: c.retentionDays ? "default" : "unknown", writer, note: `Couldn't reach the ingest function: ${(err as Error).message}` };
+      return { app, displayName: "", retentionDays: c.retentionDays ?? null, criticalFlows: [], alerts: {}, hosts: [], source: c.retentionDays ? "default" : "unknown", writer, note: `Couldn't reach the ingest function: ${(err as Error).message}` };
     }
   }
   const s = await (await getStore()).getSettings(app).catch(() => null);
   const hook = s?.alerts?.slackWebhookUrl;
   return {
     app,
+    displayName: s?.displayName ?? "",
     retentionDays: s?.retentionDays ?? c.retentionDays ?? (writer === "local" ? 30 : null),
     criticalFlows: s?.criticalFlows ?? [],
     alerts: { ...s?.alerts, slackWebhookUrl: hook ? `https://hooks.slack.com/…${hook.slice(-4)}` : undefined },
@@ -80,6 +84,13 @@ export async function readSettings(app: string): Promise<SettingsView> {
     writer,
     note: writer === "none" ? "Changing settings needs DEBUG_ADMIN_URL and DEBUG_ADMIN_TOKEN (npx debugkit init sets them)." : undefined,
   };
+}
+
+/** Every app's display name, by id: those with none set are left out (show the id). */
+export async function appNames(apps: readonly string[]): Promise<Record<string, string>> {
+  const store = await getStore();
+  const names = await Promise.all(apps.map((a) => store.getSettings(a).then((s) => s?.displayName?.trim() ?? "", () => "")));
+  return Object.fromEntries(apps.map((a, i) => [a, names[i]!]).filter(([, n]) => n));
 }
 
 /** Hosts the app called in the last 30 days, busiest first: suggestions for naming them. */
@@ -111,8 +122,8 @@ export async function writeRetention(app: string, days: number): Promise<Setting
   return readSettings(app);
 }
 
-/** Change critical flows, alert settings and/or host names. Validation happens in the ingest function (or here, locally). */
-export async function writeSettings(app: string, patch: { criticalFlows?: string[]; alerts?: AlertSettings; hosts?: HostName[] }): Promise<SettingsView> {
+/** Change the display name, critical flows, alert settings and/or host names. Validation happens in the ingest function (or here, locally). */
+export async function writeSettings(app: string, patch: { displayName?: string; criticalFlows?: string[]; alerts?: AlertSettings; hosts?: HostName[] }): Promise<SettingsView> {
   const writer = settingsWriter();
   if (writer === "admin") await admin("PUT", "/settings", { app, ...patch });
   else if (writer === "local") {
@@ -123,8 +134,10 @@ export async function writeSettings(app: string, patch: { criticalFlows?: string
       throw new Error("Use a Slack incoming-webhook URL (https://hooks.slack.com/services/…).");
     const hosts = patch.hosts ? validHostNames(patch.hosts) : undefined;
     if (typeof hosts === "string") throw new Error(hosts);
+    const name = patch.displayName === undefined ? undefined : validAppName(patch.displayName);
+    if (typeof name === "string") throw new Error(name);
     const alerts = patch.alerts ? { ...patch.alerts, slackWebhookUrl: url?.includes("…") ? cur?.alerts?.slackWebhookUrl : url || undefined } : undefined;
-    await store.putSettings(app, { ...(patch.criticalFlows ? { criticalFlows: patch.criticalFlows } : {}), ...(alerts ? { alerts } : {}), ...(hosts ? { hosts } : {}) });
+    await store.putSettings(app, { ...(name ? { displayName: name.name } : {}), ...(patch.criticalFlows ? { criticalFlows: patch.criticalFlows } : {}), ...(alerts ? { alerts } : {}), ...(hosts ? { hosts } : {}) });
   } else throw new Error("Settings can't be changed from this dashboard: DEBUG_ADMIN_URL and DEBUG_ADMIN_TOKEN aren't set.");
   return readSettings(app);
 }

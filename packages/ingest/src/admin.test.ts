@@ -65,6 +65,15 @@ describe("admin routes", () => {
     expect(put.body).toMatchObject({ ok: true, settings: { hosts: [{ match: "api.x.com", name: "Accounts", owner: "backend" }] } });
   });
 
+  it("save the app's display name, validating it, and clear it back to the id", async () => {
+    const store = new MemoryStore();
+    expect((await call(store, { method: "PUT", body: JSON.stringify({ app: "shop", displayName: "a\nb" }) })).status).toBe(400);
+    const put = await call(store, { method: "PUT", body: JSON.stringify({ app: "shop", displayName: "  The   Shop " }) });
+    expect(put.body).toMatchObject({ ok: true, settings: { displayName: "The Shop" } });
+    const cleared = await call(store, { method: "PUT", body: JSON.stringify({ app: "shop", displayName: "" }) });
+    expect(cleared.body).toMatchObject({ ok: true, settings: { displayName: "" } });
+  });
+
   it("read and change the retention period, validating it", async () => {
     const store = new MemoryStore();
     expect((await call(store, { query: { app: "shop" } })).body).toMatchObject({ ok: true, retentionDays: 60, settings: null });

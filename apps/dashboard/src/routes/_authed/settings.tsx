@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
-import { hostKindLabel, normaliseHostMatch, OWNER_INFO, OWNERS, type HostKind, type HostName, type Owner } from "@debugkit/schema";
-import { Card, timeAgo } from "~/components/ui";
+import { appLabel, hostKindLabel, MAX_APP_NAME, normaliseHostMatch, OWNER_INFO, OWNERS, type HostKind, type HostName, type Owner } from "@debugkit/schema";
+import { AppOptions, Card, timeAgo } from "~/components/ui";
 import { partText } from "~/lib/version-text";
 import { UpgradeCommand, useVersionStatus } from "~/components/version-banner";
 import type { VersionStatus } from "~/server/versions";
@@ -18,7 +18,7 @@ const CHOICES = [30, 60, 90, 180, 365];
 
 
 function SettingsPage() {
-  const { apps, settings, seenHosts } = Route.useLoaderData();
+  const { apps, settings, seenHosts, names } = Route.useLoaderData();
   const versions = useVersionStatus();
   const navigate = useNavigate({ from: Route.fullPath });
   const router = useRouter();
@@ -67,16 +67,19 @@ function SettingsPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-wide text-muted">Settings</p>
-          <h1 className="text-2xl font-semibold tracking-tight">{settings.app}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{appLabel(settings.app, settings.displayName)}</h1>
+          {settings.displayName && <p className="font-mono text-xs text-muted">{settings.app}</p>}
         </div>
         {apps.length > 1 && (
           <select aria-label="App" value={settings.app} onChange={(e) => navigate({ search: { app: e.target.value } })} className="rounded-md border border-line bg-panel px-2 py-1.5 text-sm">
-            {apps.map((a) => <option key={a}>{a}</option>)}
+            <AppOptions apps={apps} names={names} />
           </select>
         )}
       </div>
 
       {versions && <VersionsCard status={versions} />}
+
+      {canEdit && <AppName key={settings.app + settings.displayName} app={settings.app} name={settings.displayName} onStatus={setStatus} />}
 
       <Card title="Data retention" subtitle="Your data lives in your own database, so you decide how long to keep it.">
         <dl className="grid gap-3 text-sm sm:grid-cols-2">
@@ -214,6 +217,41 @@ function FlowsAndAlerts({
         )}
       </div>
     </>
+  );
+}
+
+/** The app's display name: what people see it as. The id stays what the SDK sends and what links use. */
+function AppName({ app, name, onStatus }: { app: string; name: string; onStatus: (s: { tone: "ok" | "error" | "info"; text: string } | null) => void }) {
+  const router = useRouter();
+  const [value, setValue] = useState(name);
+  const [busy, setBusy] = useState(false);
+  const changed = value.trim().replace(/\s+/g, " ") !== name;
+  const save = async () => {
+    setBusy(true);
+    onStatus(null);
+    const out = await saveAppSettings({ data: { app, displayName: value } }).catch((e: Error) => ({ ok: false as const, error: e.message }));
+    setBusy(false);
+    if (!out.ok) return onStatus({ tone: "error", text: out.error });
+    onStatus({ tone: "ok", text: value.trim() ? `Saved. ${app} now shows as "${value.trim().replace(/\s+/g, " ")}".` : `Saved. The app shows as ${app} again.` });
+    await router.invalidate();
+  };
+  return (
+    <Card title="App name" subtitle="What people see this app as. The app id stays the same in the SDK, links and keys.">
+      <form
+        className="flex flex-wrap items-end gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (changed) void save();
+        }}
+      >
+        <label className="min-w-0 flex-1 text-xs text-muted">
+          Display name
+          <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={app} maxLength={MAX_APP_NAME} className="mt-1 w-full rounded-md border border-line bg-panel px-2 py-1.5 text-sm text-ink" />
+        </label>
+        <button type="submit" disabled={!changed || busy} className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40">Save</button>
+      </form>
+      <p className="mt-2 text-xs text-muted">Leave it empty to show the id ({app}).</p>
+    </Card>
   );
 }
 

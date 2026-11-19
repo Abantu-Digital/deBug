@@ -1,7 +1,18 @@
 import type { CSSProperties, ReactNode } from "react";
 import { Link, type LinkProps } from "@tanstack/react-router";
-import { SEVERITY_INFO, type Severity } from "@debugkit/schema";
+import { appLabel, SEVERITY_INFO, type Severity } from "@debugkit/schema";
 import type { HealthLevel } from "~/lib/health";
+
+/** An app picker's options: each app by its display name from Settings, its id as the value. */
+export function AppOptions({ apps, names }: { apps: readonly string[]; names: Readonly<Record<string, string>> }) {
+  return (
+    <>
+      {apps.map((a) => (
+        <option key={a} value={a}>{appLabel(a, names[a])}</option>
+      ))}
+    </>
+  );
+}
 
 export function Logo() {
   return (
