@@ -12,7 +12,7 @@ function setup(status = 200) {
   const c = new DebugClient().init({
     endpoint: "https://ingest.example/x",
     ingestKey: "pk_test",
-    app: { id: "megaton-native", version: "2.3.1" },
+    app: { id: "megatron-native", version: "2.3.1" },
     context: { os: { name: "android", version: "14" }, runtime: { name: "react-native" } },
     autoCapture: false,
     fetch: fetch as unknown as typeof globalThis.fetch,

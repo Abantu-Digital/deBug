@@ -10,7 +10,7 @@ describe("buildSummary", () => {
   it("tells the demo story: auth.login regression on 2.4.0 / android 14 is the critical issue", async () => {
     const store = await seedDemo();
     const s = (await buildSummary(store, undefined, DEFAULT_SEVERITY_THRESHOLDS))!;
-    expect(s.app).toBe("megaton-native");
+    expect(s.app).toBe("megatron-native");
     expect(s.flows[0]?.flow).toBe("auth.login");
     expect(s.issues[0]?.severity).toBe("critical");
     expect(s.issues[0]?.culprit).toContain("handleOtpResponse");

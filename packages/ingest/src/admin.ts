@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { teamAction } from "./team";
 import { MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, type AlertSettings, type AppSettings, type WriteStore } from "@debugkit/adapters";
-import { validHostNames } from "@debugkit/schema";
+import { appLabel, validAppName, validHostNames } from "@debugkit/schema";
 import { SLACK_WEBHOOK } from "./alerts";
 
 /** Used when neither the app's settings nor the deployment set a retention period. */
@@ -69,6 +69,12 @@ function settingsPatch(body: Record<string, unknown>, current: AppSettings | nul
     }
     patch.alerts = next;
   }
+  if (body.displayName !== undefined) {
+    const name = validAppName(body.displayName);
+    if (typeof name === "string") return name;
+    // Kept as "" rather than removed: Firestore's merge would leave the old name.
+    patch.displayName = name.name;
+  }
   if (body.hosts !== undefined) {
     const hosts = validHostNames(body.hosts);
     if (typeof hosts === "string") return hosts;
@@ -102,7 +108,7 @@ const APP_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
  * data. Mounted under /admin on the ingest function:
  *
  *   GET  /admin/settings?app=…              { settings, retentionDays }
- *   PUT  /admin/settings   { app, retentionDays?, criticalFlows?, alerts?, hosts? }
+ *   PUT  /admin/settings   { app, displayName?, retentionDays?, criticalFlows?, alerts?, hosts? }
  *   POST /admin/alert-test { app }           send a test message to the app's Slack webhook
  *   POST /admin/restamp    { app, cursor? }  re-stamp existing events' expiry, one page per call
  *   PUT  /admin/issue      { app, fingerprint, status: open|resolved|ignored, resolvedIn? }
@@ -149,9 +155,10 @@ export async function handleAdmin(
     return { status: 200, body: { ok: true, settings: masked(settings), retentionDays: settings.retentionDays ?? opts.retentionDays ?? DEFAULT_RETENTION_DAYS } };
   }
   if (route === "/alert-test" && req.method === "POST") {
-    const url = (await opts.store.getSettings(app))?.alerts?.slackWebhookUrl;
+    const current = await opts.store.getSettings(app);
+    const url = current?.alerts?.slackWebhookUrl;
     if (!url || !SLACK_WEBHOOK.test(url)) return { status: 400, body: { ok: false, error: "No Slack webhook is set for this app" } };
-    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: `:white_check_mark: deBug alerts for *${app}* are working.` }), signal: AbortSignal.timeout(5000) }).catch((e: Error) => e);
+    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: `:white_check_mark: deBug alerts for *${appLabel(app, current?.displayName)}* are working.` }), signal: AbortSignal.timeout(5000) }).catch((e: Error) => e);
     if (res instanceof Error || !res.ok) return { status: 502, body: { ok: false, error: `Slack didn't accept it: ${res instanceof Error ? res.message : res.status}` } };
     return { status: 200, body: { ok: true } };
   }

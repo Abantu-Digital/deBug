@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EndpointHealth } from "../server/endpoints";
-import { answerOf, byHealth, endpointsOf, headlineOf, serviceKeys, serviceLevel, servicesOf, serviceTile, UNNAMED, type HealthTileData } from "./health";
+import { answerOf, byHealth, endpointLevel, endpointsOf, headlineOf, isOutage, outageOf, serviceKeys, serviceLevel, servicesOf, serviceTile, UNNAMED, whoseLine, type HealthTileData } from "./health";
 
 const NOW = Date.parse("2026-11-18T12:00:00Z");
 
@@ -93,5 +93,74 @@ describe("the wall", () => {
       "2 parts are failing badly in the last 14 days: balance and billing. Worst: balance, 29% of 164 calls failed (404 · 30007 Balance lookup unsuccessful). 1 is still happening (failed in the last hour). 0 of 3 parts are healthy.",
     );
     expect(answerOf([tile({ name: "ok" })], "the last 7 days")).toBe("Nothing is failing badly in the last 7 days. 1 of 1 part is healthy.");
+  });
+});
+
+describe("upstream outages", () => {
+  const down = (who: string[], statuses: { key: string; count: number }[]) => ({ who, failures: statuses.reduce((n, x) => n + x.count, 0), statuses, last: "2026-11-18T11:58:00Z" });
+
+  it("adds people up once across a service's endpoints, and takes whose it is from its busiest endpoint with one set", () => {
+    const [s] = servicesOf([
+      ep({ service: "Balance", path: "/a", calls: 50, kind: "upstream", provider: "Cell C", down: down(["u1", "u2"], [{ key: "503", count: 2 }]) }),
+      ep({ service: "Balance", path: "/b", calls: 80, down: down(["u2", "u3"], [{ key: "timed out", count: 1 }, { key: "503", count: 1 }]) }),
+    ]);
+    expect(s).toMatchObject({ kind: "upstream", provider: "Cell C", down: { users: 3, failures: 4, statuses: [{ key: "503", count: 3 }, { key: "timed out", count: 1 }] } });
+  });
+
+  it("is an outage from 3 people, says what failed, and doesn't repeat the provider's name", () => {
+    const s = (o: object) => ({ service: "Balance", kind: "upstream" as const, provider: "Cell C", ...o });
+    expect(outageOf(s({ down: { users: 2, failures: 9, statuses: [{ key: "503", count: 9 }], last: "" } }))).toBeUndefined();
+    expect(outageOf(s({ down: { users: 3, failures: 3, statuses: [{ key: "503", count: 3 }], last: "" } }))).toBe("Cell C Balance is down: a 5xx for 3 people in the last 15 min");
+    expect(outageOf(s({ down: { users: 4, failures: 4, statuses: [{ key: "no answer", count: 4 }], last: "" } }))).toBe("Cell C Balance is down: no answer for 4 people in the last 15 min");
+    expect(outageOf(s({ service: "Cell C balance", down: { users: 3, failures: 3, statuses: [{ key: "503", count: 1 }, { key: "timed out", count: 2 }], last: "" } }))).toBe(
+      "Cell C balance is down: no answer or a 5xx for 3 people in the last 15 min",
+    );
+    expect(outageOf({ service: "Accounts", kind: "ours", down: { users: 3, failures: 3, statuses: [{ key: "500", count: 3 }], last: "" } })).toBe("Accounts is down: a 5xx for 3 people in the last 15 min");
+  });
+
+  it("needs 3 people and 5% of today's calls failing; without today's summaries, the people alone", () => {
+    expect(isOutage(2, { calls: 10, failed: 10 })).toBe(false);
+    expect(isOutage(3, { calls: 100, failed: 5 })).toBe(true);
+    expect(isOutage(3, { calls: 1000, failed: 6 })).toBe(false);
+    expect(isOutage(3, undefined)).toBe(true);
+    expect(isOutage(3, { calls: 0, failed: 0 })).toBe(true);
+  });
+
+  it("takes the share across all a service's endpoints, healthy ones too", () => {
+    const rows = [
+      ep({ service: "Balance", path: "/a", today: { calls: 40, failed: 6 }, down: down(["u1", "u2", "u3"], [{ key: "503", count: 6 }]) }),
+      ep({ service: "Balance", path: "/b", today: { calls: 960, failed: 0 } }),
+    ];
+    const [s] = servicesOf(rows);
+    expect(s!.down!.today).toEqual({ calls: 1000, failed: 6 });
+    // 15% of /a's calls, but 0.6% of the service's.
+    expect(outageOf(s!)).toBeUndefined();
+    expect(endpointLevel(rows[0]!)).toBe("critical");
+  });
+
+  it("makes an endpoint that's down for 3 people critical", () => {
+    expect(endpointLevel(ep({ calls: 1000, failedCalls: 6, down: down(["u1", "u2", "u3"], [{ key: "503", count: 6 }]) }))).toBe("critical");
+    expect(endpointLevel(ep({ calls: 1000, failedCalls: 6, down: down(["u1", "u2"], [{ key: "503", count: 6 }]) }))).toBe("low");
+  });
+
+  it("makes the box critical and puts it first, with whose service it is", () => {
+    const rows = [ep({ service: "Balance", calls: 1000, failedCalls: 6, kind: "upstream", provider: "Cell C", down: down(["u1", "u2", "u3"], [{ key: "503", count: 6 }]) })];
+    const t = serviceTile(servicesOf(rows)[0]!, rows, NOW);
+    expect(t).toMatchObject({ level: "critical", side: "upstream", sideLabel: "Cell C service", provider: "Cell C", outage: "Cell C Balance is down: a 5xx for 3 people in the last 15 min" });
+    expect([tile({ name: "a", level: "critical", weight: 99, live: true }), t].sort(byHealth)[0]).toBe(t);
+  });
+
+  it("leads the client answer with the outage and whose it is", () => {
+    const cellc = tile({ name: "Balance", level: "critical", side: "upstream", provider: "Cell C", outage: "Cell C Balance is down: a 5xx for 3 people in the last 15 min", measure: "1% of 1,000 calls failed", live: true });
+    expect(answerOf([cellc, tile({ name: "ok" })], "the last 24 hours")).toBe(
+      "Cell C Balance is down: a 5xx for 3 people in the last 15 min. It's Cell C's service, not our backend or the app. 1 is still happening (failed in the last hour). 1 of 2 parts are healthy.",
+    );
+    const ours = tile({ name: "Accounts", level: "critical", side: "ours", outage: "Accounts is down: a 5xx for 4 people in the last 15 min" });
+    const app = tile({ name: "App code", kind: "app", level: "high", measure: "2 crash or code errors open, 5 times" });
+    expect(answerOf([ours, app], "today")).toBe(
+      "Accounts is down: a 5xx for 4 people in the last 15 min. It's our own backend, not an upstream service or the app. 1 part has other problems in today: App code. Worst otherwise: App code, 2 crash or code errors open, 5 times. 0 of 2 parts are healthy.",
+    );
+    expect(whoseLine({ side: "upstream" })).toBe("It's a third party's service, not our backend or the app.");
+    expect(whoseLine({})).toBe("");
   });
 });

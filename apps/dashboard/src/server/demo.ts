@@ -11,7 +11,7 @@ export async function seedDemo(): Promise<MemoryStore> {
   const store = new MemoryStore();
   const rand = mulberry32(42);
   const pick = <T,>(xs: readonly T[]) => xs[Math.floor(rand() * xs.length)]!;
-  const keys = { pk_demo: "megaton-native" };
+  const keys = DEMO_KEYS;
   const now = Date.now();
   let seq = 0;
 
@@ -192,7 +192,7 @@ export async function seedDemo(): Promise<MemoryStore> {
         // The demo's app is on this release, so the versions read as in step.
         sdk: { name: "@debugkit/sdk", version: DASHBOARD_VERSION },
         context: {
-          app: { id: "megaton-native", version: appVersion, build: appVersion.replace(/\./g, "") + "0", environment: "production" },
+          app: { id: "megatron-native", version: appVersion, build: appVersion.replace(/\./g, "") + "0", environment: "production" },
           ...dev,
           runtime: { name: "react-native", version: "0.79", engine: "hermes" },
           network: { type: pick(networks) },
@@ -206,7 +206,115 @@ export async function seedDemo(): Promise<MemoryStore> {
       if (out.status !== 202) throw new Error(`demo seed rejected: ${JSON.stringify(out.body)}`);
     }
   }
+  await seedUpstreamOutage(store, keys, now);
+  // What people see the sample app as; its id stays megatron-native.
+  await store.putSettings(DEMO_APP, { displayName: "Megatron Native" });
   return store;
+}
+
+/** Our gateway, and the part of it that passes calls on to Cell C (the upstream). */
+export const DEMO_GATEWAY = "api.megatron.example";
+export const DEMO_UPSTREAM = `${DEMO_GATEWAY}/ppd/api/balance`;
+
+/**
+ * The upstream story: Cell C's balance service stops answering in the last few minutes, for many
+ * customers at once. Settings names our gateway "ours" and its /ppd/api/balance path "upstream,
+ * Cell C", so Health reads it as a Cell C outage, not our backend or the app. It has its own
+ * random generator and runs after the rest, so the other stories don't change.
+ */
+async function seedUpstreamOutage(store: MemoryStore, keys: Record<string, string>, now: number): Promise<void> {
+  await store.putSettings(DEMO_APP, {
+    hosts: [
+      { match: DEMO_GATEWAY, name: "Megatron API", kind: "ours", owner: "backend" },
+      { match: DEMO_UPSTREAM, name: "Balance", kind: "upstream", provider: "Cell C", owner: "third_party" },
+    ],
+  });
+  const send = upstreamSender(store, keys);
+  // Every hour for 14 days, until 20 minutes ago: both work.
+  for (let h = 14 * 24; h >= 1; h--) {
+    const ts = new Date(now - h * 3_600_000 - 20 * 60_000).toISOString();
+    await send(ts, `user_${h % 400}`, [
+      { type: "metric", id: send.id(), ts, name: "http", key: BALANCE_KEY, count: 3, errors: 0, buckets: [0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0] },
+      { type: "metric", id: send.id(), ts, name: "http", key: ACCOUNT_KEY, count: 4, errors: 0, buckets: [0, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    ]);
+  }
+  await upstreamBurst(send, now);
+}
+
+const DEMO_APP = "megatron-native";
+const DEMO_KEYS = { pk_demo: DEMO_APP };
+const BALANCE_URL = `${DEMO_UPSTREAM}/getBalances`;
+const BALANCE_KEY = `POST ${BALANCE_URL}`;
+const ACCOUNT_KEY = `GET ${DEMO_GATEWAY}/v1/account`;
+
+type UpstreamSender = ((ts: string, userId: string, events: EventInput[]) => Promise<void>) & { id: () => string };
+
+/** Sends the upstream story's envelopes through the real ingest, with ids of its own. */
+function upstreamSender(store: MemoryStore, keys: Record<string, string>, prefix = "evt_up"): UpstreamSender {
+  let seq = 0;
+  const id = () => `${prefix}_${(seq++).toString().padStart(8, "0")}`;
+  const send = async (ts: string, userId: string, events: EventInput[]) => {
+    const env: EnvelopeInput = {
+      sdk: { name: "@debugkit/sdk", version: DASHBOARD_VERSION },
+      context: {
+        app: { id: DEMO_APP, version: "2.4.0", build: "2400", environment: "production" },
+        os: { name: seq % 5 < 3 ? "android" : "ios", version: "14" },
+        device: { model: "Phone", manufacturer: "Generic", type: "phone" },
+        runtime: { name: "react-native", version: "0.79", engine: "hermes" },
+        network: { type: "cellular" },
+        timezone: "Africa/Johannesburg",
+        locale: "en-ZA",
+      },
+      user: { id: userId, anonymousId: `anon_${userId}` },
+      session: { id: `sess_${prefix}_${seq}`, startedAt: ts },
+      events,
+    };
+    const out = await ingest(JSON.stringify(env), "pk_demo", { store, keys, now: () => new Date(Date.parse(ts) + 1000) });
+    if (out.status !== 202) throw new Error(`demo seed rejected: ${JSON.stringify(out.body)}`);
+  };
+  return Object.assign(send, { id });
+}
+
+/** The 8 minutes before `now`: Cell C's balance service answers 503 or nothing, for 7 customers. */
+async function upstreamBurst(send: UpstreamSender, now: number): Promise<void> {
+  for (let k = 0; k < 7; k++) {
+    const ts = new Date(now - (8 - k) * 60_000).toISOString();
+    const timedOut = k % 3 === 2;
+    await send(ts, `user_up_${k}`, [
+      { type: "metric", id: send.id(), ts, name: "http", key: BALANCE_KEY, count: 2, errors: 2, buckets: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1] },
+      {
+        type: "error",
+        id: send.id(),
+        ts,
+        flow: "balance.view",
+        handled: true,
+        tags: { source: "network" },
+        error: timedOut ? { name: "NetworkError", message: `${BALANCE_KEY} timed out` } : { name: "HttpError", message: `${BALANCE_KEY} responded 503` },
+        request: { method: "POST", url: BALANCE_URL, status: timedOut ? undefined : 503, durationMs: timedOut ? 30000 : 8200 },
+        ...(timedOut ? {} : { response: { status: 503, headers: { "content-type": "application/json" }, body: '{"code":"30007","message":"Balance lookup unsuccessful: upstream unavailable"}' } }),
+        breadcrumbs: [
+          { ts, level: "info", category: "navigation", message: "Home → Balance" },
+          { ts, level: "error", category: "network", message: `${BALANCE_KEY} → ${timedOut ? "timed out (30000ms)" : "503 (8200ms)"}` },
+        ],
+      },
+    ]);
+  }
+}
+
+/**
+ * The demo is seeded once, so "the last 15 minutes" would soon be empty: every 5 minutes, Cell C
+ * stays down for another burst, and the dashboard forgets what it read. The timer doesn't keep the
+ * process alive. Returns a stop function.
+ */
+export function keepUpstreamDown(store: MemoryStore, onChange: () => void, everyMs = 5 * 60_000): () => void {
+  let n = 0;
+  const timer = setInterval(() => {
+    // Ids of its own for each burst.
+    const send = upstreamSender(store, DEMO_KEYS, `evt_up${++n}`);
+    void upstreamBurst(send, Date.now()).then(onChange, (err: Error) => console.warn(`deBug demo: couldn't add the Cell C burst: ${err.message}`));
+  }, everyMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }
 
 function mulberry32(seed: number) {

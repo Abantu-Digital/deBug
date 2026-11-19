@@ -9,7 +9,7 @@ const NOW = new Date("2026-11-09T12:00:00.000Z");
 /** Wire a real SDK client straight into ingest + memory store. */
 function harness(opts: { autoCapture?: Parameters<DebugClient["init"]>[0]["autoCapture"] } = {}) {
   const store = new MemoryStore();
-  const keys = { pk_test: "megaton-native" };
+  const keys = { pk_test: "megatron-native" };
   const fetch = (async (_url: string, init: { body: string; headers: Record<string, string> }) => {
     const out = await ingest(init.body, init.headers["x-debug-key"], { store, keys, now: () => NOW });
     return new Response(JSON.stringify(out.body), { status: out.status });
@@ -17,7 +17,7 @@ function harness(opts: { autoCapture?: Parameters<DebugClient["init"]>[0]["autoC
   const client = new DebugClient().init({
     endpoint: "x",
     ingestKey: "pk_test",
-    app: { id: "megaton-native", version: "2.3.1" },
+    app: { id: "megatron-native", version: "2.3.1" },
     context: { os: { name: "Android", version: "14" }, runtime: { name: "react-native" }, device: { model: "SM-S918B" } },
     autoCapture: opts.autoCapture ?? false,
     fetch,
@@ -37,7 +37,7 @@ describe("ingest", () => {
     client.error(new Error("crash"), { handled: false, fatal: true });
     await client.close();
     while ((client as any).queue.length) await client.flush();
-    const rows = await store.getRollups("megaton-native", "session", "2026-11-09", "2026-11-09");
+    const rows = await store.getRollups("megatron-native", "session", "2026-11-09", "2026-11-09");
     expect(Object.fromEntries(rows.map((r) => [r.key, r.events]))).toEqual({ "2.3.1|started": 1, "2.3.1|errored": 1, "2.3.1|crashed": 1 });
     expect(store.events.map((e) => e.event.type)).toEqual(["error"]);
   });
@@ -55,9 +55,9 @@ describe("ingest", () => {
     sendFailure(404, "FeedScreen");
     await client.close();
     while ((client as any).queue.length) await client.flush();
-    const issues = await store.listIssues("megaton-native");
+    const issues = await store.listIssues("megatron-native");
     expect(issues.map((i) => i.count).sort()).toEqual([1, 2]);
-    const rows = await store.getRollups("megaton-native", "endpoint", "2026-11-09", "2026-11-09");
+    const rows = await store.getRollups("megatron-native", "endpoint", "2026-11-09", "2026-11-09");
     expect(rows.map((r) => [r.key, r.errors])).toEqual([["GET /v1/feed", 3]]);
   });
 
@@ -70,20 +70,20 @@ describe("ingest", () => {
     await client.close();
     while ((client as any).queue.length) await client.flush();
 
-    const issues = await store.listIssues("megaton-native");
+    const issues = await store.listIssues("megatron-native");
     expect(issues).toHaveLength(2);
     const login = issues.find((i) => i.flow === "auth.login")!;
     expect(login.count).toBe(3); // line numbers differ, still one issue
     expect(login.culprit).toMatch(/^submitOtp \(src\/screens\/Login\.tsx:\d+\)$/);
 
     const day = "2026-11-09";
-    const byFlow = await store.getRollups("megaton-native", "flow", day, day);
+    const byFlow = await store.getRollups("megatron-native", "flow", day, day);
     expect(byFlow.find((r) => r.key === "auth.login")).toMatchObject({ errors: 3, events: 2 });
-    const os = await store.getRollups("megaton-native", "os", day, day);
+    const os = await store.getRollups("megatron-native", "os", day, day);
     expect(os[0]?.key).toBe("android 14");
-    const outcomes = await store.getRollups("megaton-native", "flowOutcome", day, day);
+    const outcomes = await store.getRollups("megatron-native", "flowOutcome", day, day);
     expect(outcomes.map((r) => r.key).sort()).toEqual(["auth.login|failure", "auth.login|success"]);
-    expect(await store.listIssueEvents("megaton-native", login.fingerprint)).toHaveLength(3);
+    expect(await store.listIssueEvents("megatron-native", login.fingerprint)).toHaveLength(3);
   });
 
   it("rejects bad keys, cross-app writes and malformed payloads", async () => {

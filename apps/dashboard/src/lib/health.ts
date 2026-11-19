@@ -1,4 +1,4 @@
-import { SEVERITY_ORDER, type Severity } from "@debugkit/schema";
+import { hostKindLabel, SEVERITY_ORDER, type HostKind, type Severity } from "@debugkit/schema";
 // Types only: erased at build, so nothing from the server reaches the browser.
 import type { EndpointHealth, ServiceHealth } from "../server/endpoints";
 
@@ -28,6 +28,21 @@ export const SERVICE_LEVELS = {
   stored: { critical: 50, high: 20, medium: 5 },
 } as const;
 
+/**
+ * An outage: in the last 15 minutes, calls to a service got no answer or a 5xx for at least 3
+ * different people, and at least 5% of today's calls to it failed. The people make it more than
+ * one phone or one bad request; the share keeps a few unlucky calls on a busy service from
+ * reading as down. Request summaries are kept per day, so the share is today's (UTC), not the
+ * last 15 minutes'. Without summaries for today, the people alone decide.
+ */
+export const OUTAGE = { windowMs: 15 * 60 * 1000, users: 3, share: 0.05 } as const;
+
+/** Whether recent no-answer and 5xx calls are an outage: enough people, and enough of today's calls. */
+export function isOutage(people: number, today: { calls: number; failed: number } | null | undefined): boolean {
+  if (people < OUTAGE.users) return false;
+  return !today?.calls || today.failed / today.calls >= OUTAGE.share;
+}
+
 /** Failing within this long ago counts as still happening. */
 export const LIVE_MS = 60 * 60 * 1000;
 
@@ -43,8 +58,8 @@ export const failing = (r: { failedCalls: number | null; failures: number }) => 
 /** "27%", or "<1%" for a small share that isn't none. */
 export const pct = (r: number) => (r > 0 && r < 0.01 ? "<1%" : `${Math.round(r * 100)}%`);
 
-/** "1 call", "126 calls". */
-export const plural = (n: number, w: string) => `${n.toLocaleString()} ${w}${n === 1 ? "" : "s"}`;
+/** "1 call", "126 calls"; "2 people" with a plural given. */
+export const plural = (n: number, w: string, many = `${w}s`) => `${n.toLocaleString()} ${n === 1 ? w : many}`;
 
 /** How bad a service is, by share and by number of failed calls. See SERVICE_LEVELS. */
 export function serviceLevel(s: Pick<ServiceHealth, "calls" | "failedCalls" | "failures">): HealthLevel {
@@ -59,6 +74,12 @@ export function serviceLevel(s: Pick<ServiceHealth, "calls" | "failedCalls" | "f
   }
   const n = s.failures;
   return !n ? "healthy" : n >= L.stored.critical ? "critical" : n >= L.stored.high ? "high" : n >= L.stored.medium ? "medium" : "low";
+}
+
+/** One endpoint's level: as a service's, and critical when it's down for many people right now (see OUTAGE). */
+export function endpointLevel(e: Pick<EndpointHealth, "calls" | "failedCalls" | "failures" | "down" | "today">): HealthLevel {
+  if (e.down && isOutage(e.down.who.length, e.today)) return "critical";
+  return serviceLevel({ calls: e.calls ?? 0, failedCalls: e.failedCalls ?? 0, failures: e.failures });
 }
 
 /**
@@ -84,10 +105,14 @@ export function servicesOf(endpoints: readonly EndpointHealth[]): ServiceHealth[
       const calls = list.reduce((n, e) => n + (e.calls ?? 0), 0);
       const failedCalls = list.reduce((n, e) => n + (e.failedCalls ?? 0), 0);
       const p95s = list.map((e) => e.p95).filter((v): v is number => v !== null);
+      const busiest = [...list].sort((a, b) => (b.calls ?? 0) - (a.calls ?? 0));
+      const kinded = busiest.find((e) => e.kind);
       return {
         key: key || UNNAMED,
         // The name the busiest of its endpoints goes by.
-        service: [...list].sort((a, b) => (b.calls ?? 0) - (a.calls ?? 0))[0]!.service,
+        service: busiest[0]!.service,
+        ...(kinded ? { kind: kinded.kind, ...(kinded.provider ? { provider: kinded.provider } : {}) } : {}),
+        down: downOfService(list),
         endpoints: list.length,
         calls,
         failedCalls,
@@ -98,6 +123,36 @@ export function servicesOf(endpoints: readonly EndpointHealth[]): ServiceHealth[
       };
     })
     .sort((a, b) => failing(b) - failing(a) || b.calls - a.calls);
+}
+
+/** A service's recent no-answer and 5xx calls, across its endpoints: people counted once. */
+function downOfService(list: readonly EndpointHealth[]): ServiceHealth["down"] {
+  const downs = list.map((e) => e.down).filter((d): d is NonNullable<EndpointHealth["down"]> => !!d);
+  if (!downs.length) return undefined;
+  const statuses = new Map<string, number>();
+  for (const d of downs) for (const s of d.statuses) statuses.set(s.key, (statuses.get(s.key) ?? 0) + s.count);
+  // Today's calls across all its endpoints, not only the failing ones: the share is the service's.
+  const days = list.map((e) => e.today).filter((t): t is NonNullable<typeof t> => !!t);
+  return {
+    ...(days.length ? { today: { calls: days.reduce((n, t) => n + t.calls, 0), failed: days.reduce((n, t) => n + t.failed, 0) } } : {}),
+    users: new Set(downs.flatMap((d) => d.who)).size,
+    failures: downs.reduce((n, d) => n + d.failures, 0),
+    statuses: [...statuses.entries()].map(([key, count]) => ({ key, count })).sort((a, b) => b.count - a.count || a.key.localeCompare(b.key)),
+    last: downs.map((d) => d.last).sort().pop()!,
+  };
+}
+
+/**
+ * "Cell C Balance is down: no answer or a 5xx for 6 people in the last 15 min": the outage line, when a
+ * service is failing broadly right now (see OUTAGE). Undefined when it isn't.
+ */
+export function outageOf(s: Pick<ServiceHealth, "service" | "kind" | "provider" | "down">): string | undefined {
+  if (!s.down || !isOutage(s.down.users, s.down.today)) return undefined;
+  const name = s.service ?? "Unnamed service";
+  // "Cell C balance", unless the name already says whose it is.
+  const who = s.kind === "upstream" && s.provider && !name.toLowerCase().includes(s.provider.toLowerCase()) ? `${s.provider} ${name}` : name;
+  const what = s.down.statuses.every((x) => /^\d+$/.test(x.key)) ? "a 5xx" : s.down.statuses.some((x) => /^\d+$/.test(x.key)) ? "no answer or a 5xx" : "no answer";
+  return `${who} is down: ${what} for ${plural(s.down.users, "person", "people")} in the last ${Math.round(OUTAGE.windowMs / 60_000)} min`;
 }
 
 /** A service's endpoints, by its key (as in the address). */
@@ -135,6 +190,14 @@ export interface HealthTileData {
   measure: string;
   /** Failed within the last hour. */
   live: boolean;
+  /** Whose service it is, for a service: our backend, or an upstream such as Cell C. */
+  side?: HostKind;
+  /** "Cell C service" or "Our backend". */
+  sideLabel?: string;
+  /** The upstream's name ("Cell C"), when Settings gives one. */
+  provider?: string;
+  /** The outage line when it's failing broadly right now: see outageOf. */
+  outage?: string;
   lastFailure?: string;
   /** For ranking within a level: failed calls, or open occurrences for the app box. */
   weight: number;
@@ -142,7 +205,9 @@ export interface HealthTileData {
 
 /** A service's box: its level, what's wrong, and how much. */
 export function serviceTile(s: ServiceHealth, endpoints: readonly EndpointHealth[], now: number): HealthTileData {
-  const level = serviceLevel(s);
+  const outage = outageOf(s);
+  // Down for many people right now is as bad as it gets, whatever the period's share says.
+  const level = outage ? "critical" : serviceLevel(s);
   const measure =
     s.calls > 0
       ? s.failedCalls
@@ -161,32 +226,52 @@ export function serviceTile(s: ServiceHealth, endpoints: readonly EndpointHealth
     live: level !== "healthy" && !!s.lastFailure && now - Date.parse(s.lastFailure) < LIVE_MS,
     lastFailure: s.lastFailure,
     weight: failing(s),
+    ...(s.kind ? { side: s.kind, sideLabel: hostKindLabel(s.kind, s.provider), ...(s.provider ? { provider: s.provider } : {}) } : {}),
+    ...(outage ? { outage } : {}),
   };
 }
 
-/** Worst level first, then still happening, then most failures, then by name. */
+/** Worst level first, then down right now, then still happening, then most failures, then by name. */
 export const byHealth = (a: HealthTileData, b: HealthTileData) =>
-  HEALTH_ORDER[b.level] - HEALTH_ORDER[a.level] || Number(b.live) - Number(a.live) || b.weight - a.weight || a.name.localeCompare(b.name);
+  HEALTH_ORDER[b.level] - HEALTH_ORDER[a.level] || Number(!!b.outage) - Number(!!a.outage) || Number(b.live) - Number(a.live) || b.weight - a.weight || a.name.localeCompare(b.name);
 
 /**
- * The answer to "why is it breaking?", for a client: what's failing badly, the worst of it with
- * what the server said, whether it's still happening, and how much is healthy.
+ * Who an outage is with, for a client: an upstream's ("It's Cell C's service, not our backend or
+ * the app.") or our own backend's. Nothing when nobody said whose service it is.
+ */
+export function whoseLine(t: Pick<HealthTileData, "side" | "provider">): string {
+  if (t.side === "upstream") return `It's ${t.provider ? `${t.provider}'s` : "a third party's"} service, not our backend or the app.`;
+  return t.side === "ours" ? "It's our own backend, not an upstream service or the app." : "";
+}
+
+/**
+ * The answer to "why is it breaking?", for a client: what's down right now and whose service it
+ * is, what's failing badly, the worst of it with what the server said, whether it's still
+ * happening, and how much is healthy.
  */
 export function answerOf(tiles: readonly HealthTileData[], rangeLabel: string): string {
+  const down = tiles.filter((t) => t.outage);
+  const downLines = down.map((t) => [`${t.outage}.`, whoseLine(t)].filter(Boolean).join(" "));
   const healthy = tiles.filter((t) => t.level === "healthy").length;
   const healthyLine = `${healthy} of ${tiles.length} ${tiles.length === 1 ? "part is" : "parts are"} healthy.`;
   const failingBadly = tiles.filter((t) => t.level !== "healthy" && t.level !== "low");
   if (!failingBadly.length) return `Nothing is failing badly in ${rangeLabel}. ${healthyLine}`;
+  // The worst after an outage: an outage says it all about its own service.
+  const top = failingBadly.find((t) => !t.outage);
   const names = (ts: readonly HealthTileData[]) => (ts.length === 1 ? ts[0]!.name : `${ts.slice(0, -1).map((t) => t.name).join(", ")} and ${ts[ts.length - 1]!.name}`);
-  const critical = failingBadly.filter((t) => t.level === "critical");
+  // An outage already has its own line: the lead names the rest.
+  const critical = failingBadly.filter((t) => t.level === "critical" && !t.outage);
+  const others = failingBadly.filter((t) => !t.outage);
   const lead = critical.length
-    ? `${critical.length === 1 ? "1 part is" : `${critical.length} parts are`} failing badly in ${rangeLabel}: ${names(critical)}.`
-    : `${failingBadly.length === 1 ? "1 part has" : `${failingBadly.length} parts have`} problems in ${rangeLabel}: ${names(failingBadly)}.`;
-  const top = failingBadly[0]!;
+    ? `${critical.length === 1 ? "1 part is" : `${critical.length} parts are`} ${down.length ? "also " : ""}failing badly in ${rangeLabel}: ${names(critical)}.`
+    : others.length
+      ? `${others.length === 1 ? "1 part has" : `${others.length} parts have`} ${down.length ? "other " : ""}problems in ${rangeLabel}: ${names(others)}.`
+      : "";
   const live = failingBadly.filter((t) => t.live).length;
   return [
+    ...downLines,
     lead,
-    `Worst: ${top.name}, ${top.measure}${top.headline ? ` (${top.headline})` : ""}.`,
+    top ? `${down.length ? "Worst otherwise" : "Worst"}: ${top.name}, ${top.measure}${top.headline ? ` (${top.headline})` : ""}.` : "",
     live ? `${live === 1 ? "1 is" : `${live} are`} still happening (failed in the last hour).` : "",
     healthyLine,
   ]

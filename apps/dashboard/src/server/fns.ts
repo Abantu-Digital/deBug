@@ -10,12 +10,12 @@ import { buildAppCode, buildHealth } from "./health";
 import { buildVersionStatus } from "./versions";
 import { isMissingIndex } from "./errors";
 import { buildIssueDetail, buildSummary } from "./queries";
-import { readSettings, restampStep, seenHosts, settingsWriter, testAlert, validRetention, writeIssueStatus, writeRetention, writeSettings } from "./settings";
+import { appNames, readSettings, restampStep, seenHosts, settingsWriter, testAlert, validRetention, writeIssueStatus, writeRetention, writeSettings } from "./settings";
 import { clearStoreCache, getStore } from "./store";
 import { acceptInvite, changeRole, createInvite, readTeam, removeMember, revokeInvite } from "./team";
 import { hashInviteToken } from "@debugkit/ingest";
 import { TEAM_ROLES, type TeamRole } from "@debugkit/adapters";
-import { validHostNames } from "@debugkit/schema";
+import { validAppName, validHostNames } from "@debugkit/schema";
 
 export const getSessionUser = createServerFn({ method: "GET" }).handler(async () => readSession());
 
@@ -93,7 +93,7 @@ export const getHealth = createServerFn({ method: "GET" })
     const now = Date.now();
     const opts = { range: data, retentionDays: config().retentionDays };
     const [endpoints, summary] = await Promise.all([buildEndpoints(store, data.app, now, opts), buildSummary(store, data.app, config().severity, now, opts)]);
-    return endpoints && summary ? buildHealth(endpoints, summary, now) : null;
+    return endpoints && summary ? { ...buildHealth(endpoints, summary, now), names: await appNames(summary.apps) } : null;
   });
 
 /** The App code page: the app's own crashes and code errors, worst first. */
@@ -109,7 +109,8 @@ export const getEndpoints = createServerFn({ method: "GET" })
   .validator((d: { app?: string; endpoint?: string } & RangeInput) => ({ app: str(d?.app), endpoint: endpointParam(d?.endpoint), ...rangeOf(d) }))
   .handler(async ({ data }) => {
     await requireUser();
-    return buildEndpoints(await getStore(), data.app, Date.now(), { range: data, endpoint: data.endpoint, retentionDays: config().retentionDays });
+    const report = await buildEndpoints(await getStore(), data.app, Date.now(), { range: data, endpoint: data.endpoint, retentionDays: config().retentionDays });
+    return report ? { ...report, names: await appNames(report.apps) } : null;
   });
 
 export const getIssueDetail = createServerFn({ method: "GET" })
@@ -148,7 +149,7 @@ export const findCustomer = createServerFn({ method: "GET" })
     const apps = await store.listApps();
     // No app chosen: search them all, as Android and iOS are often separate apps.
     const app = data.app && apps.includes(data.app) ? data.app : undefined;
-    const base = { apps, app, store: config().store };
+    const base = { apps, app, store: config().store, names: await appNames(apps) };
     try {
       return { ...base, lookup: data.q.trim() && apps.length ? await lookupCustomer(store, app ? [app] : apps, data.q) : null, missingIndex: false };
     } catch (e) {
@@ -179,8 +180,8 @@ export const getSettings = createServerFn({ method: "GET" })
     await requireUser();
     const apps = await (await getStore()).listApps();
     const app = data.app && apps.includes(data.app) ? data.app : apps[0];
-    const [settings, hosts] = app ? await Promise.all([readSettings(app), seenHosts(app)]) : [null, []];
-    return { apps, settings, seenHosts: hosts };
+    const [settings, hosts, names] = app ? await Promise.all([readSettings(app), seenHosts(app), appNames(apps)]) : [null, [], {}];
+    return { apps, settings, seenHosts: hosts, names };
   });
 
 export const saveRetention = createServerFn({ method: "POST" })
@@ -197,14 +198,17 @@ export const saveRetention = createServerFn({ method: "POST" })
 const FLOW = /^[a-z0-9_]+(\.[a-z0-9_]+)*$/;
 
 export const saveAppSettings = createServerFn({ method: "POST" })
-  .validator((d: { app: string; criticalFlows?: string[]; hosts?: { match: string; name: string; owner?: string }[]; alerts?: { slackWebhookUrl?: string; newIssues?: boolean; regressions?: boolean; onlyCriticalFlows?: boolean; dashboardUrl?: string } }) => {
+  .validator((d: { app: string; displayName?: string; criticalFlows?: string[]; hosts?: { match: string; name: string; owner?: string }[]; alerts?: { slackWebhookUrl?: string; newIssues?: boolean; regressions?: boolean; onlyCriticalFlows?: boolean; dashboardUrl?: string } }) => {
     const flows = Array.isArray(d?.criticalFlows) ? d.criticalFlows.map((f) => String(f).trim().toLowerCase()).filter(Boolean) : undefined;
     if (flows && (flows.length > 30 || !flows.every((f) => FLOW.test(f) && f.length <= 64))) throw new Error("Flows are dotted lowercase names like checkout.payment (up to 30).");
     const a = d?.alerts;
     const hosts = d?.hosts === undefined ? undefined : validHostNames(d.hosts);
     if (typeof hosts === "string") throw new Error(hosts);
+    const name = d?.displayName === undefined ? undefined : validAppName(d.displayName);
+    if (typeof name === "string") throw new Error(name);
     return {
       app: String(d?.app ?? ""),
+      displayName: name?.name,
       criticalFlows: flows,
       hosts,
       alerts: a
@@ -221,7 +225,7 @@ export const saveAppSettings = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     await requireManager();
     try {
-      return { ok: true as const, settings: await writeSettings(data.app, { criticalFlows: data.criticalFlows, alerts: data.alerts, hosts: data.hosts }) };
+      return { ok: true as const, settings: await writeSettings(data.app, { displayName: data.displayName, criticalFlows: data.criticalFlows, alerts: data.alerts, hosts: data.hosts }) };
     } catch (err) {
       return { ok: false as const, error: (err as Error).message };
     }

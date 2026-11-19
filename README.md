@@ -36,7 +36,7 @@ npm install @debugkit/sdk
 ```ts
 // Expo
 import { initExpo } from "@debugkit/sdk/expo";
-initExpo({ endpoint: "https://<your-ingest-url>", ingestKey: "pk_live_megaton", app: { id: "megaton-native" } });
+initExpo({ endpoint: "https://<your-ingest-url>", ingestKey: "pk_live_megatron", app: { id: "megatron-native" } });
 
 // Where it matters:
 await deBug.track("auth.login", "submit_otp", () => api.verifyOtp(code)); // success or failure, plus the error
@@ -110,7 +110,7 @@ const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOption
 export const handler = lambdaHandler({ store: new DynamoStore(doc, { table: process.env.DEBUG_TABLE! }), keys: parseIngestKeys(process.env.DEBUG_INGEST_KEYS) });
 ```
 
-`DEBUG_INGEST_KEYS="pk_live_megaton:megaton-native"`: each key can only write to its own app.
+`DEBUG_INGEST_KEYS="pk_live_megatron:megatron-native"`: each key can only write to its own app.
 
 ## 3. Run the dashboard against your data
 

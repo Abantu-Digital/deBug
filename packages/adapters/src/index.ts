@@ -33,6 +33,8 @@ export interface IssueStatusChange {
 
 /** Per-app settings, stored in the customer's own database and changed from the dashboard. */
 export interface AppSettings {
+  /** What people see the app as ("Megatron Native"); the id stays in URLs and keys. "" or unset: the id. */
+  displayName?: string;
   /** How long raw events (stack traces, breadcrumbs) are kept. Counts and issues are kept forever. */
   retentionDays?: number;
   /** Flows that matter most (e.g. checkout.payment): their issues rank one severity level higher. */

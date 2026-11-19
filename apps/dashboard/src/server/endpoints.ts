@@ -1,10 +1,10 @@
 import type { ReadStore } from "@debugkit/adapters";
 import { isRequestCategory } from "@debugkit/ingest";
-import { hostNameFor, isOfflineIssue, isTestIssue, nameUrlsIn, type HostName, type Issue, type IssueStatus, type StoredEvent } from "@debugkit/schema";
+import { hostKindOf, hostNameFor, isOfflineIssue, isTestIssue, nameUrlsIn, type HostKind, type HostName, type Issue, type IssueStatus, type StoredEvent } from "@debugkit/schema";
 import { apiCallOf, EVENT_LOOKBACK, failedRequest, timelineOf, type ApiCall } from "./event";
 import { endpointTimings, retentionFor, type EndpointTiming, type Retention } from "./queries";
 import { resolveRange, type DateRange } from "./range";
-import { failing, servicesOf } from "../lib/health";
+import { failing, OUTAGE, servicesOf } from "../lib/health";
 
 /**
  * Endpoint health: how each API endpoint did over a period. Calls, failure rate and timings come
@@ -17,6 +17,18 @@ export interface EndpointHealth {
   endpoint: string;
   /** The backend service, as the app's breadcrumb or Settings names it. */
   service?: string;
+  /** Whose service answers here, from Settings: our backend, or an upstream such as Cell C. */
+  kind?: HostKind;
+  /** The upstream's name, from Settings ("Cell C"). */
+  provider?: string;
+  /**
+   * Calls that got no answer or a 5xx in the last OUTAGE.windowMs (before the report's time): who
+   * they happened to (user ids, else install ids, else session ids; each once), how many, the
+   * statuses. Unset when none.
+   */
+  down?: { who: string[]; failures: number; statuses: Count[]; last: string };
+  /** Today's calls here, from the request summaries: unset without any. For the outage share (see OUTAGE). */
+  today?: DayCalls;
   method?: string;
   path?: string;
   /**
@@ -70,6 +82,11 @@ export interface ServiceHealth {
   key: string;
   /** undefined: endpoints whose service nobody named (in Settings or the app's breadcrumbs). */
   service?: string;
+  /** Whose service it is, as its busiest endpoint with one set is. */
+  kind?: HostKind;
+  provider?: string;
+  /** Its endpoints' recent no-answer and 5xx calls, together: see EndpointHealth.down. */
+  down?: { users: number; failures: number; statuses: Count[]; last: string; today?: DayCalls };
   endpoints: number;
   calls: number;
   failedCalls: number;
@@ -78,6 +95,12 @@ export interface ServiceHealth {
   worstP95: number | null;
   failures: number;
   lastFailure?: string;
+}
+
+/** Today's calls and failed calls from the SDK's request summaries (kept per day, UTC). */
+export interface DayCalls {
+  calls: number;
+  failed: number;
 }
 
 export interface Count {
@@ -224,6 +247,16 @@ export async function buildEndpoints(
     const [m, ...rest] = t.endpoint.split(" ");
     timings.set(endpointKey(m!, rest.join(" ")), t);
   }
+  // Today's calls per endpoint: the share check on an outage (see OUTAGE).
+  const today = new Date(now).toISOString().slice(0, 10);
+  const todays = new Map<string, DayCalls>();
+  for (const r of requestRows) {
+    if (r.day !== today) continue;
+    const [m, ...rest] = r.key.split(" ");
+    const k = endpointKey(m!, rest.join(" "));
+    const t = todays.get(k) ?? { calls: 0, failed: 0 };
+    todays.set(k, { calls: t.calls + r.events, failed: t.failed + r.errors });
+  }
   const failures = events.filter(inRange).map((e) => failureOf(e, hosts, [...timings.keys()])).filter((f): f is Failure => !!f);
 
   const byEndpoint = new Map<string, Failure[]>();
@@ -243,9 +276,14 @@ export async function buildEndpoints(
     const method = fallback ? fallback.method : first;
     const url = fallback ? fallback.path : rest.join(" ");
     const host = hostNameFor(url, hosts);
+    const kind = hostKindOf(host?.host);
     return {
       endpoint,
       service: own?.service ?? host?.host.name,
+      ...(kind ? { kind } : {}),
+      ...(kind === "upstream" && host?.host.provider ? { provider: host.host.provider } : {}),
+      down: downOf(fs, now),
+      ...(todays.has(endpoint) ? { today: todays.get(endpoint) } : {}),
       method: own?.method ?? method,
       path: host ? host.rest || "/" : (own?.path ?? url),
       calls: t?.requests ?? null,
@@ -300,6 +338,31 @@ export async function buildEndpoints(
     selected,
     missing: opts.endpoint && !chosen ? opts.endpoint : undefined,
     truncated: issues.length >= ISSUE_READ_LIMIT || network.length > read.length || capped,
+  };
+}
+
+/** The statuses that mean the server never answered. Anything else the app reports (sessionExpired, schemaError, …) isn't the server being down. */
+const NO_ANSWER = new Set(["no answer", "timed out", "timeout", "unreachable"]);
+
+/** No answer at all (unreachable, timed out) or a server error: the server, not the request, failed. */
+export function isServerDown(status: string): boolean {
+  const n = Number(status);
+  return Number.isInteger(n) ? n >= 500 : NO_ANSWER.has(status);
+}
+
+/** Recent no-answer and 5xx failures on an endpoint: see EndpointHealth.down. */
+function downOf(fs: readonly Failure[], now: number): EndpointHealth["down"] {
+  const recent = fs.filter((f) => {
+    const age = now - Date.parse(f.e.event.ts);
+    return age >= 0 && age <= OUTAGE.windowMs && isServerDown(statusOf(f));
+  });
+  if (!recent.length) return undefined;
+  return {
+    // A person: their user id, else the install, else (with neither) the session.
+    who: [...new Set(recent.map((f) => f.e.user?.id ?? f.e.user?.anonymousId ?? f.e.sessionId))],
+    failures: recent.length,
+    statuses: counts(recent.map(statusOf)),
+    last: recent.map((f) => f.e.event.ts).sort().pop()!,
   };
 }
 

@@ -1,7 +1,8 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { OutcomeBadge, clock, joined } from "~/components/timeline";
-import { Card, timeAgo } from "~/components/ui";
+import { AppOptions, Card, timeAgo } from "~/components/ui";
+import { appLabel } from "@debugkit/schema";
 import { findCustomer } from "~/server/fns";
 
 type Search = { app?: string; q?: string };
@@ -26,13 +27,13 @@ function errorCount(errors: number, handled: number) {
 const MATCHED = { id: "customer number", anonymousId: "install id" } as const;
 
 function CustomersPage() {
-  const { apps, app, store, lookup, missingIndex } = Route.useLoaderData();
+  const { apps, app, store, lookup, missingIndex, names } = Route.useLoaderData();
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const [q, setQ] = useState(search.q ?? "");
   // Back and forward change the query in the URL: keep the box in step.
   useEffect(() => setQ(search.q ?? ""), [search.q]);
-  const where = app ?? (apps.length > 1 ? "any app" : apps[0]);
+  const where = app ? appLabel(app, names[app]) : apps.length > 1 ? "any app" : apps[0] && appLabel(apps[0], names[apps[0]]);
 
   return (
     <main className="mx-auto max-w-5xl space-y-5 px-4 py-6 sm:px-6">
@@ -61,7 +62,7 @@ function CustomersPage() {
         {apps.length > 1 && (
           <select aria-label="App" value={app ?? ""} onChange={(e) => navigate({ search: (s) => ({ ...s, app: e.target.value || undefined }) })} className="rounded-md border border-line bg-panel px-2 py-2 text-sm">
             <option value="">All apps</option>
-            {apps.map((a) => <option key={a}>{a}</option>)}
+            <AppOptions apps={apps} names={names} />
           </select>
         )}
         <button type="submit" className="rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:opacity-90">Find</button>
@@ -97,7 +98,7 @@ function CustomersPage() {
                     <span className="min-w-0 text-sm">
                       <span className="text-muted">App </span>{joined([s.context.app.version, s.context.app.build && `(${s.context.app.build})`]) ?? "—"}
                       <span className="text-muted"> · </span>{joined([s.context.device.brand, s.context.device.model]) ?? joined([s.context.os.name, s.context.os.version]) ?? "—"}
-                      {!app && apps.length > 1 && <span className="text-muted"> · {s.app}</span>}
+                      {!app && apps.length > 1 && <span className="text-muted"> · {appLabel(s.app, names[s.app])}</span>}
                       {s.user.id && s.user.id !== lookup.query && <span className="ml-2 font-mono text-xs text-muted">{s.user.id}</span>}
                     </span>
                     <span className="text-xs text-muted sm:text-right">

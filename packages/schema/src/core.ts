@@ -31,7 +31,8 @@ export type {
 } from "./index";
 
 export { cleanFnName, markLibraryFrames, RN_BUNDLE } from "./frames";
-export { hostNameFor, hostOf, MAX_HOST_NAMES, nameUrl, nameUrlsIn, normaliseHostMatch, validHostNames, type HostName } from "./hosts";
+export { appLabel, MAX_APP_NAME, validAppName } from "./app-name";
+export { HOST_KINDS, hostKindLabel, hostKindOf, hostNameFor, hostOf, MAX_HOST_NAMES, nameUrl, nameUrlsIn, normaliseHostMatch, validHostNames, type HostKind, type HostName } from "./hosts";
 export {
   CATEGORIES,
   CATEGORY_INFO,

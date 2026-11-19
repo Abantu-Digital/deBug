@@ -1,5 +1,5 @@
 import type { AppSettings, IssueUpsert, UpsertOutcome } from "@debugkit/adapters";
-import { nameUrlsIn } from "@debugkit/schema";
+import { appLabel, nameUrlsIn } from "@debugkit/schema";
 
 /** Slack incoming webhooks only: anything else could make ingest call arbitrary URLs. */
 export const SLACK_WEBHOOK = /^https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/_-]{10,200}$/;
@@ -48,7 +48,7 @@ export async function sendAlerts(
     const link = a.dashboardUrl ? `${a.dashboardUrl.replace(/\/+$/, "")}/issues/${fp}?app=${encodeURIComponent(app)}` : undefined;
     const title = nameUrlsIn(u.title, settings?.hosts);
     const where = [u.culprit && `\`${u.culprit}\``, u.flow && `flow \`${u.flow}\`${critical.has(u.flow) ? " (critical)" : ""}`, u.version && `version ${u.version}`].filter(Boolean).join(" · ");
-    const text = `${kind === "new" ? ":new: New issue" : ":rotating_light: Regressed"} in *${app}*: ${link ? `<${link}|${title}>` : title}${where ? `\n${where}` : ""}`;
+    const text = `${kind === "new" ? ":new: New issue" : ":rotating_light: Regressed"} in *${appLabel(app, settings?.displayName)}*: ${link ? `<${link}|${title}>` : title}${where ? `\n${where}` : ""}`;
     try {
       await post(a.slackWebhookUrl, { text });
       sent++;

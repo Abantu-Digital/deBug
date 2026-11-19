@@ -41,7 +41,7 @@ export interface IngestResult {
   body: { ok: boolean; accepted?: number; error?: string; issues?: unknown };
 }
 
-/** "pk_abc:megaton-native,pk_def:other-app" → { pk_abc: "megaton-native", ... } */
+/** "pk_abc:megatron-native,pk_def:other-app" → { pk_abc: "megatron-native", ... } */
 export function parseIngestKeys(raw: string | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   for (const pair of (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean)) {

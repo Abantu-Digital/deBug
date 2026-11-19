@@ -51,8 +51,10 @@ async function create(): Promise<ReadStore> {
       return new MemoryStore();
     }
     default: {
-      const { seedDemo } = await import("./demo");
-      return seedDemo();
+      const { keepUpstreamDown, seedDemo } = await import("./demo");
+      const demo = await seedDemo();
+      keepUpstreamDown(demo, clearStoreCache);
+      return demo;
     }
   }
 }

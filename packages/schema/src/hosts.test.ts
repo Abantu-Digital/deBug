@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hostNameFor, nameUrl, nameUrlsIn, normaliseHostMatch, validHostNames, type HostName } from "./hosts";
+import { hostKindLabel, hostKindOf, hostNameFor, nameUrl, nameUrlsIn, normaliseHostMatch, validHostNames, type HostName } from "./hosts";
 
 const GATEWAY = "2qpssug3bh.execute-api.af-south-1.amazonaws.com";
 const hosts: HostName[] = [
@@ -50,5 +50,25 @@ describe("host names", () => {
     expect(validHostNames([{ match: "api.x.com", name: "A", owner: "boss" }])).toMatch(/owner/);
     expect(validHostNames([{ match: "api.x.com", name: "A" }, { match: "API.x.com", name: "B" }])).toMatch(/twice/);
     expect(validHostNames(Array.from({ length: 51 }, (_, i) => ({ match: `h${i}.x.com`, name: "A" })))).toMatch(/50/);
+  });
+
+  it("marks a host, or part of one, as ours or upstream, and keeps a provider for upstream only", () => {
+    expect(validHostNames([{ match: `${GATEWAY}/prod/ppd`, name: "Balance", kind: "upstream", provider: " Cell C " }])).toEqual([{ match: `${GATEWAY}/prod/ppd`, name: "Balance", kind: "upstream", provider: "Cell C" }]);
+    expect(validHostNames([{ match: GATEWAY, name: "API", kind: "ours", provider: "Cell C" }])).toEqual([{ match: GATEWAY, name: "API", kind: "ours" }]);
+    expect(validHostNames([{ match: GATEWAY, name: "API", kind: "" }])).toEqual([{ match: GATEWAY, name: "API" }]);
+    expect(validHostNames([{ match: GATEWAY, name: "API", kind: "theirs" }])).toMatch(/kind/);
+    expect(validHostNames([{ match: GATEWAY, name: "API", kind: "upstream", provider: "x".repeat(41) }])).toMatch(/40/);
+  });
+
+  it("works out whose service a host is from its owner when not set, and names it", () => {
+    expect(hostKindOf({ kind: "upstream", owner: "backend" })).toBe("upstream");
+    expect(hostKindOf({ owner: "third_party" })).toBe("upstream");
+    expect(hostKindOf({ owner: "backend" })).toBe("ours");
+    expect(hostKindOf({ owner: "infrastructure" })).toBe("ours");
+    expect(hostKindOf({ owner: "app" })).toBeUndefined();
+    expect(hostKindOf(undefined)).toBeUndefined();
+    expect(hostKindLabel("upstream", "Cell C")).toBe("Cell C service");
+    expect(hostKindLabel("upstream")).toBe("Third-party service");
+    expect(hostKindLabel("ours", "Cell C")).toBe("Our backend");
   });
 });
