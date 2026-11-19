@@ -130,7 +130,7 @@ describe("the demo's Cell C outage", () => {
     const [e, s] = await Promise.all([buildEndpoints(store, undefined, now), buildSummary(store, undefined, DEFAULT_SEVERITY_THRESHOLDS, now)]);
     const h = buildHealth(e!, s!, now);
     expect(h.tiles[0]).toMatchObject({ key: "balance", level: "critical", sideLabel: "Cell C service", outage: "Cell C Balance is down: no answer or a 5xx for 7 people in the last 15 min" });
-    expect(h.tiles.find((t) => t.name === "Megaton API")).toMatchObject({ level: "healthy", sideLabel: "Our backend" });
+    expect(h.tiles.find((t) => t.name === "Megatron API")).toMatchObject({ level: "healthy", sideLabel: "Our backend" });
     expect(h.answer).toMatch(/^Cell C Balance is down: no answer or a 5xx for 7 people in the last 15 min\. It's Cell C's service, not our backend or the app\. /);
     expect(e!.endpoints.find((x) => x.endpoint.includes(DEMO_UPSTREAM))?.lastAnswer?.status).toBe(503);
   });

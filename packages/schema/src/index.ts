@@ -30,7 +30,7 @@ export const Os = z.object({
 });
 
 export const AppInfo = z.object({
-  id: z.string().min(1), // e.g. "megaton-native"
+  id: z.string().min(1), // e.g. "megatron-native"
   version: z.string().optional(),
   build: z.string().optional(),
   /** Over-the-air update on top of the store version (hot-updater bundle id, expo-updates id). */

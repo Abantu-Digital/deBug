@@ -66,7 +66,7 @@ export const levelName = (level: Tone): string => (level === "healthy" ? "Health
 export function HealthBox({ level, name, side, outage, headline, measure, live, lastFailure, link, big, now }: {
   level: Tone;
   name: string;
-  /** Whose service it is: "Cell C service" or "Our backend". */
+  /** Whose service it is: "<Provider> service" or "Our backend". */
   side?: string;
   /** The outage line, when it's down for many people right now. */
   outage?: string;

@@ -305,7 +305,7 @@ function HostNames({
               {r.kind === "upstream" && (
                 <label className="mt-1 block">
                   Upstream's name
-                  <input value={r.provider} onChange={(e) => update(r.id, { provider: e.target.value })} placeholder="Cell C" maxLength={40} className={`mt-1 w-full text-ink ${box}`} />
+                  <input value={r.provider} onChange={(e) => update(r.id, { provider: e.target.value })} placeholder="Provider name" maxLength={40} className={`mt-1 w-full text-ink ${box}`} />
                 </label>
               )}
             </div>
@@ -330,7 +330,7 @@ function HostNames({
           </div>
         )}
         <p className="text-xs text-muted">
-          A path names part of a host: api.example.com/payments covers /payments/… only; the longest match wins. The owner decides who server errors from that host are passed to. Mark a host, or a path on your own gateway, as upstream when your backend passes those calls on to a third party such as Cell C: Health then says when that service is down, rather than your backend or the app.
+          A path names part of a host: api.example.com/payments covers /payments/… only; the longest match wins. The owner decides who server errors from that host are passed to. Mark a host, or a path on your own gateway, as upstream when your backend passes those calls on to a third party, such as a payment, messaging or telecom provider: Health then says when that service is down, rather than your backend or the app.
         </p>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => add()} className="rounded-md border border-line px-3 py-1.5 text-sm hover:bg-panel-2">Add a host</button>

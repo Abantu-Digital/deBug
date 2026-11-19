@@ -192,7 +192,7 @@ export async function seedDemo(): Promise<MemoryStore> {
         // The demo's app is on this release, so the versions read as in step.
         sdk: { name: "@debugkit/sdk", version: DASHBOARD_VERSION },
         context: {
-          app: { id: "megaton-native", version: appVersion, build: appVersion.replace(/\./g, "") + "0", environment: "production" },
+          app: { id: "megatron-native", version: appVersion, build: appVersion.replace(/\./g, "") + "0", environment: "production" },
           ...dev,
           runtime: { name: "react-native", version: "0.79", engine: "hermes" },
           network: { type: pick(networks) },
@@ -211,7 +211,7 @@ export async function seedDemo(): Promise<MemoryStore> {
 }
 
 /** Our gateway, and the part of it that passes calls on to Cell C (the upstream). */
-export const DEMO_GATEWAY = "api.megaton.example";
+export const DEMO_GATEWAY = "api.megatron.example";
 export const DEMO_UPSTREAM = `${DEMO_GATEWAY}/ppd/api/balance`;
 
 /**
@@ -223,7 +223,7 @@ export const DEMO_UPSTREAM = `${DEMO_GATEWAY}/ppd/api/balance`;
 async function seedUpstreamOutage(store: MemoryStore, keys: Record<string, string>, now: number): Promise<void> {
   await store.putSettings(DEMO_APP, {
     hosts: [
-      { match: DEMO_GATEWAY, name: "Megaton API", kind: "ours", owner: "backend" },
+      { match: DEMO_GATEWAY, name: "Megatron API", kind: "ours", owner: "backend" },
       { match: DEMO_UPSTREAM, name: "Balance", kind: "upstream", provider: "Cell C", owner: "third_party" },
     ],
   });
@@ -239,7 +239,7 @@ async function seedUpstreamOutage(store: MemoryStore, keys: Record<string, strin
   await upstreamBurst(send, now);
 }
 
-const DEMO_APP = "megaton-native";
+const DEMO_APP = "megatron-native";
 const DEMO_KEYS = { pk_demo: DEMO_APP };
 const BALANCE_URL = `${DEMO_UPSTREAM}/getBalances`;
 const BALANCE_KEY = `POST ${BALANCE_URL}`;
