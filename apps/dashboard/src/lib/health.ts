@@ -34,6 +34,9 @@ export const SERVICE_LEVELS = {
  */
 export const OUTAGE = { windowMs: 15 * 60 * 1000, users: 3 } as const;
 
+/** Whether this many different people getting no answer or a 5xx is an outage. */
+export const isOutage = (people: number) => people >= OUTAGE.users;
+
 /** Failing within this long ago counts as still happening. */
 export const LIVE_MS = 60 * 60 * 1000;
 
@@ -69,7 +72,7 @@ export function serviceLevel(s: Pick<ServiceHealth, "calls" | "failedCalls" | "f
 
 /** One endpoint's level: as a service's, and critical when it's down for many people right now (see OUTAGE). */
 export function endpointLevel(e: Pick<EndpointHealth, "calls" | "failedCalls" | "failures" | "down">): HealthLevel {
-  if (e.down && new Set(e.down.who).size >= OUTAGE.users) return "critical";
+  if (e.down && isOutage(e.down.who.length)) return "critical";
   return serviceLevel({ calls: e.calls ?? 0, failedCalls: e.failedCalls ?? 0, failures: e.failures });
 }
 
@@ -135,7 +138,7 @@ function downOfService(list: readonly EndpointHealth[]): ServiceHealth["down"] {
  * service is failing broadly right now (see OUTAGE). Undefined when it isn't.
  */
 export function outageOf(s: Pick<ServiceHealth, "service" | "kind" | "provider" | "down">): string | undefined {
-  if (!s.down || s.down.users < OUTAGE.users) return undefined;
+  if (!s.down || !isOutage(s.down.users)) return undefined;
   const name = s.service ?? "Unnamed service";
   // "Cell C balance", unless the name already says whose it is.
   const who = s.kind === "upstream" && s.provider && !name.toLowerCase().includes(s.provider.toLowerCase()) ? `${s.provider} ${name}` : name;
@@ -247,10 +250,14 @@ export function answerOf(tiles: readonly HealthTileData[], rangeLabel: string): 
   // The worst after an outage: an outage says it all about its own service.
   const top = failingBadly.find((t) => !t.outage);
   const names = (ts: readonly HealthTileData[]) => (ts.length === 1 ? ts[0]!.name : `${ts.slice(0, -1).map((t) => t.name).join(", ")} and ${ts[ts.length - 1]!.name}`);
-  const critical = failingBadly.filter((t) => t.level === "critical");
+  // An outage already has its own line: the lead names the rest.
+  const critical = failingBadly.filter((t) => t.level === "critical" && !t.outage);
+  const others = failingBadly.filter((t) => !t.outage);
   const lead = critical.length
-    ? `${critical.length === 1 ? "1 part is" : `${critical.length} parts are`} failing badly in ${rangeLabel}: ${names(critical)}.`
-    : `${failingBadly.length === 1 ? "1 part has" : `${failingBadly.length} parts have`} problems in ${rangeLabel}: ${names(failingBadly)}.`;
+    ? `${critical.length === 1 ? "1 part is" : `${critical.length} parts are`} ${down.length ? "also " : ""}failing badly in ${rangeLabel}: ${names(critical)}.`
+    : others.length
+      ? `${others.length === 1 ? "1 part has" : `${others.length} parts have`} ${down.length ? "other " : ""}problems in ${rangeLabel}: ${names(others)}.`
+      : "";
   const live = failingBadly.filter((t) => t.live).length;
   return [
     ...downLines,

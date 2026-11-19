@@ -23,7 +23,8 @@ export interface EndpointHealth {
   provider?: string;
   /**
    * Calls that got no answer or a 5xx in the last OUTAGE.windowMs (before the report's time): who
-   * they happened to (user ids, else session ids), how many, and the statuses. Unset when none.
+   * they happened to (user ids, else install ids, else session ids; each once), how many, and the
+   * statuses. Unset when none.
    */
   down?: { who: string[]; failures: number; statuses: Count[]; last: string };
   method?: string;
@@ -321,10 +322,13 @@ export async function buildEndpoints(
   };
 }
 
+/** The statuses that mean the server never answered. Anything else the app reports (sessionExpired, schemaError, …) isn't the server being down. */
+const NO_ANSWER = new Set(["no answer", "timed out", "timeout", "unreachable"]);
+
 /** No answer at all (unreachable, timed out) or a server error: the server, not the request, failed. */
 export function isServerDown(status: string): boolean {
   const n = Number(status);
-  return Number.isInteger(n) ? n >= 500 : true;
+  return Number.isInteger(n) ? n >= 500 : NO_ANSWER.has(status);
 }
 
 /** Recent no-answer and 5xx failures on an endpoint: see EndpointHealth.down. */
@@ -335,7 +339,8 @@ function downOf(fs: readonly Failure[], now: number): EndpointHealth["down"] {
   });
   if (!recent.length) return undefined;
   return {
-    who: [...new Set(recent.map((f) => f.e.user?.id ?? f.e.sessionId))],
+    // A person: their user id, else the install, else (with neither) the session.
+    who: [...new Set(recent.map((f) => f.e.user?.id ?? f.e.user?.anonymousId ?? f.e.sessionId))],
     failures: recent.length,
     statuses: counts(recent.map(statusOf)),
     last: recent.map((f) => f.e.event.ts).sort().pop()!,

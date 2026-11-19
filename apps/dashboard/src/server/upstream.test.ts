@@ -4,7 +4,7 @@ import { ingest } from "@debugkit/ingest";
 import { DEFAULT_SEVERITY_THRESHOLDS } from "@debugkit/schema";
 import { endpointsOf, servicesOf, serviceTile } from "../lib/health";
 import { DEMO_UPSTREAM, keepUpstreamDown, seedDemo } from "./demo";
-import { buildEndpoints } from "./endpoints";
+import { buildEndpoints, isServerDown } from "./endpoints";
 import { buildHealth } from "./health";
 import { buildSummary } from "./queries";
 
@@ -96,6 +96,13 @@ describe("an upstream outage", () => {
     const later = NOW + 20 * 60_000;
     const r = await report(s, later);
     expect(serviceTile(r.services[0]!, r.endpoints, later).outage).toBeUndefined();
+  });
+});
+
+describe("isServerDown", () => {
+  it("is a 5xx or no answer at all, not the app's own kinds of failure", () => {
+    for (const s of ["500", "503", "no answer", "timed out", "unreachable"]) expect(isServerDown(s)).toBe(true);
+    for (const s of ["404", "401", "sessionExpired", "schemaError", "connectionError"]) expect(isServerDown(s)).toBe(false);
   });
 });
 

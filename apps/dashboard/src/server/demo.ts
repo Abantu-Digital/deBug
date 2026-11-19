@@ -11,7 +11,7 @@ export async function seedDemo(): Promise<MemoryStore> {
   const store = new MemoryStore();
   const rand = mulberry32(42);
   const pick = <T,>(xs: readonly T[]) => xs[Math.floor(rand() * xs.length)]!;
-  const keys = { pk_demo: "megaton-native" };
+  const keys = DEMO_KEYS;
   const now = Date.now();
   let seq = 0;
 
@@ -240,6 +240,7 @@ async function seedUpstreamOutage(store: MemoryStore, keys: Record<string, strin
 }
 
 const DEMO_APP = "megaton-native";
+const DEMO_KEYS = { pk_demo: DEMO_APP };
 const BALANCE_URL = `${DEMO_UPSTREAM}/getBalances`;
 const BALANCE_KEY = `POST ${BALANCE_URL}`;
 const ACCOUNT_KEY = `GET ${DEMO_GATEWAY}/v1/account`;
@@ -272,10 +273,10 @@ function upstreamSender(store: MemoryStore, keys: Record<string, string>, prefix
   return Object.assign(send, { id });
 }
 
-/** The last 12 minutes before `now`: Cell C's balance service answers 503 or nothing, for 7 customers. */
+/** The 8 minutes before `now`: Cell C's balance service answers 503 or nothing, for 7 customers. */
 async function upstreamBurst(send: UpstreamSender, now: number): Promise<void> {
   for (let k = 0; k < 7; k++) {
-    const ts = new Date(now - (12 - k * 1.5) * 60_000).toISOString();
+    const ts = new Date(now - (8 - k) * 60_000).toISOString();
     const timedOut = k % 3 === 2;
     await send(ts, `user_up_${k}`, [
       { type: "metric", id: send.id(), ts, name: "http", key: BALANCE_KEY, count: 2, errors: 2, buckets: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1] },
@@ -299,16 +300,16 @@ async function upstreamBurst(send: UpstreamSender, now: number): Promise<void> {
 }
 
 /**
- * The demo is seeded once, so "the last 15 minutes" would soon be empty: every 10 minutes, Cell C
+ * The demo is seeded once, so "the last 15 minutes" would soon be empty: every 5 minutes, Cell C
  * stays down for another burst, and the dashboard forgets what it read. The timer doesn't keep the
  * process alive. Returns a stop function.
  */
-export function keepUpstreamDown(store: MemoryStore, onChange: () => void, everyMs = 10 * 60_000): () => void {
+export function keepUpstreamDown(store: MemoryStore, onChange: () => void, everyMs = 5 * 60_000): () => void {
   let n = 0;
   const timer = setInterval(() => {
     // Ids of its own for each burst.
-    const send = upstreamSender(store, { pk_demo: DEMO_APP }, `evt_up${++n}`);
-    void upstreamBurst(send, Date.now()).then(onChange, () => undefined);
+    const send = upstreamSender(store, DEMO_KEYS, `evt_up${++n}`);
+    void upstreamBurst(send, Date.now()).then(onChange, (err: Error) => console.warn(`deBug demo: couldn't add the Cell C burst: ${err.message}`));
   }, everyMs);
   timer.unref?.();
   return () => clearInterval(timer);

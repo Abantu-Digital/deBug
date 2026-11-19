@@ -120,7 +120,7 @@ describe("upstream outages", () => {
 
   it("makes an endpoint that's down for 3 people critical, whatever its share", () => {
     expect(endpointLevel(ep({ calls: 1000, failedCalls: 6, down: down(["u1", "u2", "u3"], [{ key: "503", count: 6 }]) }))).toBe("critical");
-    expect(endpointLevel(ep({ calls: 1000, failedCalls: 6, down: down(["u1", "u1", "u2"], [{ key: "503", count: 6 }]) }))).toBe("low");
+    expect(endpointLevel(ep({ calls: 1000, failedCalls: 6, down: down(["u1", "u2"], [{ key: "503", count: 6 }]) }))).toBe("low");
   });
 
   it("makes the box critical and puts it first, with whose service it is", () => {
@@ -133,12 +133,12 @@ describe("upstream outages", () => {
   it("leads the client answer with the outage and whose it is", () => {
     const cellc = tile({ name: "Balance", level: "critical", side: "upstream", provider: "Cell C", outage: "Cell C Balance is down: a 5xx for 3 people in the last 15 min", measure: "1% of 1,000 calls failed", live: true });
     expect(answerOf([cellc, tile({ name: "ok" })], "the last 24 hours")).toBe(
-      "Cell C Balance is down: a 5xx for 3 people in the last 15 min. It's Cell C's service, not our backend or the app. 1 part is failing badly in the last 24 hours: Balance. 1 is still happening (failed in the last hour). 1 of 2 parts are healthy.",
+      "Cell C Balance is down: a 5xx for 3 people in the last 15 min. It's Cell C's service, not our backend or the app. 1 is still happening (failed in the last hour). 1 of 2 parts are healthy.",
     );
     const ours = tile({ name: "Accounts", level: "critical", side: "ours", outage: "Accounts is down: a 5xx for 4 people in the last 15 min" });
     const app = tile({ name: "App code", kind: "app", level: "high", measure: "2 crash or code errors open, 5 times" });
     expect(answerOf([ours, app], "today")).toBe(
-      "Accounts is down: a 5xx for 4 people in the last 15 min. It's our own backend, not an upstream service or the app. 1 part is failing badly in today: Accounts. Worst otherwise: App code, 2 crash or code errors open, 5 times. 0 of 2 parts are healthy.",
+      "Accounts is down: a 5xx for 4 people in the last 15 min. It's our own backend, not an upstream service or the app. 1 part has other problems in today: App code. Worst otherwise: App code, 2 crash or code errors open, 5 times. 0 of 2 parts are healthy.",
     );
     expect(whoseLine({ side: "upstream" })).toBe("It's a third party's service, not our backend or the app.");
     expect(whoseLine({})).toBe("");
