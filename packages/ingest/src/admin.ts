@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { teamAction } from "./team";
 import { MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, type AlertSettings, type AppSettings, type WriteStore } from "@debugkit/adapters";
-import { validAppName, validHostNames } from "@debugkit/schema";
+import { appLabel, validAppName, validHostNames } from "@debugkit/schema";
 import { SLACK_WEBHOOK } from "./alerts";
 
 /** Used when neither the app's settings nor the deployment set a retention period. */
@@ -155,9 +155,10 @@ export async function handleAdmin(
     return { status: 200, body: { ok: true, settings: masked(settings), retentionDays: settings.retentionDays ?? opts.retentionDays ?? DEFAULT_RETENTION_DAYS } };
   }
   if (route === "/alert-test" && req.method === "POST") {
-    const url = (await opts.store.getSettings(app))?.alerts?.slackWebhookUrl;
+    const current = await opts.store.getSettings(app);
+    const url = current?.alerts?.slackWebhookUrl;
     if (!url || !SLACK_WEBHOOK.test(url)) return { status: 400, body: { ok: false, error: "No Slack webhook is set for this app" } };
-    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: `:white_check_mark: deBug alerts for *${app}* are working.` }), signal: AbortSignal.timeout(5000) }).catch((e: Error) => e);
+    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: `:white_check_mark: deBug alerts for *${appLabel(app, current?.displayName)}* are working.` }), signal: AbortSignal.timeout(5000) }).catch((e: Error) => e);
     if (res instanceof Error || !res.ok) return { status: 502, body: { ok: false, error: `Slack didn't accept it: ${res instanceof Error ? res.message : res.status}` } };
     return { status: 200, body: { ok: true } };
   }

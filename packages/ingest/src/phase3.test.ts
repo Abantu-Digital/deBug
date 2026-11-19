@@ -97,6 +97,15 @@ describe("alerts", () => {
     expect(posts).toHaveLength(0);
   });
 
+  it("names the app by its display name, keeping the id in the link", async () => {
+    clearAlertMemory();
+    const texts: string[] = [];
+    const post = async (_u: string, b: unknown) => void texts.push((b as { text: string }).text);
+    const settings = { displayName: "The Shop", alerts: { slackWebhookUrl: HOOK, dashboardUrl: "https://debug.example" } };
+    expect(await sendAlerts("shop", { created: ["abc"], regressed: [] }, new Map([["abc", issue]]), settings, post)).toBe(1);
+    expect(texts[0]).toContain("New issue in *The Shop*: <https://debug.example/issues/abc?app=shop|");
+  });
+
   it("names hosts from Settings in the title", async () => {
     const posts: string[] = [];
     const post = async (_url: string, body: unknown) => void posts.push((body as { text: string }).text);

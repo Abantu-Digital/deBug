@@ -125,8 +125,14 @@ export async function writeRetention(app: string, days: number): Promise<Setting
 /** Change the display name, critical flows, alert settings and/or host names. Validation happens in the ingest function (or here, locally). */
 export async function writeSettings(app: string, patch: { displayName?: string; criticalFlows?: string[]; alerts?: AlertSettings; hosts?: HostName[] }): Promise<SettingsView> {
   const writer = settingsWriter();
-  if (writer === "admin") await admin("PUT", "/settings", { app, ...patch });
-  else if (writer === "local") {
+  if (writer === "admin") {
+    await admin("PUT", "/settings", { app, ...patch }).catch((err: Error) => {
+      // An ingest function from before display names ignores the field, then finds nothing to change.
+      if (patch.displayName !== undefined && /nothing to change/i.test(err.message))
+        throw new Error("Your ingest function is older than app names: upgrade it with npx debugkit upgrade, then save again.");
+      throw err;
+    });
+  } else if (writer === "local") {
     const store = (await getLocalWriteStore())!;
     const cur = await store.getSettings(app);
     const url = patch.alerts?.slackWebhookUrl;
@@ -137,7 +143,7 @@ export async function writeSettings(app: string, patch: { displayName?: string; 
     const name = patch.displayName === undefined ? undefined : validAppName(patch.displayName);
     if (typeof name === "string") throw new Error(name);
     const alerts = patch.alerts ? { ...patch.alerts, slackWebhookUrl: url?.includes("…") ? cur?.alerts?.slackWebhookUrl : url || undefined } : undefined;
-    await store.putSettings(app, { ...(name ? { displayName: name.name } : {}), ...(patch.criticalFlows ? { criticalFlows: patch.criticalFlows } : {}), ...(alerts ? { alerts } : {}), ...(hosts ? { hosts } : {}) });
+    await store.putSettings(app, { ...(name !== undefined ? { displayName: name.name } : {}), ...(patch.criticalFlows ? { criticalFlows: patch.criticalFlows } : {}), ...(alerts ? { alerts } : {}), ...(hosts ? { hosts } : {}) });
   } else throw new Error("Settings can't be changed from this dashboard: DEBUG_ADMIN_URL and DEBUG_ADMIN_TOKEN aren't set.");
   return readSettings(app);
 }

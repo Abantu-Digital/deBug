@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
-import { appLabel, hostKindLabel, MAX_APP_NAME, normaliseHostMatch, OWNER_INFO, OWNERS, type HostKind, type HostName, type Owner } from "@debugkit/schema";
+import { appLabel, hostKindLabel, MAX_APP_NAME, validAppName, normaliseHostMatch, OWNER_INFO, OWNERS, type HostKind, type HostName, type Owner } from "@debugkit/schema";
 import { AppOptions, Card, timeAgo } from "~/components/ui";
 import { partText } from "~/lib/version-text";
 import { UpgradeCommand, useVersionStatus } from "~/components/version-banner";
@@ -225,14 +225,16 @@ function AppName({ app, name, onStatus }: { app: string; name: string; onStatus:
   const router = useRouter();
   const [value, setValue] = useState(name);
   const [busy, setBusy] = useState(false);
-  const changed = value.trim().replace(/\s+/g, " ") !== name;
+  const cleaned = validAppName(value);
+  const next = typeof cleaned === "string" ? undefined : cleaned.name;
+  const changed = next !== undefined && next !== name;
   const save = async () => {
     setBusy(true);
     onStatus(null);
     const out = await saveAppSettings({ data: { app, displayName: value } }).catch((e: Error) => ({ ok: false as const, error: e.message }));
     setBusy(false);
     if (!out.ok) return onStatus({ tone: "error", text: out.error });
-    onStatus({ tone: "ok", text: value.trim() ? `Saved. ${app} now shows as "${value.trim().replace(/\s+/g, " ")}".` : `Saved. The app shows as ${app} again.` });
+    onStatus({ tone: "ok", text: next ? `Saved. ${app} now shows as "${next}".` : `Saved. The app shows as ${app} again.` });
     await router.invalidate();
   };
   return (
