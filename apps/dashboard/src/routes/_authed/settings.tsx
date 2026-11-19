@@ -63,7 +63,7 @@ function SettingsPage() {
   };
 
   return (
-    <main className="mx-auto max-w-3xl space-y-5 px-4 py-6 sm:px-6">
+    <main className="mx-auto max-w-5xl space-y-5 px-4 py-6 sm:px-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-wide text-muted">Settings</p>
@@ -315,16 +315,16 @@ function HostNames({
     <Card title="Host names" subtitle="Give the servers your app calls a name people recognise, and say who looks after each one.">
       <div className="space-y-3">
         {rows.map((r, i) => (
-          <div key={r.id} role="group" aria-label={`Host ${i + 1}`} className="grid gap-2 rounded-lg border border-line p-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto_auto_auto] sm:items-end sm:border-0 sm:p-0">
-            <label className="min-w-0 text-xs text-muted">
+          <div key={r.id} role="group" aria-label={`Host ${i + 1}`} className="grid gap-2 rounded-lg border border-line p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+            <label className="min-w-0 text-xs text-muted sm:col-span-4 lg:col-span-2">
               Host, or host and path
-              <input value={r.match} onChange={(e) => update(r.id, { match: e.target.value })} list="seen-hosts" placeholder="api.example.com/payments" className={`mt-1 w-full font-mono text-xs text-ink ${box}`} />
+              <input value={r.match} onChange={(e) => update(r.id, { match: e.target.value })} list="seen-hosts" placeholder="api.example.com/payments" title={r.match || undefined} className={`mt-1 w-full font-mono text-xs leading-5 text-ink ${box}`} />
             </label>
-            <label className="min-w-0 text-xs text-muted">
+            <label className="min-w-0 text-xs text-muted sm:col-span-4 lg:col-span-2">
               Name
               <input value={r.name} onChange={(e) => update(r.id, { name: e.target.value })} placeholder="Balance service" maxLength={60} className={`mt-1 w-full text-ink ${box}`} />
             </label>
-            <label className="text-xs text-muted">
+            <label className="min-w-0 text-xs text-muted">
               Looked after by
               <select value={r.owner} onChange={(e) => update(r.id, { owner: e.target.value as Owner | "" })} className={`mt-1 w-full text-ink ${box}`}>
                 <option value="">Work it out</option>
@@ -333,23 +333,21 @@ function HostNames({
                 ))}
               </select>
             </label>
-            <div className="text-xs text-muted">
-              <label className="block">
-                Whose service
-                <select value={r.kind} onChange={(e) => update(r.id, { kind: e.target.value as HostKind | "" })} className={`mt-1 w-full text-ink ${box}`}>
-                  <option value="">From the owner</option>
-                  <option value="ours">{hostKindLabel("ours")}</option>
-                  <option value="upstream">Upstream (a third party)</option>
-                </select>
+            <label className="min-w-0 text-xs text-muted">
+              Whose service
+              <select value={r.kind} onChange={(e) => update(r.id, { kind: e.target.value as HostKind | "" })} className={`mt-1 w-full text-ink ${box}`}>
+                <option value="">From the owner</option>
+                <option value="ours">{hostKindLabel("ours")}</option>
+                <option value="upstream">Upstream (a third party)</option>
+              </select>
+            </label>
+            {r.kind === "upstream" && (
+              <label className="min-w-0 text-xs text-muted">
+                Upstream's name
+                <input value={r.provider} onChange={(e) => update(r.id, { provider: e.target.value })} placeholder="Provider name" maxLength={40} className={`mt-1 w-full text-ink ${box}`} />
               </label>
-              {r.kind === "upstream" && (
-                <label className="mt-1 block">
-                  Upstream's name
-                  <input value={r.provider} onChange={(e) => update(r.id, { provider: e.target.value })} placeholder="Provider name" maxLength={40} className={`mt-1 w-full text-ink ${box}`} />
-                </label>
-              )}
-            </div>
-            <button type="button" onClick={() => setRows((rs) => rs.filter((x) => x.id !== r.id))} aria-label={`Remove ${r.match || "this host"}`} className="justify-self-start rounded-md border border-line px-2.5 py-1.5 text-sm hover:bg-panel-2">
+            )}
+            <button type="button" onClick={() => setRows((rs) => rs.filter((x) => x.id !== r.id))} aria-label={`Remove ${r.match || "this host"}`} className="justify-self-start rounded-md border border-line px-2.5 py-1.5 text-sm hover:bg-panel-2 sm:col-start-4 sm:justify-self-end">
               Remove
             </button>
           </div>
