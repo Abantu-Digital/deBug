@@ -1,5 +1,33 @@
 # @debugkit/sdk
 
+## 0.10.0
+
+### Minor Changes
+
+- 3efa770: `network.baseUrls` takes named bases: `{ url, name }`. Every call under a named base is that service ("Balances · POST /cellc/getBalances"), in the trail, on the failed request and on Endpoints. (Issue titles still use Settings → Host names.) This replaces the first path segment, which on one-backend-per-host APIs was just the endpoint again. Plain URL strings work as before, and the two kinds mix in one list. (ABA-131)
+- cf601b5: A phone going offline is one problem now, not an issue per endpoint it couldn't reach. Every request that never left the phone (no status, faster than 100 ms, not a timeout) goes to one "Phone offline" issue, ranked Low, labelled `network.offline` with no owner. It stays out of endpoint failures, owners, flows, incidents, alerts and the active issue count. Health's Folded away line counts them ("Offline phones: 3 times on 3 phones, 18 calls never sent →") and opens the offline issue, whose page lists each burst per phone with the calls that never left it. The SDK's request timings leave such calls out, so endpoint failure rates no longer count them. Errors already stored, and request timings already sent, aren't corrected: only new data is.
+- 474e2a0: Test errors: mark errors you make on purpose with `deBug.error(err, { test: true })`, or throw or reject with `deBug.testError("…")` so a test crash or unhandled rejection is caught as a test by any handler. They get their own issues, never count toward totals, flows, endpoints, labels, customers or crash-free rates, never alert, and the dashboard keeps them off every box: Health's "Folded away" line links to them, listed apart on the App code page (`/app-code?tests=1`, or `?tests=1` on `/api/summary`). Ingest also ignores a session crash marker that only test errors caused. `npx debugkit test` sends test events, so its guide now asks for them. Errors already stored aren't relabelled.
+
+### Patch Changes
+
+- 3a151bf: The dashboard can work out where an error comes from: journey › screen › last action › failing call or code › source.
+
+  - **Backend errors:** the source is the trace id the backend already sends. That's a response header (`traceparent`, `x-cloud-trace-context`, `x-amzn-trace-id`, `x-request-id` and similar), else a `traceId` or error `code` in the JSON body. When there's none, it gives the host, call and UTC time to search the logs by.
+  - **Taps** are named by their label or testID.
+  - **Frames still in the built bundle** are reported as "not source-mapped" rather than shown as a file.
+  - **A hop it can't fill** says why and how to find it another way, and never asks for a backend change.
+
+  Not on any page yet: the ranked list and the case file will show it. `@debugkit/schema` now exports `hostOf`, `RN_BUNDLE` and `REDACTED`, and the SDK takes its redaction marker from there.
+
+- Updated dependencies [a3a03c2]
+- Updated dependencies [cbf5e0e]
+- Updated dependencies [0574b2a]
+- Updated dependencies [cf601b5]
+- Updated dependencies [474e2a0]
+- Updated dependencies [a7bd969]
+- Updated dependencies [3a151bf]
+  - @debugkit/schema@0.10.0
+
 ## 0.9.0
 
 ### Minor Changes

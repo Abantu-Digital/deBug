@@ -1,5 +1,26 @@
 # @debugkit/ingest
 
+## 0.10.0
+
+### Minor Changes
+
+- a3a03c2: Apps can have a display name. Settings → App name sets what people see the app as ("Megatron Native" for `megatron-native`): in Health's heading, on Settings, on Find a customer, in every app picker and in Slack alerts. The app id doesn't change: the SDK, links and ingest keys keep using it. Leave the name empty to show the id. On cloud setups the ingest function saves it, so upgrade it too (`npx debugkit upgrade`).
+- cf601b5: A phone going offline is one problem now, not an issue per endpoint it couldn't reach. Every request that never left the phone (no status, faster than 100 ms, not a timeout) goes to one "Phone offline" issue, ranked Low, labelled `network.offline` with no owner. It stays out of endpoint failures, owners, flows, incidents, alerts and the active issue count. Health's Folded away line counts them ("Offline phones: 3 times on 3 phones, 18 calls never sent →") and opens the offline issue, whose page lists each burst per phone with the calls that never left it. The SDK's request timings leave such calls out, so endpoint failure rates no longer count them. Errors already stored, and request timings already sent, aren't corrected: only new data is.
+- 474e2a0: Test errors: mark errors you make on purpose with `deBug.error(err, { test: true })`, or throw or reject with `deBug.testError("…")` so a test crash or unhandled rejection is caught as a test by any handler. They get their own issues, never count toward totals, flows, endpoints, labels, customers or crash-free rates, never alert, and the dashboard keeps them off every box: Health's "Folded away" line links to them, listed apart on the App code page (`/app-code?tests=1`, or `?tests=1` on `/api/summary`). Ingest also ignores a session crash marker that only test errors caused. `npx debugkit test` sends test events, so its guide now asks for them. Errors already stored aren't relabelled.
+
+### Patch Changes
+
+- ff2b705: The issue page has a new "What the trail shows" section: rule-based advice from patterns in what customers did before the error (a call sent twice, a repeat that failed, calls before login, a 401 after a long time in the background, a request that hung in the background, a 4xx an endpoint always gives), each with the evidence it read. Advice says what the app should change, or where to search the backend's logs; never what the backend should change. The template advice is now "General advice".
+- Updated dependencies [a3a03c2]
+- Updated dependencies [cbf5e0e]
+- Updated dependencies [0574b2a]
+- Updated dependencies [cf601b5]
+- Updated dependencies [474e2a0]
+- Updated dependencies [a7bd969]
+- Updated dependencies [3a151bf]
+  - @debugkit/schema@0.10.0
+  - @debugkit/adapters@0.10.0
+
 ## 0.9.0
 
 ### Minor Changes
