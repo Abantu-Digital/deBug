@@ -1,5 +1,22 @@
 # @debugkit/adapters
 
+## 0.10.0
+
+### Minor Changes
+
+- a3a03c2: Apps can have a display name. Settings → App name sets what people see the app as ("Megatron Native" for `megatron-native`): in Health's heading, on Settings, on Find a customer, in every app picker and in Slack alerts. The app id doesn't change: the SDK, links and ingest keys keep using it. Leave the name empty to show the id. On cloud setups the ingest function saves it, so upgrade it too (`npx debugkit upgrade`).
+
+### Patch Changes
+
+- Updated dependencies [a3a03c2]
+- Updated dependencies [cbf5e0e]
+- Updated dependencies [0574b2a]
+- Updated dependencies [cf601b5]
+- Updated dependencies [474e2a0]
+- Updated dependencies [a7bd969]
+- Updated dependencies [3a151bf]
+  - @debugkit/schema@0.10.0
+
 ## 0.9.0
 
 ### Minor Changes
