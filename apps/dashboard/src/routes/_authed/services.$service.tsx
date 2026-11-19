@@ -3,7 +3,7 @@ import { ClosedIssues, type ClosedIssue } from "~/components/closed-issues";
 import { EmptyState } from "~/components/empty-state";
 import { RangePicker, rangeSearch, RetentionNote, type PageSearch } from "~/components/range-picker";
 import { LevelRow, levelName, timeAgo, toneClass } from "~/components/ui";
-import { endpointsOf, failing, HEALTH_ORDER, isOpen, pct, plural, serviceLevel, servicesOf, serviceTile } from "~/lib/health";
+import { endpointLevel, endpointsOf, failing, HEALTH_ORDER, isOpen, pct, plural, servicesOf, serviceTile, whoseLine } from "~/lib/health";
 import { bodyView } from "~/lib/exchange-view";
 import type { EndpointHealth } from "~/server/endpoints";
 import { getEndpoints } from "~/server/fns";
@@ -36,7 +36,7 @@ function ServicePage() {
   const now = Date.parse(report.generatedAt);
   const tile = summary && serviceTile(summary, endpoints, now);
   const rows = endpoints
-    .map((e) => ({ e, level: serviceLevel({ calls: e.calls ?? 0, failedCalls: e.failedCalls ?? 0, failures: e.failures }) }))
+    .map((e) => ({ e, level: endpointLevel(e) }))
     .sort((a, b) => HEALTH_ORDER[b.level] - HEALTH_ORDER[a.level] || failing(b.e) - failing(a.e));
   const broken = rows.filter((r) => r.level !== "healthy");
   const healthy = rows.filter((r) => r.level === "healthy");
@@ -64,8 +64,14 @@ function ServicePage() {
             <p className="text-xs font-bold uppercase tracking-wide">
               <span className={toneClass(tile.level, "text")}>{levelName(tile.level)}</span>
               {tile.live && <span className={`ml-2 normal-case ${toneClass(tile.level, "text")}`}>· Still happening</span>}
+              {tile.sideLabel && <span className="ml-2 rounded-full border border-line px-1.5 py-px normal-case text-muted">{tile.sideLabel}</span>}
             </p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight">{tile.name}</h1>
+            {tile.outage && (
+              <p role="status" className={`mt-2 rounded-lg border-2 px-3 py-2 text-sm font-semibold ${toneClass("critical", "surface")}`}>
+                {tile.outage}. {whoseLine(tile)}
+              </p>
+            )}
             <p className="mt-1 text-sm text-muted">
               {tile.measure} in {range.label}
               {tile.lastFailure ? `, the last ${timeAgo(tile.lastFailure, now)}` : ""}. {plural(endpoints.length, "endpoint")}, worst first.

@@ -13,7 +13,18 @@ export interface HostName {
   name: string;
   /** Who fixes what goes wrong on this host. Unset: the classifier decides. */
   owner?: Owner;
+  /**
+   * Whose service answers here: "ours" (the team's own backend, such as Firebase or AWS) or
+   * "upstream" (a third party the backend passes calls to, such as Cell C). It can name part of a
+   * host: our gateway's /ppd/… may be Cell C behind it. Unset: worked out from the owner.
+   */
+  kind?: HostKind;
+  /** The upstream's name ("Cell C"), for kind "upstream" only. */
+  provider?: string;
 }
+
+export const HOST_KINDS = ["ours", "upstream"] as const;
+export type HostKind = (typeof HOST_KINDS)[number];
 
 export const MAX_HOST_NAMES = 50;
 
@@ -68,6 +79,19 @@ export function nameUrlsIn(text: string, hosts: readonly HostName[] | undefined)
   return text.replace(URL_IN_TEXT, (u) => nameUrl(u, hosts));
 }
 
+/** Whose service a host is: as set, or from its owner (a third party is upstream; the backend team's or infrastructure is ours). */
+export function hostKindOf(h: Pick<HostName, "kind" | "owner"> | undefined): HostKind | undefined {
+  if (!h) return undefined;
+  if (h.kind) return h.kind;
+  if (h.owner === "third_party") return "upstream";
+  return h.owner === "backend" || h.owner === "infrastructure" ? "ours" : undefined;
+}
+
+/** "Cell C service", "Third-party service" or "Our backend". */
+export function hostKindLabel(kind: HostKind, provider?: string): string {
+  return kind === "ours" ? "Our backend" : `${provider?.trim() || "Third-party"} service`;
+}
+
 /** Owners a host can be given: "unknown" is what leaving it unset means. */
 const OWNER_SET = new Set<string>(OWNERS.filter((o) => o !== "unknown"));
 /** A dotted host name, optionally with a path. Ports are dropped by normaliseHostMatch. */
@@ -87,9 +111,13 @@ export function validHostNames(x: unknown): HostName[] | string {
     if (!match || match.length > 200 || !MATCH.test(match)) return `"${String(r.match ?? "")}" isn't a host name, like api.example.com or api.example.com/payments`;
     if (!name || name.length > 60) return `Give ${match} a name of up to 60 characters`;
     if (r.owner !== undefined && r.owner !== "" && !OWNER_SET.has(String(r.owner))) return `Unknown owner "${String(r.owner)}"`;
+    const kind = r.kind === undefined || r.kind === "" ? undefined : String(r.kind);
+    if (kind !== undefined && !(HOST_KINDS as readonly string[]).includes(kind)) return `Unknown kind "${kind}": use ours or upstream`;
+    const provider = kind === "upstream" && typeof r.provider === "string" ? r.provider.trim() : "";
+    if (provider.length > 40) return `Give ${match}'s upstream a name of up to 40 characters`;
     if (seen.has(match)) return `${match} is listed twice`;
     seen.add(match);
-    out.push({ match, name, ...(r.owner ? { owner: r.owner as Owner } : {}) });
+    out.push({ match, name, ...(r.owner ? { owner: r.owner as Owner } : {}), ...(kind ? { kind: kind as HostKind } : {}), ...(provider ? { provider } : {}) });
   }
   return out;
 }

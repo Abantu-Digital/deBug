@@ -115,7 +115,7 @@ function HealthWall() {
 /** A box on the wall, linked one level down. */
 function Box({ tile, keep, now }: { tile: HealthTileData; keep: PageSearch; now: number }) {
   const link = tile.kind === "app" ? { to: "/app-code" as const, search: keep } : { to: "/services/$service" as const, params: { service: tile.key }, search: keep };
-  return <HealthBox level={tile.level} name={tile.name} headline={tile.headline} measure={tile.measure} live={tile.live} lastFailure={tile.lastFailure} link={link} big={tile.level === "critical"} now={now} />;
+  return <HealthBox level={tile.level} name={tile.name} side={tile.sideLabel} outage={tile.outage} headline={tile.headline} measure={tile.measure} live={tile.live} lastFailure={tile.lastFailure} link={link} big={tile.level === "critical"} now={now} />;
 }
 
 /** A level and how many boxes are at it. Click to show only that level, again to show all. None at that level: not clickable. */

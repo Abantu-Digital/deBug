@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
-import { normaliseHostMatch, OWNER_INFO, OWNERS, type HostName, type Owner } from "@debugkit/schema";
+import { hostKindLabel, normaliseHostMatch, OWNER_INFO, OWNERS, type HostKind, type HostName, type Owner } from "@debugkit/schema";
 import { Card, timeAgo } from "~/components/ui";
 import { partText } from "~/lib/version-text";
 import { UpgradeCommand, useVersionStatus } from "~/components/version-banner";
@@ -222,7 +222,11 @@ interface HostRow {
   match: string;
   name: string;
   owner: Owner | "";
+  kind: HostKind | "";
+  provider: string;
 }
+
+const EMPTY_ROW: Omit<HostRow, "id"> = { match: "", name: "", owner: "", kind: "", provider: "" };
 
 /** Owners a host can be given; leaving it unset lets the classifier decide. */
 const HOST_OWNERS = OWNERS.filter((o) => o !== "unknown");
@@ -241,7 +245,7 @@ function HostNames({
   const router = useRouter();
   const [nextId, setNextId] = useState(hosts.length + 1);
   const [rows, setRows] = useState<HostRow[]>(() =>
-    hosts.length ? hosts.map((h, i) => ({ id: i, match: h.match, name: h.name, owner: h.owner ?? "" })) : [{ id: 0, match: "", name: "", owner: "" }],
+    hosts.length ? hosts.map((h, i) => ({ id: i, match: h.match, name: h.name, owner: h.owner ?? "", kind: h.kind ?? "", provider: h.provider ?? "" })) : [{ ...EMPTY_ROW, id: 0 }],
   );
   const [busy, setBusy] = useState(false);
   const named = new Set(rows.map((r) => normaliseHostMatch(r.match)));
@@ -249,14 +253,17 @@ function HostNames({
 
   const update = (id: number, patch: Partial<HostRow>) => setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   const add = (match = "") => {
-    setRows((rs) => [...rs.filter((r) => r.match || r.name), { id: nextId, match, name: "", owner: "" }]);
+    setRows((rs) => [...rs.filter((r) => r.match || r.name), { ...EMPTY_ROW, id: nextId, match }]);
     setNextId((n) => n + 1);
   };
   const save = async () => {
     setBusy(true);
     onStatus(null);
     const out = await saveAppSettings({
-      data: { app, hosts: rows.map((r) => ({ match: r.match, name: r.name, ...(r.owner ? { owner: r.owner } : {}) })) },
+      data: {
+        app,
+        hosts: rows.map((r) => ({ match: r.match, name: r.name, ...(r.owner ? { owner: r.owner } : {}), ...(r.kind ? { kind: r.kind } : {}), ...(r.kind === "upstream" && r.provider.trim() ? { provider: r.provider } : {}) })),
+      },
     }).catch((e: Error) => ({ ok: false as const, error: e.message }));
     setBusy(false);
     if (!out.ok) return onStatus({ tone: "error", text: out.error });
@@ -268,7 +275,7 @@ function HostNames({
     <Card title="Host names" subtitle="Give the servers your app calls a name people recognise, and say who looks after each one.">
       <div className="space-y-3">
         {rows.map((r, i) => (
-          <div key={r.id} role="group" aria-label={`Host ${i + 1}`} className="grid gap-2 rounded-lg border border-line p-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto_auto] sm:items-end sm:border-0 sm:p-0">
+          <div key={r.id} role="group" aria-label={`Host ${i + 1}`} className="grid gap-2 rounded-lg border border-line p-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto_auto_auto] sm:items-end sm:border-0 sm:p-0">
             <label className="min-w-0 text-xs text-muted">
               Host, or host and path
               <input value={r.match} onChange={(e) => update(r.id, { match: e.target.value })} list="seen-hosts" placeholder="api.example.com/payments" className={`mt-1 w-full font-mono text-xs text-ink ${box}`} />
@@ -286,6 +293,22 @@ function HostNames({
                 ))}
               </select>
             </label>
+            <div className="text-xs text-muted">
+              <label className="block">
+                Whose service
+                <select value={r.kind} onChange={(e) => update(r.id, { kind: e.target.value as HostKind | "" })} className={`mt-1 w-full text-ink ${box}`}>
+                  <option value="">From the owner</option>
+                  <option value="ours">{hostKindLabel("ours")}</option>
+                  <option value="upstream">Upstream (a third party)</option>
+                </select>
+              </label>
+              {r.kind === "upstream" && (
+                <label className="mt-1 block">
+                  Upstream's name
+                  <input value={r.provider} onChange={(e) => update(r.id, { provider: e.target.value })} placeholder="Cell C" maxLength={40} className={`mt-1 w-full text-ink ${box}`} />
+                </label>
+              )}
+            </div>
             <button type="button" onClick={() => setRows((rs) => rs.filter((x) => x.id !== r.id))} aria-label={`Remove ${r.match || "this host"}`} className="justify-self-start rounded-md border border-line px-2.5 py-1.5 text-sm hover:bg-panel-2">
               Remove
             </button>
@@ -307,7 +330,7 @@ function HostNames({
           </div>
         )}
         <p className="text-xs text-muted">
-          A path names part of a host: api.example.com/payments covers /payments/… only; the longest match wins. The owner decides who server errors from that host are passed to.
+          A path names part of a host: api.example.com/payments covers /payments/… only; the longest match wins. The owner decides who server errors from that host are passed to. Mark a host, or a path on your own gateway, as upstream when your backend passes those calls on to a third party such as Cell C: Health then says when that service is down, rather than your backend or the app.
         </p>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => add()} className="rounded-md border border-line px-3 py-1.5 text-sm hover:bg-panel-2">Add a host</button>

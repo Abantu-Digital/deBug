@@ -63,9 +63,13 @@ export const levelName = (level: Tone): string => (level === "healthy" ? "Health
  * The whole box is a link one level down, and looks it (arrow, lift on hover, focus ring). A
  * critical one still failing in the last hour pulses; any still failing says so.
  */
-export function HealthBox({ level, name, headline, measure, live, lastFailure, link, big, now }: {
+export function HealthBox({ level, name, side, outage, headline, measure, live, lastFailure, link, big, now }: {
   level: Tone;
   name: string;
+  /** Whose service it is: "Cell C service" or "Our backend". */
+  side?: string;
+  /** The outage line, when it's down for many people right now. */
+  outage?: string;
   headline?: string;
   measure: string;
   live: boolean;
@@ -79,7 +83,7 @@ export function HealthBox({ level, name, headline, measure, live, lastFailure, l
     <Link
       {...link}
       style={{ "--alarm": `var(--level-${level}-edge)` } as CSSProperties}
-      aria-label={`${name}: ${levelName(level)}. ${headline ? `${headline}. ` : ""}${measure}.${live ? " Still happening." : ""}`}
+      aria-label={`${name}${side ? `, ${side}` : ""}: ${levelName(level)}. ${outage ? `${outage}. ` : ""}${headline ? `${headline}. ` : ""}${measure}.${live ? " Still happening." : ""}`}
       className={`group relative flex h-full flex-col gap-1.5 rounded-xl border-2 p-4 pr-10 transition hover:-translate-y-0.5 hover:shadow-lg hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${TONE[level].surface} ${live && level === "critical" ? "level-alarm" : ""}`}
     >
       <span className="flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-wide">
@@ -93,8 +97,10 @@ export function HealthBox({ level, name, headline, measure, live, lastFailure, l
             Still happening
           </span>
         )}
+        {side && <span className="rounded-full border border-current px-1.5 py-px normal-case opacity-90">{side}</span>}
       </span>
       <strong className={`break-words leading-tight ${big ? "text-2xl" : "text-lg"}`}>{name}</strong>
+      {outage && <span className="break-words text-sm font-semibold">{outage}</span>}
       {headline && <span className={`break-words font-mono ${big ? "text-sm" : "line-clamp-2 text-xs"}`}>{headline}</span>}
       <span className="tabular mt-auto pt-1 text-xs opacity-90">
         {measure}
