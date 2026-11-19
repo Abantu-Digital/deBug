@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EndpointHealth } from "../server/endpoints";
-import { answerOf, byHealth, endpointLevel, endpointsOf, headlineOf, outageOf, serviceKeys, serviceLevel, servicesOf, serviceTile, UNNAMED, whoseLine, type HealthTileData } from "./health";
+import { answerOf, byHealth, endpointLevel, endpointsOf, headlineOf, isOutage, outageOf, serviceKeys, serviceLevel, servicesOf, serviceTile, UNNAMED, whoseLine, type HealthTileData } from "./health";
 
 const NOW = Date.parse("2026-11-18T12:00:00Z");
 
@@ -118,7 +118,27 @@ describe("upstream outages", () => {
     expect(outageOf({ service: "Accounts", kind: "ours", down: { users: 3, failures: 3, statuses: [{ key: "500", count: 3 }], last: "" } })).toBe("Accounts is down: a 5xx for 3 people in the last 15 min");
   });
 
-  it("makes an endpoint that's down for 3 people critical, whatever its share", () => {
+  it("needs 3 people and 5% of today's calls failing; without today's summaries, the people alone", () => {
+    expect(isOutage(2, { calls: 10, failed: 10 })).toBe(false);
+    expect(isOutage(3, { calls: 100, failed: 5 })).toBe(true);
+    expect(isOutage(3, { calls: 1000, failed: 6 })).toBe(false);
+    expect(isOutage(3, undefined)).toBe(true);
+    expect(isOutage(3, { calls: 0, failed: 0 })).toBe(true);
+  });
+
+  it("takes the share across all a service's endpoints, healthy ones too", () => {
+    const rows = [
+      ep({ service: "Balance", path: "/a", today: { calls: 40, failed: 6 }, down: down(["u1", "u2", "u3"], [{ key: "503", count: 6 }]) }),
+      ep({ service: "Balance", path: "/b", today: { calls: 960, failed: 0 } }),
+    ];
+    const [s] = servicesOf(rows);
+    expect(s!.down!.today).toEqual({ calls: 1000, failed: 6 });
+    // 15% of /a's calls, but 0.6% of the service's.
+    expect(outageOf(s!)).toBeUndefined();
+    expect(endpointLevel(rows[0]!)).toBe("critical");
+  });
+
+  it("makes an endpoint that's down for 3 people critical", () => {
     expect(endpointLevel(ep({ calls: 1000, failedCalls: 6, down: down(["u1", "u2", "u3"], [{ key: "503", count: 6 }]) }))).toBe("critical");
     expect(endpointLevel(ep({ calls: 1000, failedCalls: 6, down: down(["u1", "u2"], [{ key: "503", count: 6 }]) }))).toBe("low");
   });

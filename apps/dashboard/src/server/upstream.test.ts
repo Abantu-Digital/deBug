@@ -86,6 +86,23 @@ describe("an upstream outage", () => {
     expect(serviceTile({ ...servicesOf(page)[0]!, key: "balance" }, page, NOW).outage).toBe(tile.outage);
   });
 
+  it("isn't an outage when the failures are a small share of today's calls", async () => {
+    const s = await upstreamStore();
+    for (const [u, m] of [["u1", 1], ["u2", 4], ["u3", 7]] as const) await fail(s, u, m, 503);
+    // 1,000 calls today, 3 of them failed: 0.3%.
+    const env = {
+      sdk: { name: "t", version: "1" },
+      context: { app: { id: "a", version: "1.0.0" }, os: { name: "android", version: "15" }, runtime: { name: "react-native" }, device: { model: "Pixel 8a" } },
+      session: { id: "s-busy", startedAt: minAgo(30) },
+      events: [{ type: "metric", id: "evt_busy00001", ts: minAgo(30), name: "http", key: `POST ${URL}`, count: 1000, errors: 3, buckets: [0, 0, 1000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }],
+    };
+    expect((await ingest(JSON.stringify(env), "k", { store: s, keys: { k: "a" }, now: () => new Date(NOW) })).status).toBe(202);
+    const r = await report(s);
+    const svc = r.services.find((x) => x.key === "balance")!;
+    expect(svc.down).toMatchObject({ users: 3, today: { calls: 1000, failed: 3 } });
+    expect(serviceTile(svc, r.endpoints, NOW).outage).toBeUndefined();
+  });
+
   it("isn't an outage for fewer than 3 people, or once it's over", async () => {
     const s = await upstreamStore();
     await fail(s, "u1", 1, 503);

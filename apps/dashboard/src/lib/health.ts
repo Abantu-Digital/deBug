@@ -29,13 +29,19 @@ export const SERVICE_LEVELS = {
 } as const;
 
 /**
- * An outage: in the last 15 minutes, calls to a service got no answer or a 5xx for at least this
- * many different people. Then it's the service that is down, not one phone or one bad request.
+ * An outage: in the last 15 minutes, calls to a service got no answer or a 5xx for at least 3
+ * different people, and at least 5% of today's calls to it failed. The people make it more than
+ * one phone or one bad request; the share keeps a few unlucky calls on a busy service from
+ * reading as down. Request summaries are kept per day, so the share is today's (UTC), not the
+ * last 15 minutes'. Without summaries for today, the people alone decide.
  */
-export const OUTAGE = { windowMs: 15 * 60 * 1000, users: 3 } as const;
+export const OUTAGE = { windowMs: 15 * 60 * 1000, users: 3, share: 0.05 } as const;
 
-/** Whether this many different people getting no answer or a 5xx is an outage. */
-export const isOutage = (people: number) => people >= OUTAGE.users;
+/** Whether recent no-answer and 5xx calls are an outage: enough people, and enough of today's calls. */
+export function isOutage(people: number, today: { calls: number; failed: number } | null | undefined): boolean {
+  if (people < OUTAGE.users) return false;
+  return !today?.calls || today.failed / today.calls >= OUTAGE.share;
+}
 
 /** Failing within this long ago counts as still happening. */
 export const LIVE_MS = 60 * 60 * 1000;
@@ -71,8 +77,8 @@ export function serviceLevel(s: Pick<ServiceHealth, "calls" | "failedCalls" | "f
 }
 
 /** One endpoint's level: as a service's, and critical when it's down for many people right now (see OUTAGE). */
-export function endpointLevel(e: Pick<EndpointHealth, "calls" | "failedCalls" | "failures" | "down">): HealthLevel {
-  if (e.down && isOutage(e.down.who.length)) return "critical";
+export function endpointLevel(e: Pick<EndpointHealth, "calls" | "failedCalls" | "failures" | "down" | "today">): HealthLevel {
+  if (e.down && isOutage(e.down.who.length, e.today)) return "critical";
   return serviceLevel({ calls: e.calls ?? 0, failedCalls: e.failedCalls ?? 0, failures: e.failures });
 }
 
@@ -125,7 +131,10 @@ function downOfService(list: readonly EndpointHealth[]): ServiceHealth["down"] {
   if (!downs.length) return undefined;
   const statuses = new Map<string, number>();
   for (const d of downs) for (const s of d.statuses) statuses.set(s.key, (statuses.get(s.key) ?? 0) + s.count);
+  // Today's calls across all its endpoints, not only the failing ones: the share is the service's.
+  const days = list.map((e) => e.today).filter((t): t is NonNullable<typeof t> => !!t);
   return {
+    ...(days.length ? { today: { calls: days.reduce((n, t) => n + t.calls, 0), failed: days.reduce((n, t) => n + t.failed, 0) } } : {}),
     users: new Set(downs.flatMap((d) => d.who)).size,
     failures: downs.reduce((n, d) => n + d.failures, 0),
     statuses: [...statuses.entries()].map(([key, count]) => ({ key, count })).sort((a, b) => b.count - a.count || a.key.localeCompare(b.key)),
@@ -138,7 +147,7 @@ function downOfService(list: readonly EndpointHealth[]): ServiceHealth["down"] {
  * service is failing broadly right now (see OUTAGE). Undefined when it isn't.
  */
 export function outageOf(s: Pick<ServiceHealth, "service" | "kind" | "provider" | "down">): string | undefined {
-  if (!s.down || !isOutage(s.down.users)) return undefined;
+  if (!s.down || !isOutage(s.down.users, s.down.today)) return undefined;
   const name = s.service ?? "Unnamed service";
   // "Cell C balance", unless the name already says whose it is.
   const who = s.kind === "upstream" && s.provider && !name.toLowerCase().includes(s.provider.toLowerCase()) ? `${s.provider} ${name}` : name;

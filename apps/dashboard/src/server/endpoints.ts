@@ -23,10 +23,12 @@ export interface EndpointHealth {
   provider?: string;
   /**
    * Calls that got no answer or a 5xx in the last OUTAGE.windowMs (before the report's time): who
-   * they happened to (user ids, else install ids, else session ids; each once), how many, and the
+   * they happened to (user ids, else install ids, else session ids; each once), how many, the
    * statuses. Unset when none.
    */
   down?: { who: string[]; failures: number; statuses: Count[]; last: string };
+  /** Today's calls here, from the request summaries: unset without any. For the outage share (see OUTAGE). */
+  today?: DayCalls;
   method?: string;
   path?: string;
   /**
@@ -84,7 +86,7 @@ export interface ServiceHealth {
   kind?: HostKind;
   provider?: string;
   /** Its endpoints' recent no-answer and 5xx calls, together: see EndpointHealth.down. */
-  down?: { users: number; failures: number; statuses: Count[]; last: string };
+  down?: { users: number; failures: number; statuses: Count[]; last: string; today?: DayCalls };
   endpoints: number;
   calls: number;
   failedCalls: number;
@@ -93,6 +95,12 @@ export interface ServiceHealth {
   worstP95: number | null;
   failures: number;
   lastFailure?: string;
+}
+
+/** Today's calls and failed calls from the SDK's request summaries (kept per day, UTC). */
+export interface DayCalls {
+  calls: number;
+  failed: number;
 }
 
 export interface Count {
@@ -239,6 +247,16 @@ export async function buildEndpoints(
     const [m, ...rest] = t.endpoint.split(" ");
     timings.set(endpointKey(m!, rest.join(" ")), t);
   }
+  // Today's calls per endpoint: the share check on an outage (see OUTAGE).
+  const today = new Date(now).toISOString().slice(0, 10);
+  const todays = new Map<string, DayCalls>();
+  for (const r of requestRows) {
+    if (r.day !== today) continue;
+    const [m, ...rest] = r.key.split(" ");
+    const k = endpointKey(m!, rest.join(" "));
+    const t = todays.get(k) ?? { calls: 0, failed: 0 };
+    todays.set(k, { calls: t.calls + r.events, failed: t.failed + r.errors });
+  }
   const failures = events.filter(inRange).map((e) => failureOf(e, hosts, [...timings.keys()])).filter((f): f is Failure => !!f);
 
   const byEndpoint = new Map<string, Failure[]>();
@@ -265,6 +283,7 @@ export async function buildEndpoints(
       ...(kind ? { kind } : {}),
       ...(kind === "upstream" && host?.host.provider ? { provider: host.host.provider } : {}),
       down: downOf(fs, now),
+      ...(todays.has(endpoint) ? { today: todays.get(endpoint) } : {}),
       method: own?.method ?? method,
       path: host ? host.rest || "/" : (own?.path ?? url),
       calls: t?.requests ?? null,
